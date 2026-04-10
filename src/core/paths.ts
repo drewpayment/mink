@@ -36,3 +36,7 @@ export function tokenLedgerPath(cwd: string): string {
 export function tokenLedgerArchivePath(cwd: string): string {
   return join(projectDir(cwd), "token-ledger-archive.json");
 }
+
+export function bugMemoryPath(cwd: string): string {
+  return join(projectDir(cwd), "bug-memory.json");
+}
