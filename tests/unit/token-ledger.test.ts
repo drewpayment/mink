@@ -484,6 +484,112 @@ describe("saveArchive", () => {
   });
 });
 
+// ── Task 7/8: Property Tests ──────────────────────────────────────────────────
+
+describe("properties", () => {
+  test("lifetime counters equal sum of session values after N appends", () => {
+    const ledger = createEmptyLedger();
+    const summaries = [
+      makeSummary({ sessionId: "prop-1" }),
+      makeSummary({
+        sessionId: "prop-2",
+        totals: {
+          readCount: 3,
+          writeCount: 2,
+          estimatedTokens: 900,
+          repeatedReads: 2,
+          fileIndexHits: 3,
+          fileIndexMisses: 2,
+        },
+        estimatedSavings: 600,
+      }),
+      makeSummary({
+        sessionId: "prop-3",
+        totals: {
+          readCount: 5,
+          writeCount: 0,
+          estimatedTokens: 1500,
+          repeatedReads: 0,
+          fileIndexHits: 5,
+          fileIndexMisses: 0,
+        },
+        estimatedSavings: 1000,
+      }),
+    ];
+
+    for (const s of summaries) {
+      appendSession(ledger, s);
+    }
+
+    const totalTokens = ledger.sessions.reduce((sum, s) => sum + s.totals.estimatedTokens, 0);
+    const totalReads = ledger.sessions.reduce((sum, s) => sum + s.totals.readCount, 0);
+    const totalWrites = ledger.sessions.reduce((sum, s) => sum + s.totals.writeCount, 0);
+    const totalSessions = ledger.sessions.length;
+    const totalFileIndexHits = ledger.sessions.reduce((sum, s) => sum + s.totals.fileIndexHits, 0);
+    const totalFileIndexMisses = ledger.sessions.reduce((sum, s) => sum + s.totals.fileIndexMisses, 0);
+    const totalRepeatedReads = ledger.sessions.reduce((sum, s) => sum + s.totals.repeatedReads, 0);
+    const totalEstimatedSavings = ledger.sessions.reduce((sum, s) => sum + s.estimatedSavings, 0);
+
+    expect(ledger.lifetime.totalTokens).toBe(totalTokens);
+    expect(ledger.lifetime.totalReads).toBe(totalReads);
+    expect(ledger.lifetime.totalWrites).toBe(totalWrites);
+    expect(ledger.lifetime.totalSessions).toBe(totalSessions);
+    expect(ledger.lifetime.totalFileIndexHits).toBe(totalFileIndexHits);
+    expect(ledger.lifetime.totalFileIndexMisses).toBe(totalFileIndexMisses);
+    expect(ledger.lifetime.totalRepeatedReads).toBe(totalRepeatedReads);
+    expect(ledger.lifetime.totalEstimatedSavings).toBe(totalEstimatedSavings);
+  });
+
+  test("lifetime counters remain correct after update", () => {
+    const ledger = createEmptyLedger();
+    const s1 = makeSummary({ sessionId: "prop-s1" });
+    const s2 = makeSummary({ sessionId: "prop-s2" });
+    appendSession(ledger, s1);
+    appendSession(ledger, s2);
+
+    // Update s1 with different values
+    const s1Updated = makeSummary({
+      sessionId: "prop-s1",
+      totals: {
+        readCount: 10,
+        writeCount: 5,
+        estimatedTokens: 2000,
+        repeatedReads: 3,
+        fileIndexHits: 7,
+        fileIndexMisses: 3,
+      },
+      estimatedSavings: 1500,
+    });
+    updateSession(ledger, s1Updated);
+
+    const totalTokens = ledger.sessions.reduce((sum, s) => sum + s.totals.estimatedTokens, 0);
+    const totalReads = ledger.sessions.reduce((sum, s) => sum + s.totals.readCount, 0);
+    const totalWrites = ledger.sessions.reduce((sum, s) => sum + s.totals.writeCount, 0);
+    const totalEstimatedSavings = ledger.sessions.reduce((sum, s) => sum + s.estimatedSavings, 0);
+
+    expect(ledger.lifetime.totalTokens).toBe(totalTokens);
+    expect(ledger.lifetime.totalReads).toBe(totalReads);
+    expect(ledger.lifetime.totalWrites).toBe(totalWrites);
+    expect(ledger.lifetime.totalSessions).toBe(2);
+    expect(ledger.lifetime.totalEstimatedSavings).toBe(totalEstimatedSavings);
+  });
+
+  test("sessions array is strictly append-only", () => {
+    const ledger = createEmptyLedger();
+    appendSession(ledger, makeSummary({ sessionId: "ao-1" }));
+    const snapshot1 = JSON.stringify(ledger.sessions[0]);
+
+    appendSession(ledger, makeSummary({ sessionId: "ao-2" }));
+    const snapshot1After2 = JSON.stringify(ledger.sessions[0]);
+
+    appendSession(ledger, makeSummary({ sessionId: "ao-3" }));
+    const snapshot1After3 = JSON.stringify(ledger.sessions[0]);
+
+    expect(snapshot1After2).toBe(snapshot1);
+    expect(snapshot1After3).toBe(snapshot1);
+  });
+});
+
 // ── Task 6: Ledger Finalizer Factory ─────────────────────────────────────────
 
 describe("createLedgerFinalizer", () => {
