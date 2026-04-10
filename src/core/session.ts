@@ -105,6 +105,8 @@ export function buildSummary(state: SessionState): SessionSummary {
       writeCount: state.writes.length,
       estimatedTokens: totalTokens,
       repeatedReads,
+      fileIndexHits: state.counters.fileIndexHits,
+      fileIndexMisses: state.counters.fileIndexMisses,
     },
     estimatedSavings: calculateSavings(state),
   };
