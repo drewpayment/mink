@@ -24,3 +24,7 @@ export function fileIndexPath(cwd: string): string {
 export function configPath(cwd: string): string {
   return join(projectDir(cwd), "config.json");
 }
+
+export function learningMemoryPath(cwd: string): string {
+  return join(projectDir(cwd), "learning-memory.md");
+}

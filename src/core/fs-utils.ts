@@ -8,6 +8,13 @@ export function atomicWriteJson(filePath: string, data: unknown): void {
   renameSync(tmp, filePath);
 }
 
+export function atomicWriteText(filePath: string, content: string): void {
+  const tmp = filePath + ".tmp";
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(tmp, content);
+  renameSync(tmp, filePath);
+}
+
 export function safeReadJson(filePath: string): unknown | null {
   try {
     const raw = readFileSync(filePath, "utf-8");
