@@ -1,0 +1,162 @@
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync, utimesSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+import { atomicWriteJson, safeReadJson } from "../../src/core/fs-utils";
+import {
+  createSessionState,
+  recordRead,
+  recordWrite,
+} from "../../src/core/session";
+import { sessionStop } from "../../src/commands/session-stop";
+import type { SessionState, SessionSummary } from "../../src/types/session";
+
+// Helper: write session state to a temp dir and return paths
+function setupSession(dir: string, state: SessionState) {
+  const sessionFile = join(dir, "session.json");
+  atomicWriteJson(sessionFile, state);
+  return sessionFile;
+}
+
+describe("sessionStop", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mink-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("increments stopCount on first stop", () => {
+    const state = createSessionState();
+    recordRead(state, "/src/a.ts", 100, true);
+    const sessionFile = setupSession(dir, state);
+
+    sessionStop(sessionFile);
+
+    const updated = safeReadJson(sessionFile) as SessionState;
+    expect(updated.stopCount).toBe(1);
+  });
+
+  test("calls finalizer on first stop with activity", () => {
+    const state = createSessionState();
+    recordRead(state, "/src/a.ts", 100, true);
+    const sessionFile = setupSession(dir, state);
+
+    let captured: SessionSummary | null = null;
+    const finalizer = {
+      appendSession(summary: SessionSummary) {
+        captured = summary;
+      },
+      updateSession() {},
+    };
+
+    sessionStop(sessionFile, finalizer);
+
+    expect(captured).not.toBeNull();
+    expect(captured!.totals.readCount).toBe(1);
+  });
+
+  test("calls updateSession on second stop", () => {
+    const state = createSessionState();
+    recordRead(state, "/src/a.ts", 100, true);
+    state.stopCount = 1; // simulate first stop already happened
+    const sessionFile = setupSession(dir, state);
+
+    let updateCalled = false;
+    const finalizer = {
+      appendSession() {},
+      updateSession() {
+        updateCalled = true;
+      },
+    };
+
+    sessionStop(sessionFile, finalizer);
+
+    expect(updateCalled).toBe(true);
+    const updated = safeReadJson(sessionFile) as SessionState;
+    expect(updated.stopCount).toBe(2);
+  });
+
+  test("skips finalization on zero activity", () => {
+    const state = createSessionState();
+    const sessionFile = setupSession(dir, state);
+
+    let finalizerCalled = false;
+    const finalizer = {
+      appendSession() {
+        finalizerCalled = true;
+      },
+      updateSession() {
+        finalizerCalled = true;
+      },
+    };
+
+    sessionStop(sessionFile, finalizer);
+
+    expect(finalizerCalled).toBe(false);
+    const updated = safeReadJson(sessionFile) as SessionState;
+    expect(updated.stopCount).toBe(1);
+  });
+
+  test("handles missing session file gracefully", () => {
+    const sessionFile = join(dir, "nope.json");
+    // Should not throw
+    expect(() => sessionStop(sessionFile)).not.toThrow();
+  });
+
+  test("handles corrupt session file gracefully", () => {
+    const sessionFile = join(dir, "session.json");
+    writeFileSync(sessionFile, "not json {{{");
+    expect(() => sessionStop(sessionFile)).not.toThrow();
+  });
+
+  test("emits reminder for files edited 3+ times", () => {
+    const state = createSessionState();
+    recordWrite(state, "/src/a.ts", "edit", 100);
+    recordWrite(state, "/src/a.ts", "edit", 100);
+    recordWrite(state, "/src/a.ts", "edit", 100);
+    const sessionFile = setupSession(dir, state);
+
+    const reminders: string[] = [];
+    sessionStop(sessionFile, undefined, (msg: string) => reminders.push(msg));
+
+    expect(reminders.length).toBeGreaterThanOrEqual(1);
+    expect(reminders[0]).toContain("/src/a.ts");
+    expect(reminders[0]).toContain("3");
+  });
+
+  test("emits reminder when learning memory is stale", () => {
+    const state = createSessionState();
+    recordRead(state, "/src/a.ts", 100, true);
+    const sessionFile = setupSession(dir, state);
+
+    // Create a stale learning-memory.md (mtime > 24h ago)
+    const memoryPath = join(dir, "learning-memory.md");
+    writeFileSync(memoryPath, "# Learning Memory");
+    const past = Date.now() - 25 * 60 * 60 * 1000;
+    utimesSync(memoryPath, new Date(past), new Date(past));
+
+    const reminders: string[] = [];
+    sessionStop(sessionFile, undefined, (msg: string) => reminders.push(msg));
+
+    expect(reminders.some((r) => r.includes("learning memory"))).toBe(true);
+  });
+
+  test("does not emit learning memory reminder when recently updated", () => {
+    const state = createSessionState();
+    recordRead(state, "/src/a.ts", 100, true);
+    const sessionFile = setupSession(dir, state);
+
+    // Create a fresh learning-memory.md
+    const memoryPath = join(dir, "learning-memory.md");
+    writeFileSync(memoryPath, "# Learning Memory");
+
+    const reminders: string[] = [];
+    sessionStop(sessionFile, undefined, (msg: string) => reminders.push(msg));
+
+    expect(reminders.some((r) => r.includes("learning memory"))).toBe(false);
+  });
+});
