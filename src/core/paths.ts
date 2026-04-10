@@ -16,3 +16,11 @@ export function projectDir(cwd: string): string {
 export function sessionPath(cwd: string): string {
   return join(projectDir(cwd), "session.json");
 }
+
+export function fileIndexPath(cwd: string): string {
+  return join(projectDir(cwd), "file-index.json");
+}
+
+export function configPath(cwd: string): string {
+  return join(projectDir(cwd), "config.json");
+}
