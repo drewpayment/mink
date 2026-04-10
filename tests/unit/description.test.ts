@@ -191,4 +191,148 @@ export function logout() {}`;
       expect(result).toBe("exports: validate");
     });
   });
+
+  describe("priority 2: HTML title", () => {
+    test("extracts title from HTML file", () => {
+      const content = `<!DOCTYPE html>
+<html>
+<head><title>My App Dashboard</title></head>
+<body></body>
+</html>`;
+      const result = extractDescription("index.html", content);
+      expect(result).toBe("My App Dashboard");
+    });
+
+    test("extracts title from htm file", () => {
+      const content = `<html><head><title>Legacy Page</title></head></html>`;
+      const result = extractDescription("page.htm", content);
+      expect(result).toBe("Legacy Page");
+    });
+  });
+
+  describe("priority 5: component with elements", () => {
+    test("detects form in tsx component", () => {
+      const content = `export default function LoginForm() {
+  return <form><input type="text" /></form>;
+}`;
+      const result = extractDescription("LoginForm.tsx", content);
+      expect(result).toBe("LoginForm — renders form, inputs");
+    });
+
+    test("detects table in jsx component", () => {
+      const content = `export function DataTable() {
+  return <table><tr><td>data</td></tr></table>;
+}`;
+      const result = extractDescription("DataTable.jsx", content);
+      expect(result).toBe("DataTable — renders table");
+    });
+
+    test("detects modal in tsx component", () => {
+      const content = `export const ConfirmModal = () => {
+  return <div className="modal">Confirm?</div>;
+}`;
+      const result = extractDescription("ConfirmModal.tsx", content);
+      expect(result).toBe("ConfirmModal — renders modal");
+    });
+
+    test("detects list elements", () => {
+      const content = `export function NavMenu() {
+  return <ul><li>Home</li><li>About</li></ul>;
+}`;
+      const result = extractDescription("NavMenu.tsx", content);
+      expect(result).toBe("NavMenu — renders list");
+    });
+
+    test("uses basename when no named export found", () => {
+      const content = `const x = () => <form><input /></form>;
+export default x;`;
+      const result = extractDescription("ContactForm.tsx", content);
+      expect(result).toBe("ContactForm — renders form, inputs");
+    });
+
+    test("does not trigger for non-component extensions", () => {
+      const content = `export function handler() { return "<form></form>"; }`;
+      const result = extractDescription("handler.ts", content);
+      // Should use exports priority, not component
+      expect(result).toBe("exports: handler");
+    });
+  });
+
+  describe("priority 7: CI/CD workflows", () => {
+    test("extracts workflow name from GitHub Actions", () => {
+      const content = `name: Build and Deploy
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest`;
+      const result = extractDescription(
+        ".github/workflows/deploy.yml",
+        content
+      );
+      expect(result).toBe("CI: Build and Deploy");
+    });
+
+    test("uses filename when no name field", () => {
+      const content = `on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest`;
+      const result = extractDescription(
+        ".github/workflows/ci.yml",
+        content
+      );
+      expect(result).toBe("CI: ci.yml");
+    });
+
+    test("detects GitLab CI file", () => {
+      const content = `stages:
+  - build
+  - test`;
+      const result = extractDescription(".gitlab-ci.yml", content);
+      expect(result).toBe("CI: .gitlab-ci.yml");
+    });
+
+    test("detects Jenkinsfile", () => {
+      const content = `pipeline {
+  agent any
+  stages {
+    stage('Build') { steps { sh 'make' } }
+  }
+}`;
+      const result = extractDescription("Jenkinsfile", content);
+      expect(result).toBe("CI: Jenkinsfile");
+    });
+  });
+
+  describe("priority 8: migrations", () => {
+    test("extracts table name from CREATE TABLE", () => {
+      const content = `CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL
+);`;
+      const result = extractDescription(
+        "db/migrations/001_create_users.sql",
+        content
+      );
+      expect(result).toBe("migration: create users");
+    });
+
+    test("uses filename when no CREATE TABLE found", () => {
+      const content = `ALTER TABLE users ADD COLUMN email TEXT;`;
+      const result = extractDescription(
+        "db/migrations/002_add_email.sql",
+        content
+      );
+      expect(result).toBe("migration: 002_add_email.sql");
+    });
+
+    test("detects migration in path with migrate keyword", () => {
+      const content = `CREATE TABLE posts (id INT);`;
+      const result = extractDescription(
+        "src/migrate/003_posts.sql",
+        content
+      );
+      expect(result).toBe("migration: create posts");
+    });
+  });
 });

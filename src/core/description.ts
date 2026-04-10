@@ -98,10 +98,13 @@ function extractComponent(content: string, filePath: string): string | null {
   const ext = extname(filePath).toLowerCase();
   if (![".tsx", ".jsx", ".vue", ".svelte"].includes(ext)) return null;
 
-  const nameMatch = content.match(
-    /(?:export\s+(?:default\s+)?function|const)\s+(\w+)/
+  // Look for a PascalCase named export (component convention)
+  const namedMatch = content.match(
+    /(?:export\s+(?:default\s+)?function|export\s+const)\s+([A-Z]\w+)/
   );
-  const componentName = nameMatch ? nameMatch[1] : basename(filePath, ext);
+  const componentName = namedMatch
+    ? namedMatch[1]
+    : basename(filePath, ext);
 
   const elements: string[] = [];
   if (/<form[\s>]/i.test(content)) elements.push("form");
@@ -178,15 +181,20 @@ export function extractDescription(filePath: string, content: string): string {
     description = extractDocComment(content);
   }
 
-  // Priority 4: Exports
+  // Priority 4/5: For component files (tsx/jsx/vue/svelte), try component
+  // detection before generic exports so element-rich components get
+  // meaningful descriptions instead of bare export lists.
+  const componentExt = [".tsx", ".jsx", ".vue", ".svelte"];
+  if (!description && componentExt.includes(extname(filePath).toLowerCase())) {
+    description = extractComponent(content, filePath);
+  }
+
+  // Priority 4: Exports (for non-component files, or component files without elements)
   if (!description) {
     description = extractExports(content);
   }
 
-  // Priority 5: Component with elements
-  if (!description) {
-    description = extractComponent(content, filePath);
-  }
+  // Priority 5 (non-component fallback): already handled above for component files
 
   // Priority 6: Known config file
   if (!description) {
