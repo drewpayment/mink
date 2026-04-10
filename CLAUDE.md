@@ -23,3 +23,9 @@ Key domains:
 - **Optional** (specs 13-14): Design evaluation (screenshots), framework advisor
 - **Wiki** (spec 15): Cross-project wiki — unique to Mink
 - **Quality** (spec 16): Test plan covering all gaps from reference implementation
+
+## Git Workflow
+
+- **Never push directly to `main`.** All work must go on a feature branch with a PR targeting `main`.
+- Only human intervention should push directly to `main`.
+- Feature branches should be created for each spec or logical unit of work.
