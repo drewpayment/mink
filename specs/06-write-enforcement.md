@@ -112,3 +112,17 @@ THEN the previous version of the file index remains intact
 - Edge: Empty Do-Not-Repeat section produces no warnings and no errors.
 - Edge: Missing bug log file does not crash pre-write.
 - Performance: Post-write completes within 10 seconds including file index update on a 500-entry index.
+
+## Integration Notes
+
+### Spec 03 (Learning Memory) Dependencies
+
+Spec 03 implements the pattern extraction and matching engine as pure functions in `src/core/learning-memory.ts`:
+- `extractPatterns(doNotRepeatSection: string)` — parses quoted strings and "never use"/"avoid" phrases into match patterns
+- `matchPatterns(patterns, content)` — checks content against extracted patterns, returns matched entries
+
+When implementing the pre-write hook, wire these functions into the `PreToolUse` hook handler:
+1. Load learning memory from `learningMemoryPath(cwd)`
+2. Parse the Do-Not-Repeat section
+3. Call `extractPatterns()` → `matchPatterns()` against the write content
+4. Emit warnings for any matches (non-blocking)
