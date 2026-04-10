@@ -9,7 +9,7 @@ const SECTION_ORDER: SectionName[] = [
 
 const RECOGNIZED_SECTIONS = new Set<string>(SECTION_ORDER);
 
-function emptysections(): Record<SectionName, string[]> {
+function emptySections(): Record<SectionName, string[]> {
   return {
     "User Preferences": [],
     "Key Learnings": [],
@@ -21,12 +21,12 @@ function emptysections(): Record<SectionName, string[]> {
 export function createEmptyLearningMemory(projectName: string): LearningMemory {
   return {
     projectName,
-    sections: emptysections(),
+    sections: emptySections(),
   };
 }
 
 export function parseLearningMemory(markdown: string): LearningMemory {
-  const sections = emptysections();
+  const sections = emptySections();
   let projectName = "unknown";
 
   if (!markdown || markdown.trim() === "") {
@@ -109,7 +109,7 @@ export function getEntries(
   mem: LearningMemory,
   section: SectionName
 ): string[] {
-  return mem.sections[section];
+  return [...mem.sections[section]];
 }
 
 export function totalEntryCount(mem: LearningMemory): number {
