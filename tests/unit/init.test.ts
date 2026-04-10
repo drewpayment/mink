@@ -24,6 +24,26 @@ describe("buildHooksConfig", () => {
     expect(hooks.SessionStart[0].command).toContain("session-start");
     expect(hooks.Stop[0].command).toContain("session-stop");
   });
+
+  test("includes PreToolUse and PostToolUse hooks for Read", () => {
+    const hooks = buildHooksConfig("bun", "/path/to/cli.js");
+    expect(hooks.PreToolUse).toBeDefined();
+    expect(hooks.PreToolUse[0].matcher).toBe("Read");
+    expect(hooks.PreToolUse[0].command).toContain("pre-read");
+    expect(hooks.PostToolUse).toBeDefined();
+    expect(hooks.PostToolUse[0].matcher).toBe("Read");
+    expect(hooks.PostToolUse[0].command).toContain("post-read");
+  });
+
+  test("uses correct runtime prefix for read hooks", () => {
+    const bunHooks = buildHooksConfig("bun", "/path/to/cli.js");
+    expect(bunHooks.PreToolUse[0].command).toContain("bun run");
+    expect(bunHooks.PostToolUse[0].command).toContain("bun run");
+
+    const nodeHooks = buildHooksConfig("node", "/path/to/cli.js");
+    expect(nodeHooks.PreToolUse[0].command).toContain("node ");
+    expect(nodeHooks.PostToolUse[0].command).toContain("node ");
+  });
 });
 
 describe("mergeHooksIntoSettings", () => {
@@ -49,7 +69,7 @@ describe("mergeHooksIntoSettings", () => {
     expect(settings.hooks).toBeDefined();
   });
 
-  test("merges hooks into existing settings without overwriting", () => {
+  test("merges hooks into existing settings without overwriting non-mink hooks", () => {
     const settingsDir = join(dir, ".claude");
     mkdirSync(settingsDir, { recursive: true });
     const settingsPath = join(settingsDir, "settings.json");
@@ -67,10 +87,14 @@ describe("mergeHooksIntoSettings", () => {
     mergeHooksIntoSettings(settingsPath, hooks);
 
     const settings = safeReadJson(settingsPath) as Record<string, unknown>;
-    const allHooks = settings.hooks as Record<string, unknown[]>;
-    expect(allHooks.PreToolUse).toHaveLength(1);
+    const allHooks = settings.hooks as Record<string, Array<{ command: string }>>;
+    // Non-mink hook preserved + mink hook added
+    expect(allHooks.PreToolUse).toHaveLength(2);
+    expect(allHooks.PreToolUse.some((h) => h.command === "existing-hook")).toBe(true);
+    expect(allHooks.PreToolUse.some((h) => h.command.includes("pre-read"))).toBe(true);
     expect(allHooks.SessionStart).toBeDefined();
     expect(allHooks.Stop).toBeDefined();
+    expect(allHooks.PostToolUse).toBeDefined();
     expect(settings.otherSetting).toBe(true);
   });
 
@@ -85,6 +109,12 @@ describe("mergeHooksIntoSettings", () => {
           SessionStart: [
             { matcher: "", command: "bun run /old/path/cli.js session-start" },
           ],
+          PreToolUse: [
+            { matcher: "Read", command: "bun run /old/path/cli.js pre-read" },
+          ],
+          PostToolUse: [
+            { matcher: "Read", command: "bun run /old/path/cli.js post-read" },
+          ],
         },
       })
     );
@@ -94,9 +124,17 @@ describe("mergeHooksIntoSettings", () => {
 
     const settings = safeReadJson(settingsPath) as Record<string, unknown>;
     const allHooks = settings.hooks as Record<string, Array<{ command: string }>>;
-    const sessionStartHooks = allHooks.SessionStart;
-    expect(sessionStartHooks).toHaveLength(1);
-    expect(sessionStartHooks[0].command).toContain("/new/path/cli.js");
+
+    expect(allHooks.SessionStart).toHaveLength(1);
+    expect(allHooks.SessionStart[0].command).toContain("/new/path/cli.js");
+
+    expect(allHooks.PreToolUse).toHaveLength(1);
+    expect(allHooks.PreToolUse[0].command).toContain("/new/path/cli.js");
+    expect(allHooks.PreToolUse[0].command).toContain("pre-read");
+
+    expect(allHooks.PostToolUse).toHaveLength(1);
+    expect(allHooks.PostToolUse[0].command).toContain("/new/path/cli.js");
+    expect(allHooks.PostToolUse[0].command).toContain("post-read");
   });
 });
 

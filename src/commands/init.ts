@@ -29,6 +29,8 @@ export function buildHooksConfig(
   return {
     SessionStart: [{ matcher: "", command: `${prefix} session-start` }],
     Stop: [{ matcher: "", command: `${prefix} session-stop` }],
+    PreToolUse: [{ matcher: "Read", command: `${prefix} pre-read` }],
+    PostToolUse: [{ matcher: "Read", command: `${prefix} post-read` }],
   };
 }
 
@@ -36,7 +38,9 @@ function isMinkHook(entry: HookEntry): boolean {
   return (
     entry.command.includes("cli") &&
     (entry.command.includes("session-start") ||
-      entry.command.includes("session-stop"))
+      entry.command.includes("session-stop") ||
+      entry.command.includes("pre-read") ||
+      entry.command.includes("post-read"))
   );
 }
 
