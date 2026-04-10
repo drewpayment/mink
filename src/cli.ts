@@ -21,8 +21,15 @@ switch (command) {
     break;
   }
 
+  case "scan": {
+    const { scan } = await import("./commands/scan");
+    const check = process.argv.includes("--check");
+    scan(cwd, { check });
+    break;
+  }
+
   default:
     console.error(`[mink] unknown command: ${command}`);
-    console.error("Usage: mink <session-start|session-stop|init>");
+    console.error("Usage: mink <session-start|session-stop|init|scan>");
     process.exit(1);
 }
