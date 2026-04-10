@@ -28,8 +28,15 @@ switch (command) {
     break;
   }
 
+  case "reflect": {
+    const { reflect } = await import("./commands/reflect");
+    const { learningMemoryPath, configPath } = await import("./core/paths");
+    reflect(cwd, learningMemoryPath(cwd), configPath(cwd));
+    break;
+  }
+
   default:
     console.error(`[mink] unknown command: ${command}`);
-    console.error("Usage: mink <session-start|session-stop|init|scan>");
+    console.error("Usage: mink <session-start|session-stop|init|scan|reflect>");
     process.exit(1);
 }
