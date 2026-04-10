@@ -44,6 +44,24 @@ describe("buildHooksConfig", () => {
     expect(nodeHooks.PreToolUse[0].command).toContain("node ");
     expect(nodeHooks.PostToolUse[0].command).toContain("node ");
   });
+
+  test("includes Edit and Write matchers for pre-write and post-write", () => {
+    const hooks = buildHooksConfig("bun", "/path/to/cli.js");
+
+    // PreToolUse: Read (pre-read) + Edit (pre-write) + Write (pre-write)
+    expect(hooks.PreToolUse).toHaveLength(3);
+    expect(hooks.PreToolUse[1].matcher).toBe("Edit");
+    expect(hooks.PreToolUse[1].command).toContain("pre-write");
+    expect(hooks.PreToolUse[2].matcher).toBe("Write");
+    expect(hooks.PreToolUse[2].command).toContain("pre-write");
+
+    // PostToolUse: Read (post-read) + Edit (post-write) + Write (post-write)
+    expect(hooks.PostToolUse).toHaveLength(3);
+    expect(hooks.PostToolUse[1].matcher).toBe("Edit");
+    expect(hooks.PostToolUse[1].command).toContain("post-write");
+    expect(hooks.PostToolUse[2].matcher).toBe("Write");
+    expect(hooks.PostToolUse[2].command).toContain("post-write");
+  });
 });
 
 describe("mergeHooksIntoSettings", () => {
@@ -88,10 +106,11 @@ describe("mergeHooksIntoSettings", () => {
 
     const settings = safeReadJson(settingsPath) as Record<string, unknown>;
     const allHooks = settings.hooks as Record<string, Array<{ command: string }>>;
-    // Non-mink hook preserved + mink hook added
-    expect(allHooks.PreToolUse).toHaveLength(2);
+    // Non-mink hook preserved + 3 mink hooks added (Read, Edit, Write)
+    expect(allHooks.PreToolUse).toHaveLength(4);
     expect(allHooks.PreToolUse.some((h) => h.command === "existing-hook")).toBe(true);
     expect(allHooks.PreToolUse.some((h) => h.command.includes("pre-read"))).toBe(true);
+    expect(allHooks.PreToolUse.some((h) => h.command.includes("pre-write"))).toBe(true);
     expect(allHooks.SessionStart).toBeDefined();
     expect(allHooks.Stop).toBeDefined();
     expect(allHooks.PostToolUse).toBeDefined();
@@ -111,9 +130,13 @@ describe("mergeHooksIntoSettings", () => {
           ],
           PreToolUse: [
             { matcher: "Read", command: "bun run /old/path/cli.js pre-read" },
+            { matcher: "Edit", command: "bun run /old/path/cli.js pre-write" },
+            { matcher: "Write", command: "bun run /old/path/cli.js pre-write" },
           ],
           PostToolUse: [
             { matcher: "Read", command: "bun run /old/path/cli.js post-read" },
+            { matcher: "Edit", command: "bun run /old/path/cli.js post-write" },
+            { matcher: "Write", command: "bun run /old/path/cli.js post-write" },
           ],
         },
       })
@@ -128,13 +151,17 @@ describe("mergeHooksIntoSettings", () => {
     expect(allHooks.SessionStart).toHaveLength(1);
     expect(allHooks.SessionStart[0].command).toContain("/new/path/cli.js");
 
-    expect(allHooks.PreToolUse).toHaveLength(1);
-    expect(allHooks.PreToolUse[0].command).toContain("/new/path/cli.js");
-    expect(allHooks.PreToolUse[0].command).toContain("pre-read");
+    // PreToolUse: 3 entries (Read, Edit, Write) — all replaced with new path
+    expect(allHooks.PreToolUse).toHaveLength(3);
+    expect(allHooks.PreToolUse.every((h) => h.command.includes("/new/path/cli.js"))).toBe(true);
+    expect(allHooks.PreToolUse.some((h) => h.command.includes("pre-read"))).toBe(true);
+    expect(allHooks.PreToolUse.some((h) => h.command.includes("pre-write"))).toBe(true);
 
-    expect(allHooks.PostToolUse).toHaveLength(1);
-    expect(allHooks.PostToolUse[0].command).toContain("/new/path/cli.js");
-    expect(allHooks.PostToolUse[0].command).toContain("post-read");
+    // PostToolUse: 3 entries (Read, Edit, Write)
+    expect(allHooks.PostToolUse).toHaveLength(3);
+    expect(allHooks.PostToolUse.every((h) => h.command.includes("/new/path/cli.js"))).toBe(true);
+    expect(allHooks.PostToolUse.some((h) => h.command.includes("post-read"))).toBe(true);
+    expect(allHooks.PostToolUse.some((h) => h.command.includes("post-write"))).toBe(true);
   });
 });
 
