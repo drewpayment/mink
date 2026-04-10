@@ -1,7 +1,8 @@
-import { statSync } from "fs";
+import { statSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { isSessionState, buildSummary } from "../core/session";
+import { reflect } from "./reflect";
 import type { SessionState, SessionFinalizer } from "../types/session";
 
 const noopFinalizer: SessionFinalizer = {
@@ -21,8 +22,7 @@ function getEditCounts(state: SessionState): Record<string, number> {
   return counts;
 }
 
-function isLearningMemoryStale(projectDir: string): boolean {
-  const memoryPath = join(projectDir, "learning-memory.md");
+function isLearningMemoryStale(memoryPath: string): boolean {
   try {
     const stat = statSync(memoryPath);
     const ageMs = Date.now() - stat.mtimeMs;
@@ -70,9 +70,16 @@ export function sessionStop(
     }
   }
 
-  // Check if learning memory is stale (>24h since last update)
+  // Run reflection to merge duplicates and prune oversized memory
   const projDir = dirname(sessionFile);
-  if (isLearningMemoryStale(projDir)) {
+  const memoryPath = join(projDir, "learning-memory.md");
+  const cfgPath = join(projDir, "config.json");
+  if (existsSync(memoryPath)) {
+    reflect(projDir, memoryPath, cfgPath);
+  }
+
+  // Check if learning memory is stale (>24h since last update)
+  if (isLearningMemoryStale(memoryPath)) {
     onReminder(
       "[mink] learning memory hasn't been updated in 24+ hours — consider reviewing it"
     );

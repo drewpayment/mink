@@ -184,20 +184,7 @@ export function reflectMemory(
     };
   }
 
-  if (beforeTokens <= tokenBudget) {
-    return {
-      memory: deepCopy(mem),
-      result: {
-        beforeTokens,
-        afterTokens: beforeTokens,
-        mergedCount: 0,
-        trimmedCount: 0,
-        withinBudget: true,
-      },
-    };
-  }
-
-  // Step 1: Merge duplicates
+  // Step 1: Always merge duplicates (regardless of budget)
   const beforeMergeCount = countEntries(mem);
   const afterMerge = mergeDuplicates(mem);
   const afterMergeCount = countEntries(afterMerge);
