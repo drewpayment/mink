@@ -35,8 +35,20 @@ switch (command) {
     break;
   }
 
+  case "pre-read": {
+    const { preRead } = await import("./commands/pre-read");
+    await preRead(cwd);
+    break;
+  }
+
+  case "post-read": {
+    const { postRead } = await import("./commands/post-read");
+    await postRead(cwd);
+    break;
+  }
+
   default:
     console.error(`[mink] unknown command: ${command}`);
-    console.error("Usage: mink <session-start|session-stop|init|scan|reflect>");
+    console.error("Usage: mink <session-start|session-stop|init|scan|reflect|pre-read|post-read>");
     process.exit(1);
 }
