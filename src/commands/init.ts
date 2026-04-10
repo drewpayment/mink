@@ -81,4 +81,16 @@ export async function init(cwd: string): Promise<void> {
   // Run initial scan
   const { scan } = await import("./scan");
   scan(cwd, { check: false });
+
+  // Seed learning memory if it doesn't exist
+  const { existsSync } = await import("fs");
+  const { learningMemoryPath } = await import("../core/paths");
+  const memPath = learningMemoryPath(cwd);
+  if (!existsSync(memPath)) {
+    const { seedLearningMemory } = await import("../core/seed");
+    const { serializeLearningMemory } = await import("../core/learning-memory");
+    const { atomicWriteText } = await import("../core/fs-utils");
+    const mem = seedLearningMemory(cwd);
+    atomicWriteText(memPath, serializeLearningMemory(mem));
+  }
 }
