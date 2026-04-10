@@ -41,7 +41,7 @@ describe("extractPatterns", () => {
     ]);
     const wb = results.filter((p) => p.type === "word-boundary");
     expect(wb).toHaveLength(1);
-    expect(wb[0].pattern).toBe("mocking the database in integration tests");
+    expect(wb[0].pattern).toBe("mocking the database");
   });
 
   test("phrase stops at em-dash (—)", () => {

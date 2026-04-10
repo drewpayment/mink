@@ -1,4 +1,4 @@
-import { basename } from "path";
+import { basename, join } from "path";
 import { readFileSync, existsSync } from "fs";
 import type { LearningMemory, SeedInfo } from "../types/learning-memory";
 import { createEmptyLearningMemory, addEntry } from "./learning-memory";
@@ -196,8 +196,6 @@ export function parseGoMod(filePath: string): SeedInfo | null {
 // ─── Seed ─────────────────────────────────────────────────────────────────────
 
 export function seedLearningMemory(projectRoot: string): LearningMemory {
-  const { join } = require("path");
-
   const parsers: Array<() => SeedInfo | null> = [
     () => parsePackageJson(join(projectRoot, "package.json")),
     () => parsePyprojectToml(join(projectRoot, "pyproject.toml")),

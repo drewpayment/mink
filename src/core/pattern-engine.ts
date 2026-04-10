@@ -3,28 +3,22 @@ import type { ExtractedPattern, PatternMatch } from "../types/learning-memory";
 // Triggers for phrase-based word-boundary patterns
 const PHRASE_TRIGGERS = [
   /never\s+use\s+/i,
-  /avoid\s+/i,
+  /\bavoid\s+/i,
 ];
 
 // Stop characters/sequences that end a phrase
-const PHRASE_STOP_RE = /[—–\-.]|$/;
+const PHRASE_STOP_RE = /[—–\-.]|\s+(?:in|for|with|on|by|from|to|when|if|because|since|after|before|during|until)\s+|$/;
 
 export function extractPatterns(entries: string[]): ExtractedPattern[] {
   const results: ExtractedPattern[] = [];
 
   for (const entry of entries) {
-    const quotedRanges: Array<{ start: number; end: number; text: string }> = [];
     const quotedPatterns: ExtractedPattern[] = [];
 
     // 1. Extract quoted strings (double and single quotes)
     const quoteRe = /["']([^"']+)["']/g;
     let qMatch: RegExpExecArray | null;
     while ((qMatch = quoteRe.exec(entry)) !== null) {
-      quotedRanges.push({
-        start: qMatch.index,
-        end: qMatch.index + qMatch[0].length,
-        text: qMatch[1],
-      });
       quotedPatterns.push({
         type: "literal",
         pattern: qMatch[1],
