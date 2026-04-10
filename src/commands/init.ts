@@ -60,7 +60,7 @@ export function mergeHooksIntoSettings(
   atomicWriteJson(settingsPath, existing);
 }
 
-export function init(cwd: string): void {
+export async function init(cwd: string): Promise<void> {
   const runtime = detectRuntime();
   const cliPath = resolve(dirname(new URL(import.meta.url).pathname), "../cli.ts");
   const hooks = buildHooksConfig(runtime, cliPath);
@@ -77,4 +77,8 @@ export function init(cwd: string): void {
   console.log(`  state:    ${dir}`);
   console.log(`  runtime:  ${runtime}`);
   console.log(`  hooks:    ${settingsPath}`);
+
+  // Run initial scan
+  const { scan } = await import("./scan");
+  scan(cwd, { check: false });
 }
