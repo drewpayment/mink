@@ -137,6 +137,8 @@ describe("buildSummary", () => {
     expect(summary.totals.writeCount).toBe(1);
     expect(summary.totals.estimatedTokens).toBe(600);
     expect(summary.totals.repeatedReads).toBe(0);
+    expect(summary.totals.fileIndexHits).toBe(1);
+    expect(summary.totals.fileIndexMisses).toBe(1);
   });
 
   test("counts repeated reads in totals", () => {
@@ -145,6 +147,16 @@ describe("buildSummary", () => {
     recordRead(state, "/src/a.ts", 100, true);
     const summary = buildSummary(state);
     expect(summary.totals.repeatedReads).toBe(1);
+  });
+
+  test("includes file index counters in totals", () => {
+    const state = createSessionState();
+    recordRead(state, "/src/a.ts", 100, true);
+    recordRead(state, "/src/b.ts", 200, true);
+    recordRead(state, "/src/c.ts", 300, false);
+    const summary = buildSummary(state);
+    expect(summary.totals.fileIndexHits).toBe(2);
+    expect(summary.totals.fileIndexMisses).toBe(1);
   });
 });
 

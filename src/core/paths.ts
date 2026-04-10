@@ -28,3 +28,11 @@ export function configPath(cwd: string): string {
 export function learningMemoryPath(cwd: string): string {
   return join(projectDir(cwd), "learning-memory.md");
 }
+
+export function tokenLedgerPath(cwd: string): string {
+  return join(projectDir(cwd), "token-ledger.json");
+}
+
+export function tokenLedgerArchivePath(cwd: string): string {
+  return join(projectDir(cwd), "token-ledger-archive.json");
+}

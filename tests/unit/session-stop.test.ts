@@ -10,6 +10,7 @@ import {
 } from "../../src/core/session";
 import { sessionStop } from "../../src/commands/session-stop";
 import type { SessionState, SessionSummary } from "../../src/types/session";
+import type { TokenLedger } from "../../src/types/token-ledger";
 
 // Helper: write session state to a temp dir and return paths
 function setupSession(dir: string, state: SessionState) {
@@ -158,6 +159,44 @@ describe("sessionStop", () => {
     sessionStop(sessionFile, undefined, (msg: string) => reminders.push(msg));
 
     expect(reminders.some((r) => r.includes("learning memory"))).toBe(false);
+  });
+
+  test("writes to token ledger by default", () => {
+    const state = createSessionState();
+    recordRead(state, "/src/a.ts", 100, true);
+    recordRead(state, "/src/b.ts", 200, false);
+    recordWrite(state, "/src/c.ts", "create", 300);
+    const sessionFile = setupSession(dir, state);
+
+    sessionStop(sessionFile);
+
+    const ledgerPath = join(dir, "token-ledger.json");
+    const ledger = safeReadJson(ledgerPath) as any;
+    expect(ledger).not.toBeNull();
+    expect(ledger.sessions).toHaveLength(1);
+    expect(ledger.lifetime.totalSessions).toBe(1);
+    expect(ledger.lifetime.totalReads).toBe(2);
+    expect(ledger.lifetime.totalWrites).toBe(1);
+  });
+
+  test("updates ledger on second stop", () => {
+    const state = createSessionState();
+    recordRead(state, "/src/a.ts", 100, true);
+    const sessionFile = setupSession(dir, state);
+
+    sessionStop(sessionFile);
+
+    // More activity and second stop
+    const updated = safeReadJson(sessionFile) as SessionState;
+    recordRead(updated, "/src/b.ts", 200, false);
+    atomicWriteJson(sessionFile, updated);
+
+    sessionStop(sessionFile);
+
+    const ledgerPath = join(dir, "token-ledger.json");
+    const ledger = safeReadJson(ledgerPath) as any;
+    expect(ledger.sessions).toHaveLength(1); // same session, updated
+    expect(ledger.lifetime.totalReads).toBe(2);
   });
 
   test("calls reflect on session stop", () => {

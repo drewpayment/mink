@@ -38,6 +38,8 @@ export interface SessionSummary {
     writeCount: number;
     estimatedTokens: number;
     repeatedReads: number;
+    fileIndexHits: number;
+    fileIndexMisses: number;
   };
   estimatedSavings: number;
 }

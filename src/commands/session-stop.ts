@@ -3,12 +3,8 @@ import { join, dirname } from "path";
 import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { isSessionState, buildSummary } from "../core/session";
 import { reflect } from "./reflect";
+import { createLedgerFinalizer } from "../core/token-ledger";
 import type { SessionState, SessionFinalizer } from "../types/session";
-
-const noopFinalizer: SessionFinalizer = {
-  appendSession() {},
-  updateSession() {},
-};
 
 function hasActivity(state: SessionState): boolean {
   return Object.keys(state.reads).length > 0 || state.writes.length > 0;
@@ -36,7 +32,7 @@ function isLearningMemoryStale(memoryPath: string): boolean {
 
 export function sessionStop(
   sessionFile: string,
-  finalizer: SessionFinalizer = noopFinalizer,
+  finalizer?: SessionFinalizer,
   onReminder: (msg: string) => void = (msg) => console.error(msg)
 ): void {
   const raw = safeReadJson(sessionFile);
@@ -50,13 +46,16 @@ export function sessionStop(
   const state: SessionState = raw;
   state.stopCount++;
 
+  const projDir = dirname(sessionFile);
+  const effectiveFinalizer = finalizer ?? createLedgerFinalizer(projDir);
+
   if (hasActivity(state)) {
     const summary = buildSummary(state);
 
     if (state.stopCount === 1) {
-      finalizer.appendSession(summary);
+      effectiveFinalizer.appendSession(summary);
     } else {
-      finalizer.updateSession(summary);
+      effectiveFinalizer.updateSession(summary);
     }
   }
 
@@ -71,7 +70,6 @@ export function sessionStop(
   }
 
   // Run reflection to merge duplicates and prune oversized memory
-  const projDir = dirname(sessionFile);
   const memoryPath = join(projDir, "learning-memory.md");
   const cfgPath = join(projDir, "config.json");
   if (existsSync(memoryPath)) {
