@@ -4,6 +4,7 @@ import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { isSessionState, buildSummary } from "../core/session";
 import { reflect } from "./reflect";
 import { createLedgerFinalizer } from "../core/token-ledger";
+import { loadBugMemory, hasBugForFileInSession } from "../core/bug-memory";
 import type { SessionState, SessionFinalizer } from "../types/session";
 
 function hasActivity(state: SessionState): boolean {
@@ -59,13 +60,23 @@ export function sessionStop(
     }
   }
 
-  // Check for files edited 3+ times
+  // Check for files edited 3+ times without a corresponding bug entry
   const editCounts = getEditCounts(state);
+  const bugMemoryFile = join(projDir, "bug-memory.json");
+  const bugMemory = loadBugMemory(bugMemoryFile);
+
   for (const [filePath, count] of Object.entries(editCounts)) {
     if (count >= 3) {
-      onReminder(
-        `[mink] ${filePath} was edited ${count} times — consider logging a bug`
+      const hasBug = hasBugForFileInSession(
+        bugMemory,
+        filePath,
+        state.startTimestamp
       );
+      if (!hasBug) {
+        onReminder(
+          `[mink] ${filePath} was edited ${count} times — consider logging a bug`
+        );
+      }
     }
   }
 

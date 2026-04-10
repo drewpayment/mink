@@ -59,8 +59,35 @@ switch (command) {
     break;
   }
 
+  case "bug-search": {
+    const query = process.argv.slice(3).join(" ");
+    if (!query) {
+      console.error("Usage: mink bug-search <query>");
+      process.exit(1);
+    }
+    const { loadBugMemory, searchBugs } = await import("./core/bug-memory");
+    const { bugMemoryPath } = await import("./core/paths");
+    const memory = loadBugMemory(bugMemoryPath(cwd));
+    const results = searchBugs(memory, query);
+    if (results.length === 0) {
+      console.log("No matching bugs found.");
+    } else {
+      for (const match of results) {
+        const e = match.entry;
+        console.log(`${e.id} (score: ${match.score.toFixed(2)}) — ${e.errorMessage}`);
+        console.log(`  File: ${e.filePath}${e.lineNumber ? `:${e.lineNumber}` : ""}`);
+        console.log(`  Root cause: ${e.rootCause}`);
+        console.log(`  Fix: ${e.fixDescription}`);
+        if (e.tags.length > 0) console.log(`  Tags: ${e.tags.join(", ")}`);
+        if (e.occurrenceCount > 1) console.log(`  Seen ${e.occurrenceCount} times`);
+        console.log();
+      }
+    }
+    break;
+  }
+
   default:
     console.error(`[mink] unknown command: ${command}`);
-    console.error("Usage: mink <session-start|session-stop|init|scan|reflect|pre-read|post-read|pre-write|post-write>");
+    console.error("Usage: mink <session-start|session-stop|init|scan|reflect|pre-read|post-read|pre-write|post-write|bug-search>");
     process.exit(1);
 }

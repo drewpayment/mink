@@ -1,13 +1,19 @@
 import { relative } from "path";
 import { readFileSync } from "fs";
 import { readStdinJson } from "../core/stdin";
-import { sessionPath, learningMemoryPath } from "../core/paths";
+import { sessionPath, learningMemoryPath, bugMemoryPath } from "../core/paths";
 import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { createSessionState, isSessionState } from "../core/session";
 import { parseLearningMemory, getEntries } from "../core/learning-memory";
 import { extractPatterns, matchPatterns } from "../core/pattern-engine";
+import {
+  loadBugMemory,
+  lookupBugsForFile,
+  formatBugSummary,
+} from "../core/bug-memory";
 import type { SessionState } from "../types/session";
 import type { PatternMatch } from "../types/learning-memory";
+import type { BugMemory } from "../types/bug-memory";
 import type { PreToolUseInput } from "../types/hook-input";
 
 export interface PreWriteResult {
@@ -19,7 +25,8 @@ export interface PreWriteResult {
 export function analyzePreWrite(
   filePath: string,
   writeContent: string,
-  doNotRepeatEntries: string[]
+  doNotRepeatEntries: string[],
+  bugMemory?: BugMemory
 ): PreWriteResult {
   const warnings: string[] = [];
   const allMatches: PatternMatch[] = [];
@@ -37,10 +44,12 @@ export function analyzePreWrite(
     }
   }
 
-  // 2. Bug memory lookup (stub — spec 07 not yet implemented)
-  // TODO: When spec 07 is implemented, search bug log for entries
-  // related to filePath, compute similarity, and emit summary if > 0.3.
-  const bugSummary: string | null = null;
+  // 2. Bug memory lookup — surface known bugs for this file
+  let bugSummary: string | null = null;
+  if (bugMemory) {
+    const bugEntries = lookupBugsForFile(bugMemory, filePath);
+    bugSummary = formatBugSummary(bugEntries);
+  }
 
   return { warnings, patternMatches: allMatches, bugSummary };
 }
@@ -89,11 +98,24 @@ export async function preWrite(cwd: string): Promise<void> {
       // Learning memory not found or corrupt — skip enforcement
     }
 
-    const result = analyzePreWrite(filePath, writeContent, doNotRepeatEntries);
+    // Load bug memory for this file
+    let bugMemory: BugMemory | undefined;
+    try {
+      bugMemory = loadBugMemory(bugMemoryPath(cwd));
+    } catch {
+      // Bug memory not found or corrupt — skip lookup
+    }
+
+    const result = analyzePreWrite(filePath, writeContent, doNotRepeatEntries, bugMemory);
 
     // Emit warnings to stderr (advisory only)
     for (const warning of result.warnings) {
       process.stderr.write(warning + "\n");
+    }
+
+    // Emit bug summary to stderr if there are known bugs for this file
+    if (result.bugSummary) {
+      process.stderr.write(result.bugSummary + "\n");
     }
 
     // Update session counters if there were pattern matches
