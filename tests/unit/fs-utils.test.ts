@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { atomicWriteJson, safeReadJson } from "../../src/core/fs-utils";
+import { atomicWriteJson, atomicWriteText, safeReadJson } from "../../src/core/fs-utils";
 
 describe("atomicWriteJson", () => {
   let dir: string;
@@ -35,6 +35,47 @@ describe("atomicWriteJson", () => {
     atomicWriteJson(filePath, { key: "value" });
     const files = Bun.file(filePath + ".tmp");
     expect(files.size).toBe(0);
+  });
+});
+
+describe("atomicWriteText", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mink-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("writes text content to file", () => {
+    const filePath = join(dir, "test.md");
+    atomicWriteText(filePath, "hello world");
+    const content = readFileSync(filePath, "utf-8");
+    expect(content).toBe("hello world");
+  });
+
+  test("overwrites existing file", () => {
+    const filePath = join(dir, "test.md");
+    atomicWriteText(filePath, "first content");
+    atomicWriteText(filePath, "second content");
+    const content = readFileSync(filePath, "utf-8");
+    expect(content).toBe("second content");
+  });
+
+  test("creates parent directories if they do not exist", () => {
+    const filePath = join(dir, "nested", "deep", "test.md");
+    atomicWriteText(filePath, "nested content");
+    const content = readFileSync(filePath, "utf-8");
+    expect(content).toBe("nested content");
+  });
+
+  test("does not leave .tmp file on success", () => {
+    const filePath = join(dir, "test.md");
+    atomicWriteText(filePath, "data");
+    const tmpFile = Bun.file(filePath + ".tmp");
+    expect(tmpFile.size).toBe(0);
   });
 });
 

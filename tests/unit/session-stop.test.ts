@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, utimesSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, utimesSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { atomicWriteJson, safeReadJson } from "../../src/core/fs-utils";
@@ -158,5 +158,39 @@ describe("sessionStop", () => {
     sessionStop(sessionFile, undefined, (msg: string) => reminders.push(msg));
 
     expect(reminders.some((r) => r.includes("learning memory"))).toBe(false);
+  });
+
+  test("calls reflect on session stop", () => {
+    const state = createSessionState();
+    recordRead(state, "/src/a.ts", 100, true);
+    const sessionFile = setupSession(dir, state);
+
+    // Create a learning memory with duplicates
+    const memPath = join(dir, "learning-memory.md");
+    writeFileSync(
+      memPath,
+      [
+        "# Learning Memory — test",
+        "",
+        "## User Preferences",
+        "",
+        "- Duplicate",
+        "- Duplicate",
+        "",
+        "## Key Learnings",
+        "",
+        "## Do-Not-Repeat",
+        "",
+        "## Decision Log",
+        "",
+      ].join("\n")
+    );
+
+    sessionStop(sessionFile);
+
+    // Verify duplicates were merged
+    const saved = readFileSync(memPath, "utf-8");
+    const occurrences = saved.split("- Duplicate").length - 1;
+    expect(occurrences).toBe(1);
   });
 });

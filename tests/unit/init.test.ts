@@ -1,9 +1,10 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { safeReadJson } from "../../src/core/fs-utils";
-import { buildHooksConfig, mergeHooksIntoSettings } from "../../src/commands/init";
+import { buildHooksConfig, mergeHooksIntoSettings, init } from "../../src/commands/init";
+import { learningMemoryPath } from "../../src/core/paths";
 
 describe("buildHooksConfig", () => {
   test("uses bun when bun is the detected runtime", () => {
@@ -96,5 +97,54 @@ describe("mergeHooksIntoSettings", () => {
     const sessionStartHooks = allHooks.SessionStart;
     expect(sessionStartHooks).toHaveLength(1);
     expect(sessionStartHooks[0].command).toContain("/new/path/cli.js");
+  });
+});
+
+describe("init", () => {
+  let projectDir: string;
+  let memPath: string;
+
+  beforeEach(() => {
+    projectDir = mkdtempSync(join(tmpdir(), "mink-init-test-"));
+    memPath = learningMemoryPath(projectDir);
+  });
+
+  afterEach(() => {
+    rmSync(projectDir, { recursive: true, force: true });
+    // Clean up the mink project dir created by init
+    if (existsSync(memPath)) {
+      const minkProjDir = join(memPath, "..");
+      rmSync(minkProjDir, { recursive: true, force: true });
+    }
+  });
+
+  test("seeds learning-memory.md on init", async () => {
+    // Create a package.json so seed can detect project name and frameworks
+    writeFileSync(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        name: "my-test-project",
+        dependencies: { react: "^18.0.0", typescript: "^5.0.0" },
+      })
+    );
+
+    await init(projectDir);
+
+    expect(existsSync(memPath)).toBe(true);
+    const content = readFileSync(memPath, "utf-8");
+    expect(content).toContain("my-test-project");
+    expect(content).toContain("React");
+    expect(content).toContain("TypeScript");
+  });
+
+  test("does not overwrite existing learning-memory.md on re-init", async () => {
+    const minkProjDir = join(memPath, "..");
+    mkdirSync(minkProjDir, { recursive: true });
+    writeFileSync(memPath, "# Existing Memory\n\nCustom content");
+
+    await init(projectDir);
+
+    const content = readFileSync(memPath, "utf-8");
+    expect(content).toContain("Custom content");
   });
 });

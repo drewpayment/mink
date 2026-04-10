@@ -21,6 +21,7 @@ export interface FileIndex {
 export interface ProjectConfig {
   excludePatterns?: string[];
   maxFiles?: number;
+  learningMemoryTokenBudget?: number;
 }
 
 export interface StalenessReport {
