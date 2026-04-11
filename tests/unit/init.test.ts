@@ -9,20 +9,34 @@ import { learningMemoryPath } from "../../src/core/paths";
 describe("buildHooksConfig", () => {
   test("uses bun when bun is the detected runtime", () => {
     const hooks = buildHooksConfig("bun", "/usr/local/bin/mink/cli.js");
-    expect(hooks.SessionStart[0].command).toContain("bun run");
-    expect(hooks.Stop[0].command).toContain("bun run");
+    expect(hooks.SessionStart[0].hooks[0].command).toContain("bun run");
+    expect(hooks.Stop[0].hooks[0].command).toContain("bun run");
   });
 
   test("uses node when node is the detected runtime", () => {
     const hooks = buildHooksConfig("node", "/usr/local/bin/mink/cli.js");
-    expect(hooks.SessionStart[0].command).toContain("node ");
-    expect(hooks.Stop[0].command).toContain("node ");
+    expect(hooks.SessionStart[0].hooks[0].command).toContain("node ");
+    expect(hooks.Stop[0].hooks[0].command).toContain("node ");
   });
 
   test("includes correct commands", () => {
     const hooks = buildHooksConfig("bun", "/path/to/cli.js");
-    expect(hooks.SessionStart[0].command).toContain("session-start");
-    expect(hooks.Stop[0].command).toContain("session-stop");
+    expect(hooks.SessionStart[0].hooks[0].command).toContain("session-start");
+    expect(hooks.Stop[0].hooks[0].command).toContain("session-stop");
+  });
+
+  test("each hook entry has correct structure with type and command", () => {
+    const hooks = buildHooksConfig("bun", "/path/to/cli.js");
+    for (const entries of Object.values(hooks)) {
+      for (const entry of entries) {
+        expect(entry.matcher).toBeDefined();
+        expect(Array.isArray(entry.hooks)).toBe(true);
+        for (const h of entry.hooks) {
+          expect(h.type).toBe("command");
+          expect(typeof h.command).toBe("string");
+        }
+      }
+    }
   });
 });
 
@@ -57,7 +71,7 @@ describe("mergeHooksIntoSettings", () => {
       settingsPath,
       JSON.stringify({
         hooks: {
-          PreToolUse: [{ matcher: "", command: "existing-hook" }],
+          PreToolUse: [{ matcher: "", hooks: [{ type: "command", command: "existing-hook" }] }],
         },
         otherSetting: true,
       })
@@ -83,7 +97,7 @@ describe("mergeHooksIntoSettings", () => {
       JSON.stringify({
         hooks: {
           SessionStart: [
-            { matcher: "", command: "bun run /old/path/cli.js session-start" },
+            { matcher: "", hooks: [{ type: "command", command: "bun run /old/path/cli.js session-start" }] },
           ],
         },
       })
@@ -93,10 +107,42 @@ describe("mergeHooksIntoSettings", () => {
     mergeHooksIntoSettings(settingsPath, hooks);
 
     const settings = safeReadJson(settingsPath) as Record<string, unknown>;
-    const allHooks = settings.hooks as Record<string, Array<{ command: string }>>;
+    const allHooks = settings.hooks as Record<string, Array<{ hooks: Array<{ command: string }> }>>;
     const sessionStartHooks = allHooks.SessionStart;
     expect(sessionStartHooks).toHaveLength(1);
-    expect(sessionStartHooks[0].command).toContain("/new/path/cli.js");
+    expect(sessionStartHooks[0].hooks[0].command).toContain("/new/path/cli.js");
+  });
+
+  test("cleans up legacy flat-command format on re-init", () => {
+    const settingsDir = join(dir, ".claude");
+    mkdirSync(settingsDir, { recursive: true });
+    const settingsPath = join(settingsDir, "settings.json");
+    // Seed with old/legacy format (flat command, no hooks array)
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        hooks: {
+          SessionStart: [
+            { matcher: "", command: "bun run /old/path/cli.js session-start" },
+          ],
+          Stop: [
+            { matcher: "", command: "bun run /old/path/cli.js session-stop" },
+          ],
+        },
+      })
+    );
+
+    const hooks = buildHooksConfig("bun", "/new/path/cli.js");
+    mergeHooksIntoSettings(settingsPath, hooks);
+
+    const settings = safeReadJson(settingsPath) as Record<string, unknown>;
+    const allHooks = settings.hooks as Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+
+    // Legacy entries should be removed and replaced with new format
+    expect(allHooks.SessionStart).toHaveLength(1);
+    expect(allHooks.SessionStart[0].hooks[0].command).toContain("/new/path/cli.js");
+    expect(allHooks.Stop).toHaveLength(1);
+    expect(allHooks.Stop[0].hooks[0].command).toContain("/new/path/cli.js");
   });
 });
 

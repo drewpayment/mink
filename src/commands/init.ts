@@ -5,9 +5,14 @@ import { projectDir } from "../core/paths";
 import { generateProjectId } from "../core/project-id";
 import { atomicWriteJson, safeReadJson } from "../core/fs-utils";
 
+interface HookCommand {
+  type: "command";
+  command: string;
+}
+
 interface HookEntry {
   matcher: string;
-  command: string;
+  hooks: HookCommand[];
 }
 
 type HooksConfig = Record<string, HookEntry[]>;
@@ -26,18 +31,31 @@ export function buildHooksConfig(
   cliPath: string
 ): HooksConfig {
   const prefix = runtime === "bun" ? `bun run ${cliPath}` : `node ${cliPath}`;
+  const hook = (cmd: string): HookCommand[] => [{ type: "command", command: cmd }];
   return {
-    SessionStart: [{ matcher: "", command: `${prefix} session-start` }],
-    Stop: [{ matcher: "", command: `${prefix} session-stop` }],
+    SessionStart: [{ matcher: "", hooks: hook(`${prefix} session-start`) }],
+    Stop: [{ matcher: "", hooks: hook(`${prefix} session-stop`) }],
   };
 }
 
-function isMinkHook(entry: HookEntry): boolean {
+function isMinkCommand(cmd: string): boolean {
   return (
-    entry.command.includes("cli") &&
-    (entry.command.includes("session-start") ||
-      entry.command.includes("session-stop"))
+    cmd.includes("cli") &&
+    (cmd.includes("session-start") ||
+      cmd.includes("session-stop"))
   );
+}
+
+function isMinkHook(entry: HookEntry | Record<string, unknown>): boolean {
+  // Handle current format: { matcher, hooks: [{ type, command }] }
+  if (Array.isArray((entry as HookEntry).hooks)) {
+    return (entry as HookEntry).hooks.some((h) => isMinkCommand(h.command));
+  }
+  // Handle legacy format: { matcher, command }
+  if (typeof (entry as Record<string, unknown>).command === "string") {
+    return isMinkCommand((entry as Record<string, unknown>).command as string);
+  }
+  return false;
 }
 
 export function mergeHooksIntoSettings(
