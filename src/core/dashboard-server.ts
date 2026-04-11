@@ -13,7 +13,7 @@ import {
   triggerDeadLetterRetry,
   triggerRescan,
 } from "./dashboard-api";
-import { getDashboardHtml } from "./dashboard-html";
+import { getDashboardHtml } from "./dashboard/get-dashboard-html";
 import type { StateFileId, StateChangeEvent } from "../types/dashboard";
 
 // ── State File Mapping ─────────────────────────────────────────────────────
