@@ -33,30 +33,30 @@ export function buildHooksConfig(
   const prefix = runtime === "bun" ? `bun run ${cliPath}` : `node ${cliPath}`;
   const hook = (cmd: string): HookCommand[] => [{ type: "command", command: cmd }];
   return {
-    SessionStart: [{ matcher: "", command: `${prefix} session-start` }],
-    Stop: [{ matcher: "", command: `${prefix} session-stop` }],
+    SessionStart: [{ matcher: "", hooks: hook(`${prefix} session-start`) }],
+    Stop: [{ matcher: "", hooks: hook(`${prefix} session-stop`) }],
     PreToolUse: [
-      { matcher: "Read", command: `${prefix} pre-read` },
-      { matcher: "Edit", command: `${prefix} pre-write` },
-      { matcher: "Write", command: `${prefix} pre-write` },
+      { matcher: "Read", hooks: hook(`${prefix} pre-read`) },
+      { matcher: "Edit", hooks: hook(`${prefix} pre-write`) },
+      { matcher: "Write", hooks: hook(`${prefix} pre-write`) },
     ],
     PostToolUse: [
-      { matcher: "Read", command: `${prefix} post-read` },
-      { matcher: "Edit", command: `${prefix} post-write` },
-      { matcher: "Write", command: `${prefix} post-write` },
+      { matcher: "Read", hooks: hook(`${prefix} post-read`) },
+      { matcher: "Edit", hooks: hook(`${prefix} post-write`) },
+      { matcher: "Write", hooks: hook(`${prefix} post-write`) },
     ],
   };
 }
 
 function isMinkCommand(cmd: string): boolean {
   return (
-    entry.command.includes("cli") &&
-    (entry.command.includes("session-start") ||
-      entry.command.includes("session-stop") ||
-      entry.command.includes("pre-read") ||
-      entry.command.includes("post-read") ||
-      entry.command.includes("pre-write") ||
-      entry.command.includes("post-write"))
+    cmd.includes("cli") &&
+    (cmd.includes("session-start") ||
+      cmd.includes("session-stop") ||
+      cmd.includes("pre-read") ||
+      cmd.includes("post-read") ||
+      cmd.includes("pre-write") ||
+      cmd.includes("post-write"))
   );
 }
 

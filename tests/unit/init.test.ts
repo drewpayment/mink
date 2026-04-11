@@ -43,20 +43,20 @@ describe("buildHooksConfig", () => {
     const hooks = buildHooksConfig("bun", "/path/to/cli.js");
     expect(hooks.PreToolUse).toBeDefined();
     expect(hooks.PreToolUse[0].matcher).toBe("Read");
-    expect(hooks.PreToolUse[0].command).toContain("pre-read");
+    expect(hooks.PreToolUse[0].hooks[0].command).toContain("pre-read");
     expect(hooks.PostToolUse).toBeDefined();
     expect(hooks.PostToolUse[0].matcher).toBe("Read");
-    expect(hooks.PostToolUse[0].command).toContain("post-read");
+    expect(hooks.PostToolUse[0].hooks[0].command).toContain("post-read");
   });
 
   test("uses correct runtime prefix for read hooks", () => {
     const bunHooks = buildHooksConfig("bun", "/path/to/cli.js");
-    expect(bunHooks.PreToolUse[0].command).toContain("bun run");
-    expect(bunHooks.PostToolUse[0].command).toContain("bun run");
+    expect(bunHooks.PreToolUse[0].hooks[0].command).toContain("bun run");
+    expect(bunHooks.PostToolUse[0].hooks[0].command).toContain("bun run");
 
     const nodeHooks = buildHooksConfig("node", "/path/to/cli.js");
-    expect(nodeHooks.PreToolUse[0].command).toContain("node ");
-    expect(nodeHooks.PostToolUse[0].command).toContain("node ");
+    expect(nodeHooks.PreToolUse[0].hooks[0].command).toContain("node ");
+    expect(nodeHooks.PostToolUse[0].hooks[0].command).toContain("node ");
   });
 
   test("includes Edit and Write matchers for pre-write and post-write", () => {
@@ -65,16 +65,16 @@ describe("buildHooksConfig", () => {
     // PreToolUse: Read (pre-read) + Edit (pre-write) + Write (pre-write)
     expect(hooks.PreToolUse).toHaveLength(3);
     expect(hooks.PreToolUse[1].matcher).toBe("Edit");
-    expect(hooks.PreToolUse[1].command).toContain("pre-write");
+    expect(hooks.PreToolUse[1].hooks[0].command).toContain("pre-write");
     expect(hooks.PreToolUse[2].matcher).toBe("Write");
-    expect(hooks.PreToolUse[2].command).toContain("pre-write");
+    expect(hooks.PreToolUse[2].hooks[0].command).toContain("pre-write");
 
     // PostToolUse: Read (post-read) + Edit (post-write) + Write (post-write)
     expect(hooks.PostToolUse).toHaveLength(3);
     expect(hooks.PostToolUse[1].matcher).toBe("Edit");
-    expect(hooks.PostToolUse[1].command).toContain("post-write");
+    expect(hooks.PostToolUse[1].hooks[0].command).toContain("post-write");
     expect(hooks.PostToolUse[2].matcher).toBe("Write");
-    expect(hooks.PostToolUse[2].command).toContain("post-write");
+    expect(hooks.PostToolUse[2].hooks[0].command).toContain("post-write");
   });
 });
 
@@ -119,12 +119,12 @@ describe("mergeHooksIntoSettings", () => {
     mergeHooksIntoSettings(settingsPath, hooks);
 
     const settings = safeReadJson(settingsPath) as Record<string, unknown>;
-    const allHooks = settings.hooks as Record<string, Array<{ command: string }>>;
+    const allHooks = settings.hooks as Record<string, Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }>>;
     // Non-mink hook preserved + 3 mink hooks added (Read, Edit, Write)
     expect(allHooks.PreToolUse).toHaveLength(4);
-    expect(allHooks.PreToolUse.some((h) => h.command === "existing-hook")).toBe(true);
-    expect(allHooks.PreToolUse.some((h) => h.command.includes("pre-read"))).toBe(true);
-    expect(allHooks.PreToolUse.some((h) => h.command.includes("pre-write"))).toBe(true);
+    expect(allHooks.PreToolUse.some((e) => e.hooks[0].command === "existing-hook")).toBe(true);
+    expect(allHooks.PreToolUse.some((e) => e.hooks[0].command.includes("pre-read"))).toBe(true);
+    expect(allHooks.PreToolUse.some((e) => e.hooks[0].command.includes("pre-write"))).toBe(true);
     expect(allHooks.SessionStart).toBeDefined();
     expect(allHooks.Stop).toBeDefined();
     expect(allHooks.PostToolUse).toBeDefined();
@@ -160,22 +160,22 @@ describe("mergeHooksIntoSettings", () => {
     mergeHooksIntoSettings(settingsPath, hooks);
 
     const settings = safeReadJson(settingsPath) as Record<string, unknown>;
-    const allHooks = settings.hooks as Record<string, Array<{ command: string }>>;
+    const allHooks = settings.hooks as Record<string, Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }>>;
 
     expect(allHooks.SessionStart).toHaveLength(1);
-    expect(allHooks.SessionStart[0].command).toContain("/new/path/cli.js");
+    expect(allHooks.SessionStart[0].hooks[0].command).toContain("/new/path/cli.js");
 
     // PreToolUse: 3 entries (Read, Edit, Write) — all replaced with new path
     expect(allHooks.PreToolUse).toHaveLength(3);
-    expect(allHooks.PreToolUse.every((h) => h.command.includes("/new/path/cli.js"))).toBe(true);
-    expect(allHooks.PreToolUse.some((h) => h.command.includes("pre-read"))).toBe(true);
-    expect(allHooks.PreToolUse.some((h) => h.command.includes("pre-write"))).toBe(true);
+    expect(allHooks.PreToolUse.every((e) => e.hooks[0].command.includes("/new/path/cli.js"))).toBe(true);
+    expect(allHooks.PreToolUse.some((e) => e.hooks[0].command.includes("pre-read"))).toBe(true);
+    expect(allHooks.PreToolUse.some((e) => e.hooks[0].command.includes("pre-write"))).toBe(true);
 
     // PostToolUse: 3 entries (Read, Edit, Write)
     expect(allHooks.PostToolUse).toHaveLength(3);
-    expect(allHooks.PostToolUse.every((h) => h.command.includes("/new/path/cli.js"))).toBe(true);
-    expect(allHooks.PostToolUse.some((h) => h.command.includes("post-read"))).toBe(true);
-    expect(allHooks.PostToolUse.some((h) => h.command.includes("post-write"))).toBe(true);
+    expect(allHooks.PostToolUse.every((e) => e.hooks[0].command.includes("/new/path/cli.js"))).toBe(true);
+    expect(allHooks.PostToolUse.some((e) => e.hooks[0].command.includes("post-read"))).toBe(true);
+    expect(allHooks.PostToolUse.some((e) => e.hooks[0].command.includes("post-write"))).toBe(true);
   });
 });
 
