@@ -22,6 +22,8 @@ export interface ProjectConfig {
   excludePatterns?: string[];
   maxFiles?: number;
   learningMemoryTokenBudget?: number;
+  actionLogMaxEntries?: number;
+  actionLogRetentionDays?: number;
 }
 
 export interface StalenessReport {
