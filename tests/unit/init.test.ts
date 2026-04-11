@@ -9,20 +9,34 @@ import { learningMemoryPath } from "../../src/core/paths";
 describe("buildHooksConfig", () => {
   test("uses bun when bun is the detected runtime", () => {
     const hooks = buildHooksConfig("bun", "/usr/local/bin/mink/cli.js");
-    expect(hooks.SessionStart[0].command).toContain("bun run");
-    expect(hooks.Stop[0].command).toContain("bun run");
+    expect(hooks.SessionStart[0].hooks[0].command).toContain("bun run");
+    expect(hooks.Stop[0].hooks[0].command).toContain("bun run");
   });
 
   test("uses node when node is the detected runtime", () => {
     const hooks = buildHooksConfig("node", "/usr/local/bin/mink/cli.js");
-    expect(hooks.SessionStart[0].command).toContain("node ");
-    expect(hooks.Stop[0].command).toContain("node ");
+    expect(hooks.SessionStart[0].hooks[0].command).toContain("node ");
+    expect(hooks.Stop[0].hooks[0].command).toContain("node ");
   });
 
   test("includes correct commands", () => {
     const hooks = buildHooksConfig("bun", "/path/to/cli.js");
-    expect(hooks.SessionStart[0].command).toContain("session-start");
-    expect(hooks.Stop[0].command).toContain("session-stop");
+    expect(hooks.SessionStart[0].hooks[0].command).toContain("session-start");
+    expect(hooks.Stop[0].hooks[0].command).toContain("session-stop");
+  });
+
+  test("each hook entry has correct structure with type and command", () => {
+    const hooks = buildHooksConfig("bun", "/path/to/cli.js");
+    for (const entries of Object.values(hooks)) {
+      for (const entry of entries) {
+        expect(entry.matcher).toBeDefined();
+        expect(Array.isArray(entry.hooks)).toBe(true);
+        for (const h of entry.hooks) {
+          expect(h.type).toBe("command");
+          expect(typeof h.command).toBe("string");
+        }
+      }
+    }
   });
 
   test("includes PreToolUse and PostToolUse hooks for Read", () => {
@@ -95,7 +109,7 @@ describe("mergeHooksIntoSettings", () => {
       settingsPath,
       JSON.stringify({
         hooks: {
-          PreToolUse: [{ matcher: "", command: "existing-hook" }],
+          PreToolUse: [{ matcher: "", hooks: [{ type: "command", command: "existing-hook" }] }],
         },
         otherSetting: true,
       })
@@ -126,7 +140,7 @@ describe("mergeHooksIntoSettings", () => {
       JSON.stringify({
         hooks: {
           SessionStart: [
-            { matcher: "", command: "bun run /old/path/cli.js session-start" },
+            { matcher: "", hooks: [{ type: "command", command: "bun run /old/path/cli.js session-start" }] },
           ],
           PreToolUse: [
             { matcher: "Read", command: "bun run /old/path/cli.js pre-read" },
