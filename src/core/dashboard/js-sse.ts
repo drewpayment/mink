@@ -91,6 +91,9 @@ const SSEClient = (() => {
       case 'session':
         fetchApi('/api/overview', data => Store.update('overview', data));
         break;
+      case 'design-report':
+        fetchApi('/api/design', data => Store.update('designImages', data.images));
+        break;
       default:
         // Unknown event type — refresh everything
         fetchAllData();
@@ -117,6 +120,7 @@ const SSEClient = (() => {
     fetchApi('/api/learning-memory', data => Store.update('learningMemory', data));
     fetchApi('/api/action-log', data => Store.update('actionLog', data));
     fetchApi('/api/bugs', data => Store.update('bugs', data));
+    fetchApi('/api/design', data => Store.update('designImages', data.images));
   }
 
   return { connect, fetchAllData };

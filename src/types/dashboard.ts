@@ -16,7 +16,8 @@ export type StateFileId =
   | "action-log"
   | "scheduler-manifest"
   | "session"
-  | "project-meta";
+  | "project-meta"
+  | "design-report";
 
 // ── SSE Event ──────────────────────────────────────────────────────────────
 
@@ -86,4 +87,16 @@ export interface ActionLogPayload {
 export interface ActionResult {
   success: boolean;
   error?: string;
+}
+
+export interface DesignImagePayload {
+  url: string;
+  route: string;
+  viewport: string;
+  section: number;
+  timestamp: string;
+}
+
+export interface DesignPayload {
+  images: DesignImagePayload[];
 }

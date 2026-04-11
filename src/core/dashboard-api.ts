@@ -10,6 +10,7 @@ import {
   sessionPath,
   configPath,
   schedulerManifestPath,
+  designReportPath,
 } from "./paths";
 import { safeReadJson } from "./fs-utils";
 import { isFileIndex } from "./index-store";
@@ -29,7 +30,10 @@ import type {
   ActionLogPayload,
   ActionResult,
   FileStatus,
+  DesignPayload,
 } from "../types/dashboard";
+import { isDesignEvalReport } from "../types/design-eval";
+import type { DesignEvalReport } from "../types/design-eval";
 import type { FileIndex, FileIndexEntry } from "../types/file-index";
 import type { LearningMemory } from "../types/learning-memory";
 
@@ -191,6 +195,24 @@ export function loadActionLogPanel(cwd: string): ActionLogPayload {
 export function loadBugLogPanel(cwd: string): BugLogPayload {
   const memory = loadBugMemory(bugMemoryPath(cwd));
   return { entries: memory.entries, nextId: memory.nextId };
+}
+
+export function loadDesignPanel(cwd: string): DesignPayload {
+  const raw = safeReadJson(designReportPath(cwd));
+  if (!raw || !isDesignEvalReport(raw)) {
+    return { images: [] };
+  }
+
+  const report = raw as DesignEvalReport;
+  return {
+    images: report.captures.map((c) => ({
+      url: `/api/design-images/${c.fileName}`,
+      route: c.route,
+      viewport: c.viewport,
+      section: c.section,
+      timestamp: c.timestamp,
+    })),
+  };
 }
 
 // ── Action Triggers ────────────────────────────────────────────────────────

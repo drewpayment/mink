@@ -68,3 +68,11 @@ export function projectMetaPath(cwd: string): string {
 export function backupDirPath(cwd: string): string {
   return join(projectDir(cwd), "backups");
 }
+
+export function designCapturesDir(cwd: string): string {
+  return join(projectDir(cwd), "design-captures");
+}
+
+export function designReportPath(cwd: string): string {
+  return join(projectDir(cwd), "design-report.json");
+}

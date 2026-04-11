@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from "fs";
 import { basename } from "path";
-import { projectDir } from "./paths";
+import { projectDir, designCapturesDir } from "./paths";
 import {
   loadOverview,
   loadTokenLedgerPanel,
@@ -9,6 +9,7 @@ import {
   loadLearningMemoryPanel,
   loadActionLogPanel,
   loadBugLogPanel,
+  loadDesignPanel,
   triggerTask,
   triggerDeadLetterRetry,
   triggerRescan,
@@ -27,6 +28,7 @@ const STATE_FILE_MAP: Record<string, StateFileId> = {
   "scheduler-manifest.json": "scheduler-manifest",
   "session.json": "session",
   "project-meta.json": "project-meta",
+  "design-report.json": "design-report",
 };
 
 // ── SSE Manager ────────────────────────────────────────────────────────────
@@ -205,7 +207,7 @@ export function startDashboardServer(
   const server = Bun.serve({
     port,
     hostname,
-    fetch(req) {
+    async fetch(req) {
       const url = new URL(req.url);
       const pathname = url.pathname;
       const method = req.method;
@@ -257,6 +259,28 @@ export function startDashboardServer(
               return jsonResponse(loadActionLogPanel(cwd));
             case "/api/bugs":
               return jsonResponse(loadBugLogPanel(cwd));
+            case "/api/design":
+              return jsonResponse(loadDesignPanel(cwd));
+          }
+
+          // GET /api/design-images/:filename — serve captured screenshots
+          if (pathname.startsWith("/api/design-images/")) {
+            const filename = pathname.slice("/api/design-images/".length);
+            if (!filename || filename.includes("..") || filename.includes("/")) {
+              return jsonResponse({ error: "Invalid filename" }, 400);
+            }
+            const imgPath = join(designCapturesDir(cwd), filename);
+            const file = Bun.file(imgPath);
+            if (await file.exists()) {
+              return new Response(file, {
+                headers: {
+                  "Content-Type": "image/jpeg",
+                  "Cache-Control": "public, max-age=60",
+                  "Access-Control-Allow-Origin": "*",
+                },
+              });
+            }
+            return jsonResponse({ error: "Image not found" }, 404);
           }
         } catch (err) {
           return jsonResponse(
