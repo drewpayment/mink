@@ -56,3 +56,15 @@ export function schedulerLogPath(): string {
 export function schedulerManifestPath(cwd: string): string {
   return join(projectDir(cwd), "scheduler-manifest.json");
 }
+
+export function globalConfigPath(): string {
+  return join(MINK_ROOT, "config");
+}
+
+export function projectMetaPath(cwd: string): string {
+  return join(projectDir(cwd), "project-meta.json");
+}
+
+export function backupDirPath(cwd: string): string {
+  return join(projectDir(cwd), "backups");
+}
