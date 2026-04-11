@@ -1,0 +1,89 @@
+import type { LifetimeCounters, LedgerSession } from "./token-ledger";
+import type { WasteFlag } from "./waste-detection";
+import type { FileIndexHeader, FileIndexEntry } from "./file-index";
+import type { BugEntry } from "./bug-memory";
+import type { LearningMemory } from "./learning-memory";
+import type { ParsedSession } from "./action-log";
+import type { TaskDefinition, TaskRunRecord, DeadLetterEntry } from "./scheduler";
+
+// ── State File Identifiers ─────────────────────────────────────────────────
+
+export type StateFileId =
+  | "token-ledger"
+  | "file-index"
+  | "learning-memory"
+  | "bug-memory"
+  | "action-log"
+  | "scheduler-manifest"
+  | "session"
+  | "project-meta";
+
+// ── SSE Event ──────────────────────────────────────────────────────────────
+
+export interface StateChangeEvent {
+  fileId: StateFileId;
+  timestamp: string;
+}
+
+// ── File Status ────────────────────────────────────────────────────────────
+
+export interface FileStatus {
+  name: string;
+  status: "ok" | "missing" | "corrupt";
+}
+
+// ── API Payloads ───────────────────────────────────────────────────────────
+
+export interface OverviewPayload {
+  project: { name: string; description: string; cwd: string } | null;
+  daemon: {
+    running: boolean;
+    pid?: number;
+    startedAt?: string;
+    uptimeMs?: number;
+  };
+  summary: {
+    totalSessions: number;
+    totalTokens: number;
+    totalReads: number;
+    totalWrites: number;
+    estimatedSavings: number;
+  };
+  stateFiles: FileStatus[];
+}
+
+export interface TokenLedgerPayload {
+  lifetime: LifetimeCounters;
+  sessions: LedgerSession[];
+  wasteFlags: WasteFlag[];
+}
+
+export interface FileIndexPayload {
+  header: FileIndexHeader;
+  entries: FileIndexEntry[];
+}
+
+export interface SchedulerTaskPayload {
+  definition: TaskDefinition;
+  state: TaskRunRecord | null;
+}
+
+export interface SchedulerPayload {
+  tasks: SchedulerTaskPayload[];
+  deadLetterQueue: DeadLetterEntry[];
+  lastHeartbeat: string | null;
+}
+
+export interface BugLogPayload {
+  entries: BugEntry[];
+  nextId: number;
+}
+
+export interface ActionLogPayload {
+  sessions: ParsedSession[];
+}
+
+export interface ActionResult {
+  success: boolean;
+  error?: string;
+}
