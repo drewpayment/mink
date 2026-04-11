@@ -65,6 +65,12 @@ switch (command) {
     break;
   }
 
+  case "cron": {
+    const { cron } = await import("./commands/cron");
+    await cron(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "bug-search": {
     const query = process.argv.slice(3).join(" ");
     if (!query) {
@@ -94,6 +100,6 @@ switch (command) {
 
   default:
     console.error(`[mink] unknown command: ${command}`);
-    console.error("Usage: mink <session-start|session-stop|init|scan|reflect|pre-read|post-read|pre-write|post-write|bug-search|detect-waste>");
+    console.error("Usage: mink <session-start|session-stop|init|scan|reflect|pre-read|post-read|pre-write|post-write|bug-search|detect-waste|cron>");
     process.exit(1);
 }

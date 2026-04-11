@@ -44,3 +44,15 @@ export function bugMemoryPath(cwd: string): string {
 export function actionLogPath(cwd: string): string {
   return join(projectDir(cwd), "action-log.md");
 }
+
+export function schedulerPidPath(): string {
+  return join(MINK_ROOT, "scheduler.pid");
+}
+
+export function schedulerLogPath(): string {
+  return join(MINK_ROOT, "scheduler.log");
+}
+
+export function schedulerManifestPath(cwd: string): string {
+  return join(projectDir(cwd), "scheduler-manifest.json");
+}
