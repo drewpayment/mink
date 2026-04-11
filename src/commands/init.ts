@@ -1,7 +1,7 @@
 import { execSync } from "child_process";
-import { mkdirSync } from "fs";
-import { resolve, dirname } from "path";
-import { projectDir } from "../core/paths";
+import { mkdirSync, existsSync } from "fs";
+import { resolve, dirname, basename, join } from "path";
+import { projectDir, projectMetaPath } from "../core/paths";
 import { generateProjectId } from "../core/project-id";
 import { atomicWriteJson, safeReadJson } from "../core/fs-utils";
 
@@ -92,30 +92,61 @@ export function mergeHooksIntoSettings(
   atomicWriteJson(settingsPath, existing);
 }
 
+function isExistingInstallation(cwd: string): boolean {
+  const dir = projectDir(cwd);
+  if (!existsSync(dir)) return false;
+  return existsSync(join(dir, "file-index.json"));
+}
+
 export async function init(cwd: string): Promise<void> {
   const runtime = detectRuntime();
   const cliPath = resolve(dirname(new URL(import.meta.url).pathname), "../cli.ts");
   const hooks = buildHooksConfig(runtime, cliPath);
   const settingsPath = resolve(cwd, ".claude", "settings.json");
+  const dir = projectDir(cwd);
+  const upgrading = isExistingInstallation(cwd);
+
+  if (upgrading) {
+    console.log("[mink] existing installation detected, upgrading...");
+    const { createBackup } = await import("../core/backup");
+    const backupName = createBackup(cwd);
+    console.log(`  backup: ${backupName}`);
+  }
 
   mergeHooksIntoSettings(settingsPath, hooks);
 
-  const dir = projectDir(cwd);
   mkdirSync(dir, { recursive: true });
 
   const projectId = generateProjectId(cwd);
-  console.log(`[mink] initialized`);
-  console.log(`  project:  ${projectId}`);
-  console.log(`  state:    ${dir}`);
-  console.log(`  runtime:  ${runtime}`);
-  console.log(`  hooks:    ${settingsPath}`);
+
+  // Write project metadata
+  const metaPath = projectMetaPath(cwd);
+  const existingMeta = safeReadJson(metaPath) as Record<string, unknown> | null;
+  atomicWriteJson(metaPath, {
+    ...(existingMeta ?? {}),
+    cwd,
+    name: basename(cwd),
+    initTimestamp: existingMeta?.initTimestamp ?? new Date().toISOString(),
+    version: "0.1.0",
+  });
+
+  if (upgrading) {
+    console.log(`[mink] upgrade complete`);
+    console.log(`  project:  ${projectId}`);
+    console.log(`  hooks:    ${settingsPath}`);
+  } else {
+    console.log(`[mink] initialized`);
+    console.log(`  project:  ${projectId}`);
+    console.log(`  state:    ${dir}`);
+    console.log(`  runtime:  ${runtime}`);
+    console.log(`  hooks:    ${settingsPath}`);
+  }
 
   // Run initial scan
   const { scan } = await import("./scan");
   scan(cwd, { check: false });
 
   // Seed learning memory if it doesn't exist
-  const { existsSync } = await import("fs");
   const { learningMemoryPath } = await import("../core/paths");
   const memPath = learningMemoryPath(cwd);
   if (!existsSync(memPath)) {

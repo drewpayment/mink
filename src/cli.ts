@@ -17,7 +17,13 @@ switch (command) {
 
   case "init": {
     const { init } = await import("./commands/init");
-    init(cwd);
+    await init(cwd);
+    break;
+  }
+
+  case "status": {
+    const { status } = await import("./commands/status");
+    status(cwd);
     break;
   }
 
@@ -71,35 +77,86 @@ switch (command) {
     break;
   }
 
+  case "daemon": {
+    const { daemon } = await import("./commands/daemon");
+    await daemon(cwd, process.argv.slice(3));
+    break;
+  }
+
+  case "config": {
+    const { config } = await import("./commands/config");
+    await config(process.argv.slice(3));
+    break;
+  }
+
+  case "update": {
+    const { update } = await import("./commands/update");
+    await update(cwd, process.argv.slice(3));
+    break;
+  }
+
+  case "restore": {
+    const { restore } = await import("./commands/restore");
+    restore(cwd, process.argv.slice(3));
+    break;
+  }
+
+  case "designqc": {
+    const { designqc } = await import("./commands/designqc");
+    designqc(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "bug-search": {
-    const query = process.argv.slice(3).join(" ");
-    if (!query) {
-      console.error("Usage: mink bug-search <query>");
-      process.exit(1);
-    }
-    const { loadBugMemory, searchBugs } = await import("./core/bug-memory");
-    const { bugMemoryPath } = await import("./core/paths");
-    const memory = loadBugMemory(bugMemoryPath(cwd));
-    const results = searchBugs(memory, query);
-    if (results.length === 0) {
-      console.log("No matching bugs found.");
+    const { bugSearch } = await import("./commands/bug-search");
+    bugSearch(cwd, process.argv.slice(3).join(" "));
+    break;
+  }
+
+  case "bug": {
+    if (process.argv[3] === "search") {
+      const { bugSearch } = await import("./commands/bug-search");
+      bugSearch(cwd, process.argv.slice(4).join(" "));
     } else {
-      for (const match of results) {
-        const e = match.entry;
-        console.log(`${e.id} (score: ${match.score.toFixed(2)}) — ${e.errorMessage}`);
-        console.log(`  File: ${e.filePath}${e.lineNumber ? `:${e.lineNumber}` : ""}`);
-        console.log(`  Root cause: ${e.rootCause}`);
-        console.log(`  Fix: ${e.fixDescription}`);
-        if (e.tags.length > 0) console.log(`  Tags: ${e.tags.join(", ")}`);
-        if (e.occurrenceCount > 1) console.log(`  Seen ${e.occurrenceCount} times`);
-        console.log();
-      }
+      console.error(
+        `[mink] unknown bug subcommand: ${process.argv[3] ?? "(none)"}`
+      );
+      console.error("Usage: mink bug search <term>");
+      process.exit(1);
     }
     break;
   }
 
+  case "help":
+  case "--help":
+  case "-h":
+    console.log("mink — a hidden presence that moves alongside the developer");
+    console.log();
+    console.log("Usage: mink <command> [options]");
+    console.log();
+    console.log("Commands:");
+    console.log("  init                    Initialize Mink in the current project");
+    console.log("  status                  Display project health at a glance");
+    console.log("  scan [--check]          Force a full file index rescan");
+    console.log("  config [key] [value]    Manage global user settings");
+    console.log("  daemon <cmd>            Manage the background daemon (start|stop|restart|logs)");
+    console.log("  cron <cmd> [id]         Manage scheduled tasks (list|run|retry)");
+    console.log("  update [options]        Update Mink across registered projects");
+    console.log("  restore [backup]        Restore state from a backup");
+    console.log("  bug search <term>       Search the bug log");
+    console.log("  detect-waste            Detect and flag wasteful patterns");
+    console.log("  reflect                 Generate learning memory reflections");
+    console.log("  designqc [target]       Capture design screenshots (spec 13)");
+    console.log();
+    console.log("Lifecycle hooks (internal):");
+    console.log("  session-start           Start session tracking");
+    console.log("  session-stop            Finalize session and log data");
+    console.log("  pre-read / post-read    File read hooks");
+    console.log("  pre-write / post-write  File write hooks");
+    break;
+
   default:
-    console.error(`[mink] unknown command: ${command}`);
-    console.error("Usage: mink <session-start|session-stop|init|scan|reflect|pre-read|post-read|pre-write|post-write|bug-search|detect-waste|cron>");
+    console.error(`[mink] unknown command: ${command ?? "(none)"}`);
+    console.error("Run 'mink help' for usage information.");
     process.exit(1);
 }
