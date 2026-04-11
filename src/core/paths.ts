@@ -76,3 +76,11 @@ export function designCapturesDir(cwd: string): string {
 export function designReportPath(cwd: string): string {
   return join(projectDir(cwd), "design-report.json");
 }
+
+export function frameworkAdvisorPath(cwd: string): string {
+  return join(projectDir(cwd), "framework-advisor.md");
+}
+
+export function frameworkAdvisorJsonPath(cwd: string): string {
+  return join(projectDir(cwd), "framework-advisor.json");
+}

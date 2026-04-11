@@ -113,6 +113,12 @@ switch (command) {
     break;
   }
 
+  case "framework-advisor": {
+    const { frameworkAdvisor } = await import("./commands/framework-advisor");
+    await frameworkAdvisor(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "bug-search": {
     const { bugSearch } = await import("./commands/bug-search");
     bugSearch(cwd, process.argv.slice(3).join(" "));
@@ -154,6 +160,7 @@ switch (command) {
     console.log("  detect-waste            Detect and flag wasteful patterns");
     console.log("  reflect                 Generate learning memory reflections");
     console.log("  designqc [target]       Capture design screenshots (spec 13)");
+    console.log("  framework-advisor       Generate framework advisor knowledge file (spec 14)");
     console.log();
     console.log("Lifecycle hooks (internal):");
     console.log("  session-start           Start session tracking");

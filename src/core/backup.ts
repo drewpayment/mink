@@ -46,9 +46,16 @@ function copyDirectoryFiles(
 }
 
 export function createBackup(cwd: string): string {
-  const name = `backup-${formatTimestamp(new Date())}`;
+  const base = `backup-${formatTimestamp(new Date())}`;
+  const dir = backupDirPath(cwd);
+  let name = base;
+  let suffix = 1;
+  while (existsSync(join(dir, name))) {
+    name = `${base}-${suffix}`;
+    suffix++;
+  }
   const src = projectDir(cwd);
-  const dest = join(backupDirPath(cwd), name);
+  const dest = join(dir, name);
   copyDirectoryFiles(src, dest, ["backups"]);
   return name;
 }
@@ -65,7 +72,7 @@ export function listBackups(cwd: string): BackupInfo[] {
 
     const backupPath = join(dir, entry.name);
     const match = entry.name.match(
-      /^backup-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(\d{3})?$/
+      /^backup-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(\d{3})?(?:-\d+)?$/
     );
     let timestamp: Date;
     if (match) {
@@ -92,7 +99,12 @@ export function listBackups(cwd: string): BackupInfo[] {
     backups.push({ name: entry.name, timestamp, path: backupPath, fileCount });
   }
 
-  backups.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  backups.sort((a, b) => {
+    const timeDiff = b.timestamp.getTime() - a.timestamp.getTime();
+    if (timeDiff !== 0) return timeDiff;
+    // Same timestamp — sort by name descending so suffixed names come first
+    return b.name.localeCompare(a.name);
+  });
   return backups;
 }
 
