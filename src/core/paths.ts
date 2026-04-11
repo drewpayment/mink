@@ -40,3 +40,7 @@ export function tokenLedgerArchivePath(cwd: string): string {
 export function bugMemoryPath(cwd: string): string {
   return join(projectDir(cwd), "bug-memory.json");
 }
+
+export function actionLogPath(cwd: string): string {
+  return join(projectDir(cwd), "action-log.md");
+}

@@ -1,4 +1,4 @@
-import { writeFileSync, readFileSync, renameSync, mkdirSync } from "fs";
+import { writeFileSync, readFileSync, appendFileSync, renameSync, mkdirSync } from "fs";
 import { dirname } from "path";
 
 export function atomicWriteJson(filePath: string, data: unknown): void {
@@ -13,6 +13,11 @@ export function atomicWriteText(filePath: string, content: string): void {
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(tmp, content);
   renameSync(tmp, filePath);
+}
+
+export function safeAppendText(filePath: string, content: string): void {
+  mkdirSync(dirname(filePath), { recursive: true });
+  appendFileSync(filePath, content);
 }
 
 export function safeReadJson(filePath: string): unknown | null {

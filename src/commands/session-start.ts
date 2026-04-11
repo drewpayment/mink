@@ -1,7 +1,8 @@
 import { mkdirSync } from "fs";
 import { createSessionState } from "../core/session";
-import { projectDir, sessionPath } from "../core/paths";
+import { projectDir, sessionPath, actionLogPath } from "../core/paths";
 import { atomicWriteJson } from "../core/fs-utils";
+import { createActionLogWriter } from "../core/action-log";
 
 export function sessionStart(cwd: string): void {
   const dir = projectDir(cwd);
@@ -10,7 +11,11 @@ export function sessionStart(cwd: string): void {
   const state = createSessionState();
   atomicWriteJson(sessionPath(cwd), state);
 
-  // Downstream stubs (specs 04, 08):
-  // - Append session header to action log
-  // - Increment lifetime session counter in token ledger
+  // Append session header to action log
+  try {
+    const logWriter = createActionLogWriter(actionLogPath(cwd));
+    logWriter.appendSessionHeader(state.startTimestamp);
+  } catch {
+    // Never crash hooks
+  }
 }

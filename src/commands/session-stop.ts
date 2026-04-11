@@ -5,7 +5,9 @@ import { isSessionState, buildSummary } from "../core/session";
 import { reflect } from "./reflect";
 import { createLedgerFinalizer } from "../core/token-ledger";
 import { loadBugMemory, hasBugForFileInSession } from "../core/bug-memory";
+import { createActionLogWriter, consolidateLog } from "../core/action-log";
 import type { SessionState, SessionFinalizer } from "../types/session";
+import type { ProjectConfig } from "../types/file-index";
 
 function hasActivity(state: SessionState): boolean {
   return Object.keys(state.reads).length > 0 || state.writes.length > 0;
@@ -57,6 +59,21 @@ export function sessionStop(
       effectiveFinalizer.appendSession(summary);
     } else {
       effectiveFinalizer.updateSession(summary);
+    }
+
+    // Append session end to action log and run consolidation
+    try {
+      const logPath = join(projDir, "action-log.md");
+      const logWriter = createActionLogWriter(logPath);
+      logWriter.appendSessionEnd(summary);
+
+      const cfgRaw = safeReadJson(join(projDir, "config.json")) as ProjectConfig | null;
+      consolidateLog(logPath, {
+        maxEntries: cfgRaw?.actionLogMaxEntries ?? 200,
+        retentionDays: cfgRaw?.actionLogRetentionDays ?? 7,
+      });
+    } catch {
+      // Never crash
     }
   }
 

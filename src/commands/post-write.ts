@@ -1,7 +1,7 @@
 import { relative } from "path";
 import { readFileSync } from "fs";
 import { readStdinJson } from "../core/stdin";
-import { sessionPath, fileIndexPath } from "../core/paths";
+import { sessionPath, fileIndexPath, actionLogPath } from "../core/paths";
 import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { createSessionState, isSessionState, recordWrite } from "../core/session";
 import {
@@ -13,6 +13,7 @@ import {
 import { extractDescription } from "../core/description";
 import { estimateTokens, isBinaryFile } from "../core/token-estimate";
 import { isWriteExcluded } from "../core/write-exclusions";
+import { createActionLogWriter } from "../core/action-log";
 import type { SessionState } from "../types/session";
 import type { FileIndex, FileIndexEntry } from "../types/file-index";
 import type { PostToolUseInput } from "../types/hook-input";
@@ -128,9 +129,19 @@ export async function postWrite(cwd: string): Promise<void> {
       upsertEntry(index, result.indexEntry);
     }
 
-    // 2. Action log entry (stub — spec 08 not yet implemented)
-    // TODO: When spec 08 is implemented, append timestamped entry to action log:
-    // { filePath, action: result.action, estimatedTokens: result.estimatedTokens }
+    // 2. Action log entry
+    try {
+      const logWriter = createActionLogWriter(actionLogPath(cwd));
+      logWriter.appendWriteEntry(
+        new Date().toISOString(),
+        filePath,
+        result.action,
+        result.description,
+        result.estimatedTokens
+      );
+    } catch {
+      // Never crash
+    }
 
     // 3. Session state update
     recordWrite(state, filePath, result.action, result.estimatedTokens);
