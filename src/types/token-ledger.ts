@@ -34,7 +34,10 @@ export interface LedgerSession {
   estimatedSavings: number;
 }
 
+import type { WasteFlag } from "./waste-detection";
+
 export interface TokenLedger {
   lifetime: LifetimeCounters;
   sessions: LedgerSession[];
+  wasteFlags?: WasteFlag[];
 }

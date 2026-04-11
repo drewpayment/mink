@@ -59,6 +59,12 @@ switch (command) {
     break;
   }
 
+  case "detect-waste": {
+    const { detectWaste } = await import("./commands/detect-waste");
+    detectWaste(cwd);
+    break;
+  }
+
   case "bug-search": {
     const query = process.argv.slice(3).join(" ");
     if (!query) {
@@ -88,6 +94,6 @@ switch (command) {
 
   default:
     console.error(`[mink] unknown command: ${command}`);
-    console.error("Usage: mink <session-start|session-stop|init|scan|reflect|pre-read|post-read|pre-write|post-write|bug-search>");
+    console.error("Usage: mink <session-start|session-stop|init|scan|reflect|pre-read|post-read|pre-write|post-write|bug-search|detect-waste>");
     process.exit(1);
 }
