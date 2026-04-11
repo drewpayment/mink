@@ -77,6 +77,12 @@ switch (command) {
     break;
   }
 
+  case "dashboard": {
+    const { dashboard } = await import("./commands/dashboard");
+    await dashboard(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "daemon": {
     const { daemon } = await import("./commands/daemon");
     await daemon(cwd, process.argv.slice(3));
@@ -139,6 +145,7 @@ switch (command) {
     console.log("  status                  Display project health at a glance");
     console.log("  scan [--check]          Force a full file index rescan");
     console.log("  config [key] [value]    Manage global user settings");
+    console.log("  dashboard [--port=N]    Open the real-time web dashboard");
     console.log("  daemon <cmd>            Manage the background daemon (start|stop|restart|logs)");
     console.log("  cron <cmd> [id]         Manage scheduled tasks (list|run|retry)");
     console.log("  update [options]        Update Mink across registered projects");
