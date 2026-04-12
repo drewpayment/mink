@@ -1,5 +1,5 @@
 {
-  "name": "mink",
+  "name": "@drewpayment/mink",
   "version": "0.1.0",
   "description": "A hidden presence that moves alongside the developer — token efficiency and cross-project wiki for AI coding assistants",
   "type": "module",
@@ -16,6 +16,9 @@
   "files": [
     "src/**/*.ts"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
   "dependencies": {
     "puppeteer-core": "^24.0.0"
