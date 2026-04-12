@@ -15,7 +15,10 @@ import {
   triggerDeadLetterRetry,
   triggerRescan,
 } from "./dashboard-api";
+import { listRegisteredProjects, getProjectMeta } from "./project-registry";
+import { generateProjectId } from "./project-id";
 import type { StateFileId, StateChangeEvent } from "../types/dashboard";
+import type { RegisteredProject } from "./project-registry";
 
 // ── MIME types for static file serving ────────────────────────────────────
 const MIME_TYPES: Record<string, string> = {
@@ -64,7 +67,7 @@ class SSEManager {
   start(): void {
     this.keepAliveInterval = setInterval(() => {
       this.sendRaw(": keepalive\n\n");
-    }, 30_000);
+    }, 15_000);
   }
 
   stop(): void {
@@ -118,6 +121,66 @@ class SSEManager {
   get clientCount(): number {
     return this.clients.size;
   }
+}
+
+// ── Project Resolution ────────────────────────────────────────────────────
+
+function resolveProjectCwd(
+  url: URL,
+  defaultCwd: string
+): string | null {
+  const projectId = url.searchParams.get("project");
+  if (!projectId) return defaultCwd;
+
+  // If the requested project matches the currently active project, use it directly
+  // (handles startup projects that may not be in the registry yet)
+  if (projectId === generateProjectId(defaultCwd)) return defaultCwd;
+
+  const projects = listRegisteredProjects();
+  const match = projects.find((p) => p.id === projectId);
+  if (!match) return null;
+
+  return match.cwd;
+}
+
+function getProjectsList(
+  startupCwd: string,
+  activeCwd: string
+): {
+  projects: RegisteredProject[];
+  activeProjectId: string;
+} {
+  const activeId = generateProjectId(activeCwd);
+  const registered = listRegisteredProjects();
+
+  // Ensure startup project is always in the list
+  const startupId = generateProjectId(startupCwd);
+  const hasStartup = registered.some((p) => p.id === startupId);
+  if (!hasStartup) {
+    const meta = getProjectMeta(projectDir(startupCwd));
+    registered.unshift({
+      id: startupId,
+      cwd: startupCwd,
+      name: meta?.name ?? basename(startupCwd),
+      version: meta?.version ?? "0.1.0",
+    });
+  }
+
+  // Ensure active project is in the list (if different from startup)
+  if (activeId !== startupId) {
+    const hasActive = registered.some((p) => p.id === activeId);
+    if (!hasActive) {
+      const meta = getProjectMeta(projectDir(activeCwd));
+      registered.unshift({
+        id: activeId,
+        cwd: activeCwd,
+        name: meta?.name ?? basename(activeCwd),
+        version: meta?.version ?? "0.1.0",
+      });
+    }
+  }
+
+  return { projects: registered, activeProjectId: activeId };
 }
 
 // ── File Watcher ───────────────────────────────────────────────────────────
@@ -209,8 +272,22 @@ export function startDashboardServer(
   const sseManager = new SSEManager();
   sseManager.start();
 
+  // Mutable active project state (swappable via project switcher)
+  let activeCwd = cwd;
+
+  function swapWatcher(newCwd: string) {
+    activeWatcher.close();
+    activeCwd = newCwd;
+    activeWatcher = createFileWatcher(newCwd, (fileId) => {
+      sseManager.broadcast({
+        fileId,
+        timestamp: new Date().toISOString(),
+      });
+    });
+  }
+
   // Start file watcher
-  const fileWatcher = createFileWatcher(cwd, (fileId) => {
+  let activeWatcher = createFileWatcher(cwd, (fileId) => {
     sseManager.broadcast({
       fileId,
       timestamp: new Date().toISOString(),
@@ -237,6 +314,7 @@ export function startDashboardServer(
   const server = Bun.serve({
     port,
     hostname,
+    idleTimeout: 0, // Disable idle timeout — SSE connections are long-lived
     async fetch(req) {
       const url = new URL(req.url);
       const pathname = url.pathname;
@@ -298,6 +376,9 @@ export function startDashboardServer(
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             sseManager.addClient(clientId, controller);
+            // Send initial comment immediately to establish the stream
+            // and prevent Bun from treating it as idle/complete
+            controller.enqueue(encoder.encode(": connected\nretry: 3000\n\n"));
           },
           cancel() {
             sseManager.removeClient(clientId);
@@ -316,24 +397,35 @@ export function startDashboardServer(
 
       // ── REST API (GET) ───────────────────────────────────────────
       if (method === "GET") {
+        // GET /api/projects — list all registered projects (no project param needed)
+        if (pathname === "/api/projects") {
+          return jsonResponse(getProjectsList(cwd, activeCwd));
+        }
+
+        // Resolve project cwd from ?project=<id> query param
+        const resolvedCwd = resolveProjectCwd(url, activeCwd);
+        if (resolvedCwd === null) {
+          return jsonResponse({ error: "Project not found" }, 404);
+        }
+
         try {
           switch (pathname) {
             case "/api/overview":
-              return jsonResponse(loadOverview(cwd));
+              return jsonResponse(loadOverview(resolvedCwd));
             case "/api/token-ledger":
-              return jsonResponse(loadTokenLedgerPanel(cwd));
+              return jsonResponse(loadTokenLedgerPanel(resolvedCwd));
             case "/api/file-index":
-              return jsonResponse(loadFileIndexPanel(cwd));
+              return jsonResponse(loadFileIndexPanel(resolvedCwd));
             case "/api/scheduler":
-              return jsonResponse(loadSchedulerPanel(cwd));
+              return jsonResponse(loadSchedulerPanel(resolvedCwd));
             case "/api/learning-memory":
-              return jsonResponse(loadLearningMemoryPanel(cwd));
+              return jsonResponse(loadLearningMemoryPanel(resolvedCwd));
             case "/api/action-log":
-              return jsonResponse(loadActionLogPanel(cwd));
+              return jsonResponse(loadActionLogPanel(resolvedCwd));
             case "/api/bugs":
-              return jsonResponse(loadBugLogPanel(cwd));
+              return jsonResponse(loadBugLogPanel(resolvedCwd));
             case "/api/design":
-              return jsonResponse(loadDesignPanel(cwd));
+              return jsonResponse(loadDesignPanel(resolvedCwd));
           }
 
           // GET /api/design-images/:filename — serve captured screenshots
@@ -342,7 +434,7 @@ export function startDashboardServer(
             if (!filename || filename.includes("..") || filename.includes("/")) {
               return jsonResponse({ error: "Invalid filename" }, 400);
             }
-            const imgPath = join(designCapturesDir(cwd), filename);
+            const imgPath = join(designCapturesDir(resolvedCwd), filename);
             const file = Bun.file(imgPath);
             if (await file.exists()) {
               return new Response(file, {
@@ -365,6 +457,43 @@ export function startDashboardServer(
 
       // ── REST API (POST) ──────────────────────────────────────────
       if (method === "POST") {
+        // POST /api/switch-project — swap the active project + file watcher
+        if (pathname === "/api/switch-project") {
+          try {
+            const body = await req.json() as { projectId?: string };
+            const projectId = body.projectId;
+            if (!projectId) {
+              return jsonResponse({ success: false, error: "Missing projectId" }, 400);
+            }
+
+            const projects = listRegisteredProjects();
+            const match = projects.find((p) => p.id === projectId);
+            if (!match) {
+              return jsonResponse({ success: false, error: "Project not found" }, 404);
+            }
+
+            swapWatcher(match.cwd);
+            sseManager.broadcast({
+              fileId: "project-switched" as StateFileId,
+              projectId,
+              timestamp: new Date().toISOString(),
+            });
+
+            return jsonResponse({ success: true });
+          } catch (err) {
+            return jsonResponse(
+              { success: false, error: err instanceof Error ? err.message : String(err) },
+              500
+            );
+          }
+        }
+
+        // Resolve project cwd for POST actions
+        const resolvedCwd = resolveProjectCwd(url, activeCwd);
+        if (resolvedCwd === null) {
+          return jsonResponse({ error: "Project not found" }, 404);
+        }
+
         // POST /api/tasks/:id/run
         if (pathname.startsWith("/api/tasks/") && pathname.endsWith("/run")) {
           const taskId = extractPathParam(pathname, "/api/tasks/");
@@ -372,7 +501,7 @@ export function startDashboardServer(
           if (!cleanId) {
             return jsonResponse({ success: false, error: "Missing task ID" }, 400);
           }
-          return triggerTask(cwd, cleanId).then((result) =>
+          return triggerTask(resolvedCwd, cleanId).then((result) =>
             jsonResponse(result, result.success ? 200 : 500)
           );
         }
@@ -387,14 +516,14 @@ export function startDashboardServer(
           if (!cleanId) {
             return jsonResponse({ success: false, error: "Missing task ID" }, 400);
           }
-          return triggerDeadLetterRetry(cwd, cleanId).then((result) =>
+          return triggerDeadLetterRetry(resolvedCwd, cleanId).then((result) =>
             jsonResponse(result, result.success ? 200 : 500)
           );
         }
 
         // POST /api/rescan
         if (pathname === "/api/rescan") {
-          return triggerRescan(cwd).then((result) =>
+          return triggerRescan(resolvedCwd).then((result) =>
             jsonResponse(result, result.success ? 200 : 500)
           );
         }
@@ -444,7 +573,7 @@ export function startDashboardServer(
     url: serverUrl,
     close() {
       sseManager.stop();
-      fileWatcher.close();
+      activeWatcher.close();
       server.stop(true);
     },
   };

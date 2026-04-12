@@ -4,18 +4,15 @@ import { useTheme } from "next-themes";
 import { Sun, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConnectionIndicator } from "./connection-indicator";
-import { useDashboardStore } from "@/hooks/use-dashboard-store";
+import { ProjectSwitcher } from "./project-switcher";
 
 export function Header() {
   const { theme, setTheme } = useTheme();
-  const projectName = useDashboardStore((s) => s.overview?.project?.name);
 
   return (
     <header className="flex h-12 items-center justify-between border-b border-border bg-card px-4">
       <div className="flex items-center gap-3">
-        {projectName && (
-          <h1 className="text-sm font-medium">{projectName}</h1>
-        )}
+        <ProjectSwitcher />
       </div>
       <div className="flex items-center gap-4">
         <ConnectionIndicator />

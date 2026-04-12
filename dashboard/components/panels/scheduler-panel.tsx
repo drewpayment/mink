@@ -37,14 +37,16 @@ export function SchedulerPanel() {
   const deadLetters = useDashboardStore((s) => s.deadLetters);
   const health = useDashboardStore((s) => s.health);
   const overview = useDashboardStore((s) => s.overview);
+  const activeProjectId = useDashboardStore((s) => s.activeProjectId);
   const [loadingTasks, setLoadingTasks] = useState<Set<string>>(new Set());
 
   const daemonRunning = overview?.daemon?.running ?? false;
+  const pid = activeProjectId ?? undefined;
 
   async function handleRunTask(taskId: string) {
     setLoadingTasks((prev) => new Set(prev).add(taskId));
     try {
-      await triggerTaskRun(taskId);
+      await triggerTaskRun(taskId, pid);
     } finally {
       setLoadingTasks((prev) => {
         const next = new Set(prev);
@@ -57,7 +59,7 @@ export function SchedulerPanel() {
   async function handleRetryDeadLetter(taskId: string) {
     setLoadingTasks((prev) => new Set(prev).add(`dl-${taskId}`));
     try {
-      await triggerDeadLetterRetry(taskId);
+      await triggerDeadLetterRetry(taskId, pid);
     } finally {
       setLoadingTasks((prev) => {
         const next = new Set(prev);
@@ -70,7 +72,7 @@ export function SchedulerPanel() {
   async function handleRescan() {
     setLoadingTasks((prev) => new Set(prev).add("rescan"));
     try {
-      await triggerRescan();
+      await triggerRescan(pid);
     } finally {
       setLoadingTasks((prev) => {
         const next = new Set(prev);

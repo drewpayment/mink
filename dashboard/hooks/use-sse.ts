@@ -11,6 +11,7 @@ import {
   fetchActionLog,
   fetchBugs,
   fetchDesign,
+  fetchProjects,
 } from "@/lib/api-client";
 import type { ActionLogPayload, SchedulerPayload } from "@mink/types/dashboard";
 
@@ -47,10 +48,11 @@ function applySchedulerData(data: SchedulerPayload) {
   useDashboardStore.getState().setScheduler(tasks, definitions, deadLetters);
 }
 
-function fetchAllData() {
+export function fetchAllData() {
   const store = useDashboardStore.getState();
+  const pid = store.activeProjectId ?? undefined;
 
-  fetchOverview()
+  fetchOverview(pid)
     .then((data) => {
       store.setOverview(data);
       if (data.daemon?.running) {
@@ -61,50 +63,61 @@ function fetchAllData() {
     })
     .catch(console.warn);
 
-  fetchTokenLedger().then(store.setLedger).catch(console.warn);
-  fetchFileIndex().then(store.setFileIndex).catch(console.warn);
-  fetchScheduler().then(applySchedulerData).catch(console.warn);
-  fetchLearningMemory().then(store.setLearningMemory).catch(console.warn);
-  fetchActionLog()
+  fetchTokenLedger(pid).then(store.setLedger).catch(console.warn);
+  fetchFileIndex(pid).then(store.setFileIndex).catch(console.warn);
+  fetchScheduler(pid).then(applySchedulerData).catch(console.warn);
+  fetchLearningMemory(pid).then(store.setLearningMemory).catch(console.warn);
+  fetchActionLog(pid)
     .then((data) => store.setActionLog(parseActionLogEntries(data)))
     .catch(console.warn);
-  fetchBugs()
+  fetchBugs(pid)
     .then((data) => store.setBugs(data.entries || []))
     .catch(console.warn);
-  fetchDesign()
+  fetchDesign(pid)
     .then((data) => store.setDesignImages(data.images))
     .catch(console.warn);
 }
 
-function handleEvent(payload: { fileId?: string; type?: string }) {
+function handleEvent(payload: { fileId?: string; type?: string; projectId?: string }) {
   const store = useDashboardStore.getState();
   const fileId = payload.fileId || payload.type;
+  const pid = store.activeProjectId ?? undefined;
+
+  // Handle project switch broadcast (from another tab)
+  // If activeProjectId already matches, this tab initiated the switch — skip to avoid double-fetch
+  if (fileId === "project-switched" && payload.projectId) {
+    if (store.activeProjectId !== payload.projectId) {
+      store.setActiveProject(payload.projectId);
+      fetchAllData();
+    }
+    return;
+  }
 
   switch (fileId) {
     case "token-ledger":
-      fetchTokenLedger().then(store.setLedger).catch(console.warn);
+      fetchTokenLedger(pid).then(store.setLedger).catch(console.warn);
       break;
     case "file-index":
-      fetchFileIndex().then(store.setFileIndex).catch(console.warn);
+      fetchFileIndex(pid).then(store.setFileIndex).catch(console.warn);
       break;
     case "scheduler-manifest":
-      fetchScheduler().then(applySchedulerData).catch(console.warn);
+      fetchScheduler(pid).then(applySchedulerData).catch(console.warn);
       break;
     case "learning-memory":
-      fetchLearningMemory().then(store.setLearningMemory).catch(console.warn);
+      fetchLearningMemory(pid).then(store.setLearningMemory).catch(console.warn);
       break;
     case "action-log":
-      fetchActionLog()
+      fetchActionLog(pid)
         .then((data) => store.setActionLog(parseActionLogEntries(data)))
         .catch(console.warn);
       break;
     case "bug-memory":
-      fetchBugs()
+      fetchBugs(pid)
         .then((data) => store.setBugs(data.entries || []))
         .catch(console.warn);
       break;
     case "session":
-      fetchOverview()
+      fetchOverview(pid)
         .then((data) => {
           store.setOverview(data);
           if (data.daemon?.running) {
@@ -116,7 +129,7 @@ function handleEvent(payload: { fileId?: string; type?: string }) {
         .catch(console.warn);
       break;
     case "design-report":
-      fetchDesign()
+      fetchDesign(pid)
         .then((data) => store.setDesignImages(data.images))
         .catch(console.warn);
       break;
@@ -144,7 +157,17 @@ export function useSSE() {
       es.onopen = () => {
         reconnectDelay.current = 1000;
         useDashboardStore.getState().setConnected(true);
-        fetchAllData();
+        // Fetch project list first so activeProjectId is set before data fetches
+        fetchProjects()
+          .then((data) => {
+            useDashboardStore.getState().setProjects(data.projects, data.activeProjectId);
+            fetchAllData();
+          })
+          .catch((err) => {
+            console.warn("[mink] Failed to fetch projects:", err);
+            // Fall back to fetching data without project param
+            fetchAllData();
+          });
       };
 
       es.onmessage = (event) => {

@@ -4,6 +4,7 @@ import type { LearningMemory } from "@mink/types/learning-memory";
 import type { BugEntry } from "@mink/types/bug-memory";
 import type { WasteFlag } from "@mink/types/waste-detection";
 import type { TaskRunRecord, TaskDefinition, DeadLetterEntry } from "@mink/types/scheduler";
+import type { RegisteredProject } from "@/types/project";
 
 export interface ActionLogRow {
   time: string;
@@ -15,6 +16,8 @@ export interface ActionLogRow {
 
 interface DashboardState {
   connected: boolean;
+  projects: RegisteredProject[];
+  activeProjectId: string | null;
   overview: OverviewPayload | null;
   ledger: TokenLedgerPayload | null;
   fileIndex: FileIndexPayload | null;
@@ -29,6 +32,8 @@ interface DashboardState {
   designImages: DesignImagePayload[];
 
   setConnected: (v: boolean) => void;
+  setProjects: (projects: RegisteredProject[], activeId: string) => void;
+  setActiveProject: (id: string) => void;
   setOverview: (data: OverviewPayload) => void;
   setLedger: (data: TokenLedgerPayload) => void;
   setFileIndex: (data: FileIndexPayload) => void;
@@ -43,6 +48,8 @@ interface DashboardState {
 
 export const useDashboardStore = create<DashboardState>((set) => ({
   connected: false,
+  projects: [],
+  activeProjectId: null,
   overview: null,
   ledger: null,
   fileIndex: null,
@@ -57,6 +64,23 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   designImages: [],
 
   setConnected: (v) => set({ connected: v }),
+  setProjects: (projects, activeId) => set({ projects, activeProjectId: activeId }),
+  setActiveProject: (id) =>
+    set({
+      activeProjectId: id,
+      overview: null,
+      ledger: null,
+      fileIndex: null,
+      tasks: [],
+      taskDefinitions: [],
+      deadLetters: [],
+      health: null,
+      learningMemory: null,
+      actionLog: [],
+      bugs: [],
+      wasteFlags: [],
+      designImages: [],
+    }),
   setOverview: (data) => set({ overview: data }),
   setLedger: (data) => set({ ledger: data, wasteFlags: data.wasteFlags ?? [] }),
   setFileIndex: (data) => set({ fileIndex: data }),

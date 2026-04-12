@@ -17,12 +17,14 @@ export type StateFileId =
   | "scheduler-manifest"
   | "session"
   | "project-meta"
-  | "design-report";
+  | "design-report"
+  | "project-switched";
 
 // ── SSE Event ──────────────────────────────────────────────────────────────
 
 export interface StateChangeEvent {
   fileId: StateFileId;
+  projectId?: string;
   timestamp: string;
 }
 

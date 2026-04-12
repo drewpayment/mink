@@ -1,55 +1,75 @@
 import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, SchedulerPayload, BugLogPayload, ActionLogPayload, ActionResult, DesignPayload } from "@mink/types/dashboard";
 import type { LearningMemory } from "@mink/types/learning-memory";
+import type { ProjectsResponse } from "@/types/project";
 
-async function fetchApi<T>(path: string): Promise<T> {
-  const res = await fetch(path);
+async function fetchApi<T>(path: string, projectId?: string): Promise<T> {
+  const url = projectId
+    ? `${path}${path.includes("?") ? "&" : "?"}project=${encodeURIComponent(projectId)}`
+    : path;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`API error ${res.status}: ${path}`);
   return res.json();
 }
 
-export function fetchOverview() {
-  return fetchApi<OverviewPayload>("/api/overview");
+export function fetchProjects() {
+  return fetchApi<ProjectsResponse>("/api/projects");
 }
 
-export function fetchTokenLedger() {
-  return fetchApi<TokenLedgerPayload>("/api/token-ledger");
+export function fetchOverview(projectId?: string) {
+  return fetchApi<OverviewPayload>("/api/overview", projectId);
 }
 
-export function fetchFileIndex() {
-  return fetchApi<FileIndexPayload>("/api/file-index");
+export function fetchTokenLedger(projectId?: string) {
+  return fetchApi<TokenLedgerPayload>("/api/token-ledger", projectId);
 }
 
-export function fetchScheduler() {
-  return fetchApi<SchedulerPayload>("/api/scheduler");
+export function fetchFileIndex(projectId?: string) {
+  return fetchApi<FileIndexPayload>("/api/file-index", projectId);
 }
 
-export function fetchLearningMemory() {
-  return fetchApi<LearningMemory>("/api/learning-memory");
+export function fetchScheduler(projectId?: string) {
+  return fetchApi<SchedulerPayload>("/api/scheduler", projectId);
 }
 
-export function fetchActionLog() {
-  return fetchApi<ActionLogPayload>("/api/action-log");
+export function fetchLearningMemory(projectId?: string) {
+  return fetchApi<LearningMemory>("/api/learning-memory", projectId);
 }
 
-export function fetchBugs() {
-  return fetchApi<BugLogPayload>("/api/bugs");
+export function fetchActionLog(projectId?: string) {
+  return fetchApi<ActionLogPayload>("/api/action-log", projectId);
 }
 
-export function fetchDesign() {
-  return fetchApi<DesignPayload>("/api/design");
+export function fetchBugs(projectId?: string) {
+  return fetchApi<BugLogPayload>("/api/bugs", projectId);
 }
 
-export async function triggerTaskRun(taskId: string): Promise<ActionResult> {
-  const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/run`, { method: "POST" });
+export function fetchDesign(projectId?: string) {
+  return fetchApi<DesignPayload>("/api/design", projectId);
+}
+
+export async function switchProject(projectId: string): Promise<ActionResult> {
+  const res = await fetch("/api/switch-project", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId }),
+  });
   return res.json();
 }
 
-export async function triggerDeadLetterRetry(taskId: string): Promise<ActionResult> {
-  const res = await fetch(`/api/dead-letter/${encodeURIComponent(taskId)}/retry`, { method: "POST" });
+export async function triggerTaskRun(taskId: string, projectId?: string): Promise<ActionResult> {
+  const query = projectId ? `?project=${encodeURIComponent(projectId)}` : "";
+  const res = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/run${query}`, { method: "POST" });
   return res.json();
 }
 
-export async function triggerRescan(): Promise<ActionResult> {
-  const res = await fetch("/api/rescan", { method: "POST" });
+export async function triggerDeadLetterRetry(taskId: string, projectId?: string): Promise<ActionResult> {
+  const query = projectId ? `?project=${encodeURIComponent(projectId)}` : "";
+  const res = await fetch(`/api/dead-letter/${encodeURIComponent(taskId)}/retry${query}`, { method: "POST" });
+  return res.json();
+}
+
+export async function triggerRescan(projectId?: string): Promise<ActionResult> {
+  const query = projectId ? `?project=${encodeURIComponent(projectId)}` : "";
+  const res = await fetch(`/api/rescan${query}`, { method: "POST" });
   return res.json();
 }
