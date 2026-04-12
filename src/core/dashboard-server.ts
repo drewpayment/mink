@@ -1,5 +1,6 @@
 import { watch, type FSWatcher } from "fs";
-import { basename } from "path";
+import { existsSync } from "fs";
+import { basename, join, extname } from "path";
 import { projectDir, designCapturesDir } from "./paths";
 import {
   loadOverview,
@@ -14,8 +15,24 @@ import {
   triggerDeadLetterRetry,
   triggerRescan,
 } from "./dashboard-api";
-import { getDashboardHtml } from "./dashboard/get-dashboard-html";
 import type { StateFileId, StateChangeEvent } from "../types/dashboard";
+
+// ── MIME types for static file serving ────────────────────────────────────
+const MIME_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".txt": "text/plain; charset=utf-8",
+};
 
 // ── State File Mapping ─────────────────────────────────────────────────────
 
@@ -200,9 +217,22 @@ export function startDashboardServer(
     });
   });
 
-  // Cache the HTML
-  const html = getDashboardHtml();
+  // Resolve the Next.js static build directory
+  const dashboardOutDir = join(
+    import.meta.dir,
+    "..",
+    "..",
+    "dashboard",
+    "out"
+  );
+  const dashboardBuilt = existsSync(join(dashboardOutDir, "index.html"));
   let clientIdCounter = 0;
+
+  if (!dashboardBuilt) {
+    console.warn(
+      "[mink] dashboard not built. Run: cd dashboard && bun run build"
+    );
+  }
 
   const server = Bun.serve({
     port,
@@ -212,11 +242,54 @@ export function startDashboardServer(
       const pathname = url.pathname;
       const method = req.method;
 
-      // ── Static ───────────────────────────────────────────────────
-      if (method === "GET" && pathname === "/") {
-        return new Response(html, {
-          headers: { "Content-Type": "text/html; charset=utf-8" },
-        });
+      // ── Static file serving (Next.js build) ─────────────────────
+      if (method === "GET" && !pathname.startsWith("/api/")) {
+        if (!dashboardBuilt) {
+          if (pathname === "/") {
+            return new Response(
+              "<html><body><h1>Mink Dashboard</h1><p>Dashboard not built. Run: <code>cd dashboard &amp;&amp; bun run build</code></p></body></html>",
+              { headers: { "Content-Type": "text/html; charset=utf-8" } }
+            );
+          }
+        } else {
+          // Serve from dashboard/out/
+          let filePath: string;
+          if (pathname === "/") {
+            filePath = join(dashboardOutDir, "index.html");
+          } else {
+            filePath = join(dashboardOutDir, pathname);
+          }
+
+          // Security: prevent directory traversal
+          if (!filePath.startsWith(dashboardOutDir)) {
+            return jsonResponse({ error: "Forbidden" }, 403);
+          }
+
+          const file = Bun.file(filePath);
+          if (await file.exists()) {
+            const ext = extname(filePath);
+            const contentType = MIME_TYPES[ext] || "application/octet-stream";
+            return new Response(file, {
+              headers: { "Content-Type": contentType },
+            });
+          }
+
+          // Client-side routing fallback: try {pathname}.html then index.html
+          const htmlFile = Bun.file(filePath + ".html");
+          if (await htmlFile.exists()) {
+            return new Response(htmlFile, {
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
+          }
+
+          // SPA fallback — serve index.html for unmatched routes
+          const indexFile = Bun.file(join(dashboardOutDir, "index.html"));
+          if (await indexFile.exists()) {
+            return new Response(indexFile, {
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
+          }
+        }
       }
 
       // ── SSE ──────────────────────────────────────────────────────
