@@ -3,7 +3,13 @@ import { mkdirSync, existsSync } from "fs";
 import { resolve, dirname, basename, join } from "path";
 import { projectDir, projectMetaPath } from "../core/paths";
 import { generateProjectId } from "../core/project-id";
-import { atomicWriteJson, safeReadJson } from "../core/fs-utils";
+import { atomicWriteJson, atomicWriteText, safeReadJson } from "../core/fs-utils";
+import {
+  isWikiEnabled,
+  isVaultInitialized,
+  isInsideVault,
+  vaultProjects,
+} from "../core/vault";
 
 interface HookCommand {
   type: "command";
@@ -119,6 +125,10 @@ export async function init(cwd: string): Promise<void> {
 
   const projectId = generateProjectId(cwd);
 
+  // Detect notes project type
+  const isNotesProject =
+    isWikiEnabled() && isVaultInitialized() && isInsideVault(cwd);
+
   // Write project metadata
   const metaPath = projectMetaPath(cwd);
   const existingMeta = safeReadJson(metaPath) as Record<string, unknown> | null;
@@ -128,6 +138,7 @@ export async function init(cwd: string): Promise<void> {
     name: basename(cwd),
     initTimestamp: existingMeta?.initTimestamp ?? new Date().toISOString(),
     version: "0.1.0",
+    ...(isNotesProject ? { projectType: "notes" } : {}),
   });
 
   if (upgrading) {
@@ -152,8 +163,42 @@ export async function init(cwd: string): Promise<void> {
   if (!existsSync(memPath)) {
     const { seedLearningMemory } = await import("../core/seed");
     const { serializeLearningMemory } = await import("../core/learning-memory");
-    const { atomicWriteText } = await import("../core/fs-utils");
     const mem = seedLearningMemory(cwd);
     atomicWriteText(memPath, serializeLearningMemory(mem));
+  }
+
+  // Create wiki project overview if wiki is enabled
+  if (isWikiEnabled() && isVaultInitialized() && !isNotesProject) {
+    try {
+      const projectSlug = basename(cwd);
+      const overviewPath = join(vaultProjects(projectSlug), "overview.md");
+      if (!existsSync(overviewPath)) {
+        const now = new Date().toISOString();
+        const overview = [
+          `---`,
+          `created: "${now}"`,
+          `updated: "${now}"`,
+          `tags: [project, ${projectSlug}]`,
+          `category: projects`,
+          `---`,
+          ``,
+          `# ${projectSlug}`,
+          ``,
+          `**Path**: \`${cwd}\``,
+          `**Initialized**: ${now.split("T")[0]}`,
+          ``,
+          `## Overview`,
+          ``,
+          `## Key Decisions`,
+          ``,
+          `## Links`,
+          ``,
+        ].join("\n");
+        atomicWriteText(overviewPath, overview);
+        console.log(`  wiki:     ${overviewPath}`);
+      }
+    } catch {
+      // Non-critical — don't fail init
+    }
   }
 }

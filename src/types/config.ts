@@ -4,6 +4,7 @@ export interface GlobalConfig {
   "wiki.sync-mode"?: string;
   "wiki.git-backup"?: string;
   "wiki.git-remote"?: string;
+  "notes.default-category"?: string;
 }
 
 export type ConfigKey = keyof GlobalConfig & string;
@@ -45,6 +46,12 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     default: "origin",
     envVar: "MINK_WIKI_GIT_REMOTE",
     description: "Git remote name for push",
+  },
+  {
+    key: "notes.default-category",
+    default: "inbox",
+    envVar: "MINK_NOTES_DEFAULT_CATEGORY",
+    description: "Default category for notes captured via CLI",
   },
 ];
 

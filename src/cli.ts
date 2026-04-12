@@ -119,6 +119,24 @@ switch (command) {
     break;
   }
 
+  case "wiki": {
+    const { wiki } = await import("./commands/wiki");
+    await wiki(cwd, process.argv.slice(3));
+    break;
+  }
+
+  case "note": {
+    const { note } = await import("./commands/note");
+    await note(cwd, process.argv.slice(3));
+    break;
+  }
+
+  case "skill": {
+    const { skill } = await import("./commands/skill");
+    await skill(process.argv.slice(3));
+    break;
+  }
+
   case "bug-search": {
     const { bugSearch } = await import("./commands/bug-search");
     bugSearch(cwd, process.argv.slice(3).join(" "));
@@ -139,6 +157,24 @@ switch (command) {
     break;
   }
 
+  case "version":
+  case "--version":
+  case "-v": {
+    const { resolve, dirname } = await import("path");
+    const cliPath = resolve(dirname(new URL(import.meta.url).pathname));
+    const { readFileSync } = await import("fs");
+    try {
+      const pkg = JSON.parse(
+        readFileSync(resolve(cliPath, "../package.json"), "utf-8")
+      );
+      console.log(`mink ${pkg.version}`);
+    } catch {
+      console.log("mink (unknown version)");
+    }
+    console.log(`  location: ${cliPath}`);
+    break;
+  }
+
   case "help":
   case "--help":
   case "-h":
@@ -151,6 +187,16 @@ switch (command) {
     console.log("  status                  Display project health at a glance");
     console.log("  scan [--check]          Force a full file index rescan");
     console.log("  config [key] [value]    Manage global user settings");
+    console.log();
+    console.log("Notes & Wiki:");
+    console.log("  wiki <cmd>              Manage the notes/wiki vault (init|status|rebuild-index|organize)");
+    console.log("  note \"text\"             Capture a note to the vault");
+    console.log("  note --daily [text]     Create or append to today's daily note");
+    console.log("  note list [filters]     List notes (--category, --tag, --recent)");
+    console.log("  note search <term>      Full-text search across the vault");
+    console.log("  skill install           Install /mink:note skill for Claude Code");
+    console.log();
+    console.log("Automation & Analysis:");
     console.log("  dashboard [--port=N]    Open the real-time web dashboard");
     console.log("  daemon <cmd>            Manage the background daemon (start|stop|restart|logs)");
     console.log("  cron <cmd> [id]         Manage scheduled tasks (list|run|retry)");
