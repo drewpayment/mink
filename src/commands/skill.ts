@@ -7,10 +7,14 @@ import {
   unlinkSync,
   readdirSync,
   rmSync,
+  symlinkSync,
+  lstatSync,
 } from "fs";
 
 // Standard skills directory used by the skills CLI ecosystem
 const AGENTS_SKILLS_DIR = join(homedir(), ".agents", "skills");
+// Claude Code looks for skills via symlinks here
+const CLAUDE_SKILLS_DIR = join(homedir(), ".claude", "skills");
 
 function getSkillsSourceDir(): string {
   // Skills live at repo-root/skills/ (the standard skills/{name}/SKILL.md layout)
@@ -86,6 +90,24 @@ function skillInstall(name?: string): void {
     mkdirSync(destDir, { recursive: true });
     copyDirRecursive(srcDir, destDir);
 
+    // Create symlink in ~/.claude/skills/ (how Claude Code discovers skills)
+    mkdirSync(CLAUDE_SKILLS_DIR, { recursive: true });
+    const symlink = join(CLAUDE_SKILLS_DIR, skillName);
+    try {
+      if (existsSync(symlink)) {
+        // Remove old file or symlink
+        if (lstatSync(symlink).isSymbolicLink() || lstatSync(symlink).isFile()) {
+          unlinkSync(symlink);
+        } else {
+          rmSync(symlink, { recursive: true, force: true });
+        }
+      }
+      const relativeTarget = join("..", "..", ".agents", "skills", skillName);
+      symlinkSync(relativeTarget, symlink);
+    } catch {
+      // Non-critical — skill still works from ~/.agents/skills/
+    }
+
     console.log(`[mink] installed: ${skillName} -> ${destDir}`);
   }
 
@@ -105,6 +127,15 @@ function skillUninstall(name?: string): void {
     }
 
     rmSync(destDir, { recursive: true, force: true });
+
+    // Remove symlink from ~/.claude/skills/
+    const symlink = join(CLAUDE_SKILLS_DIR, skillName);
+    try {
+      if (existsSync(symlink)) unlinkSync(symlink);
+    } catch {
+      // Non-critical
+    }
+
     console.log(`[mink] uninstalled: ${skillName}`);
   }
 }
