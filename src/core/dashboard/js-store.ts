@@ -17,6 +17,7 @@ const Store = (() => {
     health: null,
     learningMemory: { projectName: '', sections: {} },
     actionLog: [],
+
     fileIndex: { header: null, entries: {} },
     bugs: [],
     wasteFlags: [],

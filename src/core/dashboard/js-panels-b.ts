@@ -92,10 +92,12 @@ function renderFileIndexPanel(data, scroller) {
   const total = hits + misses;
   setText('file-index-hit-ratio', total > 0 ? ((hits / total) * 100).toFixed(1) + '%' : '—');
 
-  // Convert entries object to array
-  const entries = data.entries
-    ? Object.entries(data.entries).map(([path, entry]) => ({ ...entry, filePath: path }))
-    : [];
+  // Normalize entries to array (API may return array or object keyed by path)
+  const entries = Array.isArray(data.entries)
+    ? data.entries
+    : data.entries
+      ? Object.entries(data.entries).map(([path, entry]) => ({ ...entry, filePath: path }))
+      : [];
 
   setText('file-index-showing', String(entries.length));
   setText('file-index-of', String(entries.length));

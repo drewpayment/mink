@@ -32,8 +32,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Restore panel from hash
-  const hash = window.location.hash.replace('#', '');
+  // Restore panel from hash (strip # and optional leading /)
+  const hash = window.location.hash.replace('#', '').replace(/^\\//, '');
   if (hash) showPanel(hash);
 
   // ── Virtual Scrollers ───────────────────────────────────

@@ -34,7 +34,8 @@ const Charts = (() => {
 
     const maxVal = Math.max(...data.map(d => d.value)) || 1;
     const yScale = scaleLinear([0, maxVal], [chartH, 0]);
-    const barW = Math.max(4, Math.min(30, (chartW / data.length) - 2));
+    const maxBarW = data.length <= 3 ? 60 : 30;
+    const barW = Math.max(4, Math.min(maxBarW, (chartW / data.length) - 2));
     const gap = (chartW - barW * data.length) / (data.length + 1);
 
     const color = opts.color || 'var(--chart-primary)';
@@ -72,13 +73,37 @@ const Charts = (() => {
       return;
     }
 
+    const allValues = datasets.flatMap(ds => ds.data.map(d => d.value));
+    if (allValues.length === 0) {
+      el.innerHTML = '<div class="empty-state">No data</div>';
+      return;
+    }
+
+    // Single data point — show summary instead of a useless dot
+    const maxPts = Math.max(...datasets.map(ds => ds.data.length));
+    if (maxPts <= 1) {
+      const colors = ['var(--chart-primary)', 'var(--chart-secondary)', 'var(--chart-tertiary)'];
+      let html = '<div style="display:flex; gap:24px; justify-content:center; align-items:center; padding:24px 0;">';
+      datasets.forEach((ds, di) => {
+        const val = ds.data.length > 0 ? ds.data[0].value : 0;
+        const color = colors[di % colors.length];
+        html += '<div style="text-align:center;">';
+        html += '<div style="font-size:1.5rem; font-weight:700; color:' + color + ';">' + formatNum(val) + '</div>';
+        html += '<div style="font-size:0.8rem; color:var(--fg-muted); margin-top:4px;">' + ds.label + '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+      html += '<div class="empty-state" style="padding:8px 0 0;">Trend chart appears after 2+ sessions</div>';
+      el.innerHTML = html;
+      return;
+    }
+
     const width = 600;
-    const height = 200;
-    const pad = { top: 10, right: 10, bottom: 30, left: 50 };
+    const height = 220;
+    const pad = { top: 28, right: 10, bottom: 30, left: 50 };
     const chartW = width - pad.left - pad.right;
     const chartH = height - pad.top - pad.bottom;
 
-    const allValues = datasets.flatMap(ds => ds.data.map(d => d.value));
     const maxVal = Math.max(...allValues) || 1;
     const yScale = scaleLinear([0, maxVal], [chartH, 0]);
     const colors = [
@@ -103,7 +128,7 @@ const Charts = (() => {
       const pts = ds.data;
       if (pts.length === 0) return;
       const color = colors[di % colors.length];
-      const xStep = pts.length > 1 ? chartW / (pts.length - 1) : 0;
+      const xStep = chartW / (pts.length - 1);
       const pathPoints = pts.map((p, i) => {
         const x = pad.left + i * xStep;
         const y = pad.top + yScale(p.value);
@@ -137,13 +162,14 @@ const Charts = (() => {
       }
     });
 
-    // Legend
+    // Legend — right-aligned above the chart area
     let legend = '';
+    const legendItemW = Math.min(180, (width - pad.left) / datasets.length);
     datasets.forEach((ds, di) => {
-      const x = pad.left + di * 120;
+      const x = width - (datasets.length - di) * legendItemW;
       const color = colors[di % colors.length];
-      legend += \`<rect x="\${x}" y="0" width="10" height="10" rx="2" fill="\${color}"/>\`;
-      legend += \`<text x="\${x + 14}" y="9" fill="var(--chart-axis)" font-size="10">\${ds.label}</text>\`;
+      legend += \`<rect x="\${x}" y="4" width="10" height="10" rx="2" fill="\${color}"/>\`;
+      legend += \`<text x="\${x + 14}" y="13" fill="var(--chart-axis)" font-size="10">\${ds.label}</text>\`;
     });
 
     el.innerHTML = \`<svg viewBox="0 0 \${width} \${height}" preserveAspectRatio="xMidYMid meet">\${legend}\${gridLines}\${lines}</svg>\`;
