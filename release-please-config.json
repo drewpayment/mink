@@ -5,6 +5,7 @@
       "release-type": "node",
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true,
+      "last-release-sha": "516d3bef7a089713fd87e29523f217a74da35bb9",
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
         { "type": "fix", "section": "Bug Fixes" },
