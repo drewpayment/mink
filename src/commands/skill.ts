@@ -1,19 +1,37 @@
 import { join, resolve, dirname } from "path";
 import { homedir } from "os";
-import { existsSync, mkdirSync, copyFileSync, unlinkSync, readdirSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  copyFileSync,
+  unlinkSync,
+  readdirSync,
+  rmSync,
+} from "fs";
 
-const CLAUDE_SKILLS_DIR = join(homedir(), ".claude", "skills");
+// Standard skills directory used by the skills CLI ecosystem
+const AGENTS_SKILLS_DIR = join(homedir(), ".agents", "skills");
 
 function getSkillsSourceDir(): string {
-  return resolve(dirname(new URL(import.meta.url).pathname), "../skills");
+  // Skills live at repo-root/skills/ (the standard skills/{name}/SKILL.md layout)
+  return resolve(
+    dirname(new URL(import.meta.url).pathname),
+    "../../skills"
+  );
 }
 
 function getAvailableSkills(): string[] {
   const dir = getSkillsSourceDir();
   if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".md"))
-    .map((f) => f.replace(/\.md$/, ""));
+  return readdirSync(dir, { withFileTypes: true })
+    .filter(
+      (d) => d.isDirectory() && existsSync(join(dir, d.name, "SKILL.md"))
+    )
+    .map((d) => d.name);
+}
+
+function isInstalled(skillName: string): boolean {
+  return existsSync(join(AGENTS_SKILLS_DIR, skillName, "SKILL.md"));
 }
 
 export async function skill(args: string[]): Promise<void> {
@@ -32,9 +50,12 @@ export async function skill(args: string[]): Promise<void> {
     default:
       console.log("Usage: mink skill <install|uninstall|list> [name]");
       console.log();
-      console.log("  install [name]    Install Mink skills to ~/.claude/skills/");
+      console.log("  install [name]    Install Mink skills to ~/.agents/skills/");
       console.log("  uninstall [name]  Remove installed Mink skills");
       console.log("  list              Show available and installed skills");
+      console.log();
+      console.log("Or install via the skills CLI:");
+      console.log("  npx skills add drewpayment/mink");
       break;
   }
 }
@@ -45,49 +66,53 @@ function skillInstall(name?: string): void {
 
   if (skills.length === 0) {
     console.error("[mink] no skills found to install");
+    console.error("  Expected skills at: " + sourceDir);
     return;
   }
 
-  mkdirSync(CLAUDE_SKILLS_DIR, { recursive: true });
+  mkdirSync(AGENTS_SKILLS_DIR, { recursive: true });
 
   for (const skillName of skills) {
-    const src = join(sourceDir, `${skillName}.md`);
-    const dest = join(CLAUDE_SKILLS_DIR, `${skillName}.md`);
+    const srcDir = join(sourceDir, skillName);
+    const srcFile = join(srcDir, "SKILL.md");
+    const destDir = join(AGENTS_SKILLS_DIR, skillName);
 
-    if (!existsSync(src)) {
+    if (!existsSync(srcFile)) {
       console.error(`[mink] skill not found: ${skillName}`);
       continue;
     }
 
-    copyFileSync(src, dest);
-    console.log(`[mink] installed: ${skillName} -> ${dest}`);
+    // Copy the entire skill directory (SKILL.md + any reference files)
+    mkdirSync(destDir, { recursive: true });
+    copyDirRecursive(srcDir, destDir);
+
+    console.log(`[mink] installed: ${skillName} -> ${destDir}`);
   }
+
+  console.log();
+  console.log("  Restart your Claude Code session to use the new skills.");
 }
 
 function skillUninstall(name?: string): void {
   const skills = name ? [name] : getAvailableSkills();
 
   for (const skillName of skills) {
-    const dest = join(CLAUDE_SKILLS_DIR, `${skillName}.md`);
+    const destDir = join(AGENTS_SKILLS_DIR, skillName);
 
-    if (!existsSync(dest)) {
+    if (!existsSync(destDir)) {
       console.log(`[mink] not installed: ${skillName}`);
       continue;
     }
 
-    unlinkSync(dest);
+    rmSync(destDir, { recursive: true, force: true });
     console.log(`[mink] uninstalled: ${skillName}`);
   }
 }
 
 function skillList(): void {
   const available = getAvailableSkills();
-  const installed = available.filter((s) =>
-    existsSync(join(CLAUDE_SKILLS_DIR, `${s}.md`))
-  );
-  const notInstalled = available.filter(
-    (s) => !installed.includes(s)
-  );
+  const installed = available.filter(isInstalled);
+  const notInstalled = available.filter((s) => !installed.includes(s));
 
   console.log("[mink] skills:");
   console.log();
@@ -95,7 +120,7 @@ function skillList(): void {
   if (installed.length > 0) {
     console.log("  Installed:");
     for (const s of installed) {
-      console.log(`    ${s}`);
+      console.log(`    ${s}  (${join(AGENTS_SKILLS_DIR, s)})`);
     }
   }
 
@@ -111,5 +136,20 @@ function skillList(): void {
   }
 
   console.log();
-  console.log("  Install with: mink skill install [name]");
+  console.log("  Install with: mink skill install");
+  console.log("  Or via skills CLI: npx skills add drewpayment/mink");
+}
+
+function copyDirRecursive(src: string, dest: string): void {
+  const entries = readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = join(src, entry.name);
+    const destPath = join(dest, entry.name);
+    if (entry.isDirectory()) {
+      mkdirSync(destPath, { recursive: true });
+      copyDirRecursive(srcPath, destPath);
+    } else {
+      copyFileSync(srcPath, destPath);
+    }
+  }
 }
