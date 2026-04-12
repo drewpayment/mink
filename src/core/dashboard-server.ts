@@ -15,7 +15,6 @@ import {
   triggerDeadLetterRetry,
   triggerRescan,
 } from "./dashboard-api";
-import { getDashboardHtml } from "./dashboard/get-dashboard-html";
 import type { StateFileId, StateChangeEvent } from "../types/dashboard";
 
 // ── MIME types for static file serving ────────────────────────────────────
@@ -218,7 +217,7 @@ export function startDashboardServer(
     });
   });
 
-  // Determine dashboard frontend: prefer Next.js static build, fall back to inline HTML
+  // Resolve the Next.js static build directory
   const dashboardOutDir = join(
     import.meta.dir,
     "..",
@@ -226,9 +225,14 @@ export function startDashboardServer(
     "dashboard",
     "out"
   );
-  const useNextDashboard = existsSync(join(dashboardOutDir, "index.html"));
-  const legacyHtml = useNextDashboard ? null : getDashboardHtml();
+  const dashboardBuilt = existsSync(join(dashboardOutDir, "index.html"));
   let clientIdCounter = 0;
+
+  if (!dashboardBuilt) {
+    console.warn(
+      "[mink] dashboard not built. Run: cd dashboard && bun run build"
+    );
+  }
 
   const server = Bun.serve({
     port,
@@ -238,9 +242,16 @@ export function startDashboardServer(
       const pathname = url.pathname;
       const method = req.method;
 
-      // ── Static file serving (Next.js build or legacy HTML) ──────
+      // ── Static file serving (Next.js build) ─────────────────────
       if (method === "GET" && !pathname.startsWith("/api/")) {
-        if (useNextDashboard) {
+        if (!dashboardBuilt) {
+          if (pathname === "/") {
+            return new Response(
+              "<html><body><h1>Mink Dashboard</h1><p>Dashboard not built. Run: <code>cd dashboard &amp;&amp; bun run build</code></p></body></html>",
+              { headers: { "Content-Type": "text/html; charset=utf-8" } }
+            );
+          }
+        } else {
           // Serve from dashboard/out/
           let filePath: string;
           if (pathname === "/") {
@@ -278,11 +289,6 @@ export function startDashboardServer(
               headers: { "Content-Type": "text/html; charset=utf-8" },
             });
           }
-        } else if (pathname === "/") {
-          // Legacy inline HTML dashboard
-          return new Response(legacyHtml!, {
-            headers: { "Content-Type": "text/html; charset=utf-8" },
-          });
         }
       }
 
