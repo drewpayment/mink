@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.2](https://github.com/drewpayment/mink/compare/v0.2.1...v0.2.2) (2026-04-13)
+
+
+### Bug Fixes
+
+* include dashboard static assets in npm package ([de89170](https://github.com/drewpayment/mink/commit/de89170df25d8edba91506358cfd83982119ac5b))
+* include dashboard static assets in npm package ([780f1f2](https://github.com/drewpayment/mink/commit/780f1f25c5534f81386bffd89628751688afef40)), closes [#23](https://github.com/drewpayment/mink/issues/23)
+
 ## [0.2.1](https://github.com/drewpayment/mink/compare/v0.2.0...v0.2.1) (2026-04-13)
 
 
