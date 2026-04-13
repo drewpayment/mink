@@ -36,6 +36,9 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      - name: Build
+        run: bun run build
+
       - name: Test
         run: bun test
 
@@ -60,6 +63,9 @@ jobs:
           bun-version: latest
 
       - run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
 
       - name: Test
         run: bun test
