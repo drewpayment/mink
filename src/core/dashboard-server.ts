@@ -320,7 +320,7 @@ export async function startDashboardServer(
   ): Promise<Response | null> {
     const file = runtimeFile(filePath);
     if (await file.exists()) {
-      return new Response(await file.bytes(), {
+      return new Response(await file.bytes() as unknown as BodyInit, {
         headers: { "Content-Type": contentType },
       });
     }

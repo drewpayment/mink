@@ -121,7 +121,7 @@ export async function runtimeServe(opts: ServeOptions): Promise<RuntimeServer> {
       fetch: opts.fetch,
     });
     return {
-      port: server.port,
+      port: server.port as number,
       stop: (close) => server.stop(close),
     };
   }
