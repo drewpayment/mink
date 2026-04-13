@@ -18,7 +18,8 @@
   "files": [
     "src/**/*.ts",
     "dist/cli.js",
-    "skills/**/*"
+    "skills/**/*",
+    "dashboard/out"
   ],
   "publishConfig": {
     "access": "public"

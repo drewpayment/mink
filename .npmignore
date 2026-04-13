@@ -1,0 +1,19 @@
+# npm uses this instead of .gitignore when present.
+# The "files" field in package.json is the allowlist;
+# this file only needs to block things that would otherwise slip in.
+
+node_modules/
+.next/
+.cache/
+.parcel-cache/
+coverage/
+*.tsbuildinfo
+*.log
+*.tgz
+.env
+.env.*
+.DS_Store
+.claude/
+tests/
+dashboard/node_modules/
+dashboard/.next/
