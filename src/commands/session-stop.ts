@@ -1,6 +1,5 @@
 import { statSync, existsSync, readFileSync } from "fs";
 import { join, dirname } from "path";
-import { execSync } from "child_process";
 import { safeReadJson, atomicWriteJson, atomicWriteText } from "../core/fs-utils";
 import { isSessionState, buildSummary } from "../core/session";
 import { reflect } from "./reflect";
@@ -10,10 +9,8 @@ import { createActionLogWriter, consolidateLog } from "../core/action-log";
 import {
   isWikiEnabled,
   isVaultInitialized,
-  resolveVaultPath,
   vaultProjects,
 } from "../core/vault";
-import { resolveConfigValue } from "../core/global-config";
 import type { SessionState, SessionFinalizer } from "../types/session";
 import type { ProjectConfig } from "../types/file-index";
 
@@ -128,13 +125,11 @@ export function sessionStop(
     // Never crash hooks
   }
 
-  // Git backup for wiki vault
+  // Full mink sync (subsumes wiki git-backup)
   try {
-    if (isWikiEnabled() && isVaultInitialized()) {
-      const gitBackup = resolveConfigValue("wiki.git-backup");
-      if (gitBackup.value === "true") {
-        gitBackupVault(onReminder);
-      }
+    const { isSyncInitialized, syncPush } = require("../core/sync");
+    if (isSyncInitialized()) {
+      syncPush(onReminder);
     }
   } catch {
     // Never crash hooks
@@ -209,53 +204,3 @@ function writeSessionToWiki(
   }
 }
 
-function gitBackupVault(
-  onReminder: (msg: string) => void
-): void {
-  const vaultPath = resolveVaultPath();
-
-  // Check if vault is a git repo
-  const gitDir = join(vaultPath, ".git");
-  if (!existsSync(gitDir)) {
-    onReminder(
-      "[mink] wiki git-backup enabled but vault is not a git repo — run 'git init' in " +
-        vaultPath
-    );
-    return;
-  }
-
-  try {
-    // Check for changes
-    const status = execSync("git status --porcelain", {
-      cwd: vaultPath,
-      timeout: 5000,
-    }).toString();
-
-    if (!status.trim()) return; // Nothing to commit
-
-    // Stage and commit
-    execSync("git add -A", { cwd: vaultPath, timeout: 5000 });
-    const msg = `mink: vault update ${new Date().toISOString().split("T")[0]}`;
-    execSync(`git commit -m "${msg}"`, {
-      cwd: vaultPath,
-      timeout: 5000,
-    });
-
-    // Push (best-effort with timeout)
-    const remote = resolveConfigValue("wiki.git-remote").value;
-    try {
-      execSync(`git push ${remote}`, {
-        cwd: vaultPath,
-        timeout: 10000,
-      });
-    } catch {
-      onReminder(
-        `[mink] wiki git push to '${remote}' failed — local commit preserved, will retry next session`
-      );
-    }
-  } catch (err) {
-    onReminder(
-      `[mink] wiki git backup error: ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
-}

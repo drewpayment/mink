@@ -137,6 +137,12 @@ switch (command) {
     break;
   }
 
+  case "sync": {
+    const { sync } = await import("./commands/sync");
+    await sync(process.argv.slice(3));
+    break;
+  }
+
   case "bug-search": {
     const { bugSearch } = await import("./commands/bug-search");
     bugSearch(cwd, process.argv.slice(3).join(" "));
@@ -195,6 +201,15 @@ switch (command) {
     console.log("  note list [filters]     List notes (--category, --tag, --recent)");
     console.log("  note search <term>      Full-text search across the vault");
     console.log("  skill install           Install /mink:note skill for Claude Code");
+    console.log();
+    console.log("Sync:");
+    console.log("  sync                    Full manual sync (pull then push)");
+    console.log("  sync init <remote-url>  Connect ~/.mink to a git remote for cross-device sync");
+    console.log("  sync status             Show sync state (remote, last sync, pending changes)");
+    console.log("  sync push               Manually push local changes");
+    console.log("  sync pull               Manually pull remote changes");
+    console.log("  sync pause / resume     Temporarily disable/enable auto-sync");
+    console.log("  sync disconnect         Remove git tracking (data preserved)");
     console.log();
     console.log("Automation & Analysis:");
     console.log("  dashboard [--port=N]    Open the real-time web dashboard");
