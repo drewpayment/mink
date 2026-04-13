@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.1](https://github.com/drewpayment/mink/compare/v0.2.0...v0.2.1) (2026-04-13)
+
+
+### Bug Fixes
+
+* make dashboard server work under both Node.js and Bun ([3036f98](https://github.com/drewpayment/mink/commit/3036f987608884f64d4feb35d5fe9d3b6f3f1c21))
+* make dashboard server work under both Node.js and Bun ([15902de](https://github.com/drewpayment/mink/commit/15902de693898be6a416b2e04f413968956c3803)), closes [#23](https://github.com/drewpayment/mink/issues/23)
+* resolve type errors and update dashboard tests for async server ([c92bef1](https://github.com/drewpayment/mink/commit/c92bef180fe9f99d9cd4d58a7f7061133b67c8e5))
+
 ## [0.2.0](https://github.com/drewpayment/mink/compare/v0.1.0...v0.2.0) (2026-04-13)
 
 
