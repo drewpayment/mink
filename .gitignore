@@ -6,7 +6,7 @@
 ._*
 
 # Custom folder icons
-Icon
+Icon
 
 # Volume root files
 .DocumentRevisions-V100
@@ -69,6 +69,7 @@ coverage/
 
 # Build output
 dist/
+!dist/cli.js
 build/Release
 
 # TypeScript cache
