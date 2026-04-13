@@ -64,7 +64,8 @@ export function startDaemon(cwd: string): void {
   }
 
   // Resolve the CLI entry point
-  const cliPath = resolve(import.meta.dir, "../cli.ts");
+  const __dir = dirname(new URL(import.meta.url).pathname);
+  const cliPath = resolve(__dir, "../cli.ts");
 
   // Ensure log directory exists
   const logPath = schedulerLogPath();

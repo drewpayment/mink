@@ -2594,7 +2594,8 @@ function startDaemon(cwd) {
   if (existing) {
     removePidFile();
   }
-  const cliPath = resolve2(import.meta.dir, "../cli.ts");
+  const __dir = dirname4(new URL(import.meta.url).pathname);
+  const cliPath = resolve2(__dir, "../cli.ts");
   const logPath = schedulerLogPath();
   mkdirSync6(dirname4(logPath), { recursive: true });
   const logFd = openSync(logPath, "a");
@@ -4582,6 +4583,146 @@ var init_project_registry = __esm(() => {
   init_fs_utils();
 });
 
+// src/core/runtime.ts
+import { readFile as readFile2, stat } from "fs/promises";
+import { spawn as nodeSpawn } from "child_process";
+function runtimeFile(path) {
+  if (isBun) {
+    const f = Bun.file(path);
+    return {
+      exists: () => f.exists(),
+      bytes: () => f.arrayBuffer().then((ab) => new Uint8Array(ab))
+    };
+  }
+  return {
+    async exists() {
+      try {
+        await stat(path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async bytes() {
+      return readFile2(path);
+    }
+  };
+}
+function runtimeSpawn(cmd, opts = {}) {
+  if (isBun) {
+    const proc2 = Bun.spawn(cmd, {
+      cwd: opts.cwd,
+      env: opts.env,
+      stdout: opts.stdout ?? "ignore",
+      stderr: opts.stderr ?? "ignore",
+      stdin: opts.stdin ?? "ignore"
+    });
+    return { unref: () => proc2.unref() };
+  }
+  const [bin, ...args] = cmd;
+  const proc = nodeSpawn(bin, args, {
+    cwd: opts.cwd,
+    env: opts.env,
+    stdio: [
+      opts.stdin ?? "ignore",
+      opts.stdout ?? "ignore",
+      opts.stderr ?? "ignore"
+    ],
+    detached: true
+  });
+  proc.unref();
+  return { unref: () => {} };
+}
+async function runtimeServe(opts) {
+  if (isBun) {
+    const server = Bun.serve({
+      port: opts.port,
+      hostname: opts.hostname,
+      idleTimeout: opts.idleTimeout ?? 0,
+      fetch: opts.fetch
+    });
+    return {
+      port: server.port,
+      stop: (close) => server.stop(close)
+    };
+  }
+  const { createServer } = await import("node:http");
+  const { Readable } = await import("node:stream");
+  return new Promise((resolve3) => {
+    const httpServer = createServer(async (req, res) => {
+      const url = `http://${opts.hostname}:${opts.port}${req.url ?? "/"}`;
+      const headers = new Headers;
+      for (const [key, val] of Object.entries(req.headers)) {
+        if (val)
+          headers.set(key, Array.isArray(val) ? val.join(", ") : val);
+      }
+      let body = null;
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        const chunks = [];
+        for await (const chunk of req) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        body = Buffer.concat(chunks);
+      }
+      const request = new Request(url, {
+        method: req.method,
+        headers,
+        body,
+        duplex: body ? "half" : undefined
+      });
+      try {
+        const response = await opts.fetch(request);
+        res.writeHead(response.status, Object.fromEntries(response.headers));
+        if (!response.body) {
+          res.end();
+          return;
+        }
+        const reader = response.body.getReader();
+        const nodeStream = new Readable({
+          async read() {
+            try {
+              const { done, value } = await reader.read();
+              if (done) {
+                this.push(null);
+              } else {
+                this.push(Buffer.from(value));
+              }
+            } catch {
+              this.push(null);
+            }
+          }
+        });
+        res.on("close", () => {
+          reader.cancel().catch(() => {});
+          nodeStream.destroy();
+        });
+        nodeStream.pipe(res);
+      } catch (err) {
+        if (!res.headersSent) {
+          res.writeHead(500);
+          res.end(String(err));
+        }
+      }
+    });
+    httpServer.listen(opts.port, opts.hostname, () => {
+      const addr = httpServer.address();
+      const boundPort = typeof addr === "object" && addr ? addr.port : opts.port;
+      resolve3({
+        port: boundPort,
+        stop: (close) => {
+          if (close)
+            httpServer.closeAllConnections();
+          httpServer.close();
+        }
+      });
+    });
+  });
+}
+var isBun;
+var init_runtime = __esm(() => {
+  isBun = typeof globalThis.Bun !== "undefined";
+});
+
 // src/core/dashboard-server.ts
 var exports_dashboard_server = {};
 __export(exports_dashboard_server, {
@@ -4589,7 +4730,7 @@ __export(exports_dashboard_server, {
 });
 import { watch } from "fs";
 import { existsSync as existsSync13 } from "fs";
-import { basename as basename6, join as join14, extname as extname2 } from "path";
+import { basename as basename6, dirname as dirname5, join as join14, extname as extname2 } from "path";
 
 class SSEManager {
   clients = new Map;
@@ -4740,7 +4881,7 @@ function extractPathParam(pathname, prefix) {
     return rest || null;
   return rest.slice(0, slashIdx) || null;
 }
-function startDashboardServer(cwd, options = {}) {
+async function startDashboardServer(cwd, options = {}) {
   const port = options.port ?? 4040;
   const hostname = options.hostname ?? "127.0.0.1";
   const sseManager = new SSEManager;
@@ -4762,13 +4903,29 @@ function startDashboardServer(cwd, options = {}) {
       timestamp: new Date().toISOString()
     });
   });
-  const dashboardOutDir = join14(import.meta.dir, "..", "..", "dashboard", "out");
+  const __dir = dirname5(new URL(import.meta.url).pathname);
+  let pkgRoot = __dir;
+  while (pkgRoot !== dirname5(pkgRoot)) {
+    if (existsSync13(join14(pkgRoot, "package.json")))
+      break;
+    pkgRoot = dirname5(pkgRoot);
+  }
+  const dashboardOutDir = join14(pkgRoot, "dashboard", "out");
   const dashboardBuilt = existsSync13(join14(dashboardOutDir, "index.html"));
   let clientIdCounter = 0;
   if (!dashboardBuilt) {
     console.warn("[mink] dashboard not built. Run: cd dashboard && bun run build");
   }
-  const server = Bun.serve({
+  async function serveFile(filePath, contentType) {
+    const file = runtimeFile(filePath);
+    if (await file.exists()) {
+      return new Response(await file.bytes(), {
+        headers: { "Content-Type": contentType }
+      });
+    }
+    return null;
+  }
+  const server = await runtimeServe({
     port,
     hostname,
     idleTimeout: 0,
@@ -4791,26 +4948,17 @@ function startDashboardServer(cwd, options = {}) {
           if (!filePath.startsWith(dashboardOutDir)) {
             return jsonResponse({ error: "Forbidden" }, 403);
           }
-          const file = Bun.file(filePath);
-          if (await file.exists()) {
-            const ext = extname2(filePath);
-            const contentType = MIME_TYPES[ext] || "application/octet-stream";
-            return new Response(file, {
-              headers: { "Content-Type": contentType }
-            });
-          }
-          const htmlFile = Bun.file(filePath + ".html");
-          if (await htmlFile.exists()) {
-            return new Response(htmlFile, {
-              headers: { "Content-Type": "text/html; charset=utf-8" }
-            });
-          }
-          const indexFile = Bun.file(join14(dashboardOutDir, "index.html"));
-          if (await indexFile.exists()) {
-            return new Response(indexFile, {
-              headers: { "Content-Type": "text/html; charset=utf-8" }
-            });
-          }
+          const ext = extname2(filePath);
+          const contentType = MIME_TYPES[ext] || "application/octet-stream";
+          const served = await serveFile(filePath, contentType);
+          if (served)
+            return served;
+          const htmlServed = await serveFile(filePath + ".html", "text/html; charset=utf-8");
+          if (htmlServed)
+            return htmlServed;
+          const indexServed = await serveFile(join14(dashboardOutDir, "index.html"), "text/html; charset=utf-8");
+          if (indexServed)
+            return indexServed;
         }
       }
       if (method === "GET" && pathname === "/api/events") {
@@ -4869,15 +5017,11 @@ retry: 3000
               return jsonResponse({ error: "Invalid filename" }, 400);
             }
             const imgPath = join14(designCapturesDir(resolvedCwd), filename);
-            const file = Bun.file(imgPath);
-            if (await file.exists()) {
-              return new Response(file, {
-                headers: {
-                  "Content-Type": "image/jpeg",
-                  "Cache-Control": "public, max-age=60",
-                  "Access-Control-Allow-Origin": "*"
-                }
-              });
+            const served = await serveFile(imgPath, "image/jpeg");
+            if (served) {
+              served.headers.set("Cache-Control", "public, max-age=60");
+              served.headers.set("Access-Control-Allow-Origin", "*");
+              return served;
             }
             return jsonResponse({ error: "Image not found" }, 404);
           }
@@ -4951,12 +5095,7 @@ retry: 3000
     try {
       const platform = process.platform;
       const cmd = platform === "darwin" ? ["open", serverUrl] : platform === "win32" ? ["cmd", "/c", "start", serverUrl] : ["xdg-open", serverUrl];
-      const proc = Bun.spawn(cmd, {
-        stdout: "ignore",
-        stderr: "ignore",
-        stdin: "ignore"
-      });
-      proc.unref();
+      runtimeSpawn(cmd).unref();
     } catch {}
   }
   return {
@@ -4974,6 +5113,7 @@ var init_dashboard_server = __esm(() => {
   init_dashboard_api();
   init_project_registry();
   init_project_id();
+  init_runtime();
   MIME_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "application/javascript; charset=utf-8",
@@ -5018,7 +5158,7 @@ async function dashboard(cwd, args) {
   const port = portArg ? parseInt(portArg.split("=")[1], 10) : 4040;
   const noOpen = args.includes("--no-open");
   const { startDashboardServer: startDashboardServer2 } = await Promise.resolve().then(() => (init_dashboard_server(), exports_dashboard_server));
-  const { url } = startDashboardServer2(cwd, { port, open: !noOpen });
+  const { url } = await startDashboardServer2(cwd, { port, open: !noOpen });
   console.log(`[mink] dashboard running at ${url}`);
   console.log("[mink] press Ctrl+C to stop");
   await new Promise(() => {});
@@ -5166,7 +5306,7 @@ var init_config2 = __esm(() => {
 // src/commands/init.ts
 import { execSync as execSync3 } from "child_process";
 import { mkdirSync as mkdirSync7, existsSync as existsSync16 } from "fs";
-import { resolve as resolve3, dirname as dirname5, basename as basename7, join as join15 } from "path";
+import { resolve as resolve3, dirname as dirname6, basename as basename7, join as join15 } from "path";
 function detectRuntime2() {
   try {
     execSync3("bun --version", { stdio: "ignore" });
@@ -5207,7 +5347,7 @@ function isMinkHook2(entry) {
   return false;
 }
 function mergeHooksIntoSettings2(settingsPath, newHooks) {
-  mkdirSync7(dirname5(settingsPath), { recursive: true });
+  mkdirSync7(dirname6(settingsPath), { recursive: true });
   const existing = safeReadJson(settingsPath) ?? {};
   const existingHooks = existing.hooks ?? {};
   for (const [event, entries] of Object.entries(newHooks)) {
@@ -5230,7 +5370,7 @@ var exports_update = {};
 __export(exports_update, {
   update: () => update
 });
-import { resolve as resolve4, dirname as dirname6 } from "path";
+import { resolve as resolve4, dirname as dirname7 } from "path";
 function parseArgs(args) {
   let dryRun = false;
   let project = null;
@@ -5278,7 +5418,7 @@ async function update(cwd, args) {
     return;
   }
   const runtime = detectRuntime2();
-  const cliPath = resolve4(dirname6(new URL(import.meta.url).pathname), "../cli.ts");
+  const cliPath = resolve4(dirname7(new URL(import.meta.url).pathname), "../cli.ts");
   const newHooks = buildHooksConfig2(runtime, cliPath);
   for (const target of targets) {
     console.log(`[mink] updating: ${target.name} (${target.id})`);
@@ -5495,8 +5635,8 @@ function findFiles(dir, pattern) {
         continue;
       const full = join17(current, entry);
       try {
-        const stat = statSync8(full);
-        if (stat.isDirectory()) {
+        const stat2 = statSync8(full);
+        if (stat2.isDirectory()) {
           walk(full);
         } else if (pattern.test(entry)) {
           results.push(full);
@@ -35737,18 +35877,18 @@ var __runInitializers10 = function(thisArg, initializers, value) {
   if (target)
     Object.defineProperty(target, contextIn.name, descriptor);
   done = true;
-}, Request;
+}, Request2;
 var init_Request = __esm(() => {
   init_Errors();
   init_EventEmitter();
   init_decorators();
   init_disposable();
-  Request = (() => {
+  Request2 = (() => {
     var _a2;
     let _classSuper = EventEmitter;
     let _instanceExtraInitializers = [];
     let _dispose_decorators;
-    return class Request2 extends _classSuper {
+    return class Request3 extends _classSuper {
       static {
         const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(_classSuper[Symbol.metadata] ?? null) : undefined;
         __esDecorate10(this, null, _dispose_decorators, { kind: "method", name: "dispose", static: false, private: false, access: { has: (obj) => ("dispose" in obj), get: (obj) => obj.dispose }, metadata: _metadata }, null, _instanceExtraInitializers);
@@ -35756,7 +35896,7 @@ var init_Request = __esm(() => {
           Object.defineProperty(this, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
       }
       static from(browsingContext, event) {
-        const request = new Request2(browsingContext, event);
+        const request = new Request3(browsingContext, event);
         request.#initialize();
         return request;
       }
@@ -35795,7 +35935,7 @@ var init_Request = __esm(() => {
           if (event.redirectCount !== this.#event.redirectCount + 1 && !isAfterAuth) {
             return;
           }
-          this.#redirect = Request2.from(this.#browsingContext, event);
+          this.#redirect = Request3.from(this.#browsingContext, event);
           this.emit("redirect", this.#redirect);
           this.dispose();
         });
@@ -36369,7 +36509,7 @@ var init_BrowsingContext = __esm(() => {
           if (this.#requests.has(event.request.request)) {
             return;
           }
-          const request = Request.from(this, event);
+          const request = Request2.from(this, event);
           this.#requests.set(request.id, request);
           this.emit("request", { request });
         });
@@ -51207,8 +51347,8 @@ var require_file = __commonJS((exports) => {
       debug2("Normalized pathname: %o", filepath);
       const fdHandle = await fs_1.promises.open(filepath, flags, mode);
       const fd = fdHandle.fd;
-      const stat = await fdHandle.stat();
-      if (cache && cache.stat && stat && isNotModified(cache.stat, stat)) {
+      const stat2 = await fdHandle.stat();
+      if (cache && cache.stat && stat2 && isNotModified(cache.stat, stat2)) {
         await fdHandle.close();
         throw new notmodified_1.default;
       }
@@ -51217,7 +51357,7 @@ var require_file = __commonJS((exports) => {
         ...opts,
         fd
       });
-      rs.stat = stat;
+      rs.stat = stat2;
       return rs;
     } catch (err) {
       if (err.code === "ENOENT") {
@@ -77280,7 +77420,7 @@ var require_tar_fs = __commonJS((exports) => {
         pack2.entry(header, onnextentry);
       });
     }
-    function onstat(err, filename, stat) {
+    function onstat(err, filename, stat2) {
       if (pack2.destroyed)
         return;
       if (err)
@@ -77290,31 +77430,31 @@ var require_tar_fs = __commonJS((exports) => {
           pack2.finalize();
         return finish(pack2);
       }
-      if (stat.isSocket())
+      if (stat2.isSocket())
         return onnextentry();
       let header = {
         name: normalize(filename),
-        mode: (stat.mode | (stat.isDirectory() ? dmode : fmode)) & umask,
-        mtime: stat.mtime,
-        size: stat.size,
+        mode: (stat2.mode | (stat2.isDirectory() ? dmode : fmode)) & umask,
+        mtime: stat2.mtime,
+        size: stat2.size,
         type: "file",
-        uid: stat.uid,
-        gid: stat.gid
+        uid: stat2.uid,
+        gid: stat2.gid
       };
-      if (stat.isDirectory()) {
+      if (stat2.isDirectory()) {
         header.size = 0;
         header.type = "directory";
         header = map2(header) || header;
         return pack2.entry(header, onnextentry);
       }
-      if (stat.isSymbolicLink()) {
+      if (stat2.isSymbolicLink()) {
         header.size = 0;
         header.type = "symlink";
         header = map2(header) || header;
         return onsymlink(filename, header);
       }
       header = map2(header) || header;
-      if (!stat.isFile()) {
+      if (!stat2.isFile()) {
         if (strict)
           return pack2.destroy(new Error("unsupported type for " + filename));
         return onnextentry();
@@ -77397,7 +77537,7 @@ var require_tar_fs = __commonJS((exports) => {
             uid: header.uid,
             gid: header.gid,
             mode: header.mode
-          }, stat);
+          }, stat2);
         }
         mkdirfix(dir, {
           fs: xfs,
@@ -77422,7 +77562,7 @@ var require_tar_fs = __commonJS((exports) => {
           next();
         });
       });
-      function stat(err) {
+      function stat2(err) {
         if (err)
           return next(err);
         utimes(name, header, function(err2) {
@@ -77445,7 +77585,7 @@ var require_tar_fs = __commonJS((exports) => {
               return next(err);
             if (!valid && validateSymLinks)
               return next(new Error(name + " is not a valid symlink"));
-            xfs.symlink(header.linkname, name, stat);
+            xfs.symlink(header.linkname, name, stat2);
           });
         });
       }
@@ -77462,7 +77602,7 @@ var require_tar_fs = __commonJS((exports) => {
                 stream = xfs.createReadStream(dst);
                 return onfile();
               }
-              stat(err2);
+              stat2(err2);
             });
           });
         });
@@ -77479,7 +77619,7 @@ var require_tar_fs = __commonJS((exports) => {
         pump(rs, ws, function(err) {
           if (err)
             return next(err);
-          ws.on("close", stat);
+          ws.on("close", stat2);
         });
       }
     }
@@ -77568,7 +77708,7 @@ var require_tar_fs = __commonJS((exports) => {
   function normalize(name) {
     return win32 ? name.replace(/\\/g, "/").replace(/[:?<>|]/g, "_") : name;
   }
-  function statAll(fs4, stat, cwd, ignore, entries, sort) {
+  function statAll(fs4, stat2, cwd, ignore, entries, sort) {
     if (!entries)
       entries = ["."];
     const queue = entries.slice(0);
@@ -77577,11 +77717,11 @@ var require_tar_fs = __commonJS((exports) => {
         return callback(null);
       const next = queue.shift();
       const nextAbs = path7.join(cwd, next);
-      stat.call(fs4, nextAbs, function(err, stat2) {
+      stat2.call(fs4, nextAbs, function(err, stat3) {
         if (err)
           return callback(entries.indexOf(next) === -1 && err.code === "ENOENT" ? null : err);
-        if (!stat2.isDirectory())
-          return callback(null, next, stat2);
+        if (!stat3.isDirectory())
+          return callback(null, next, stat3);
         fs4.readdir(nextAbs, function(err2, files) {
           if (err2)
             return callback(err2);
@@ -77591,7 +77731,7 @@ var require_tar_fs = __commonJS((exports) => {
             if (!ignore(path7.join(cwd, next, files[i])))
               queue.push(path7.join(next, files[i]));
           }
-          callback(null, next, stat2);
+          callback(null, next, stat3);
         });
       });
     };
@@ -78323,19 +78463,19 @@ var init_cliui = __esm(() => {
 });
 
 // node_modules/escalade/sync/index.mjs
-import { dirname as dirname7, resolve as resolve6 } from "path";
+import { dirname as dirname8, resolve as resolve6 } from "path";
 import { readdirSync as readdirSync6, statSync as statSync9 } from "fs";
 function sync_default(start, callback) {
   let dir = resolve6(".", start);
   let tmp, stats = statSync9(dir);
   if (!stats.isDirectory()) {
-    dir = dirname7(dir);
+    dir = dirname8(dir);
   }
   while (true) {
     tmp = callback(dir, readdirSync6(dir));
     if (tmp)
       return resolve6(dir, tmp);
-    dir = dirname7(tmp = dir);
+    dir = dirname8(tmp = dir);
     if (tmp === dir)
       break;
   }
@@ -79549,7 +79689,7 @@ import { notStrictEqual, strictEqual } from "assert";
 import { inspect } from "util";
 import { readFileSync as readFileSync20 } from "fs";
 import { fileURLToPath } from "url";
-import { basename as basename9, dirname as dirname8, extname as extname3, relative as relative7, resolve as resolve9 } from "path";
+import { basename as basename9, dirname as dirname9, extname as extname3, relative as relative7, resolve as resolve9 } from "path";
 var REQUIRE_ERROR = "require is not supported by ESM", REQUIRE_DIRECTORY_ERROR = "loading a directory of commands is not supported yet for ESM", __dirname2, mainFilename, esm_default;
 var init_esm = __esm(() => {
   init_cliui();
@@ -79582,7 +79722,7 @@ var init_esm = __esm(() => {
     Parser: lib_default,
     path: {
       basename: basename9,
-      dirname: dirname8,
+      dirname: dirname9,
       extname: extname3,
       relative: relative7,
       resolve: resolve9
@@ -84279,7 +84419,7 @@ var init_PuppeteerNode = __esm(() => {
 import { spawn as spawn2, spawnSync as spawnSync3 } from "node:child_process";
 import fs5 from "node:fs";
 import os8 from "node:os";
-import { dirname as dirname9 } from "node:path";
+import { dirname as dirname10 } from "node:path";
 import { PassThrough } from "node:stream";
 var import_debug6, __runInitializers22 = function(thisArg, initializers, value) {
   var useValue = arguments.length > 2;
@@ -84403,7 +84543,7 @@ var init_ScreenRecorder = __esm(() => {
           filters.push(formatArgs.splice(vf, 2).at(-1) ?? "");
         }
         if (path11) {
-          fs5.mkdirSync(dirname9(path11), { recursive: overwrite });
+          fs5.mkdirSync(dirname10(path11), { recursive: overwrite });
         }
         this.#process = spawn2(ffmpegPath, [
           ["-loglevel", "error"],
@@ -84589,8 +84729,8 @@ function findChromeInDir(dir) {
     for (const entry of entries) {
       const full = join20(dir, entry);
       try {
-        const stat = statSync12(full);
-        if (stat.isDirectory()) {
+        const stat2 = statSync12(full);
+        if (stat2.isDirectory()) {
           const found = findChromeInDir(full);
           if (found)
             return found;
@@ -86320,10 +86460,10 @@ function collectMarkdownFiles(dirPath, rootPath) {
       if (entry.isDirectory()) {
         files.push(...collectMarkdownFiles(fullPath, rootPath));
       } else if (entry.name.endsWith(".md") && !entry.name.startsWith("_")) {
-        const stat = statSync12(fullPath);
+        const stat2 = statSync12(fullPath);
         const title = entry.name.replace(/\.md$/, "");
         const relativePath = fullPath.slice(rootPath.length + 1);
-        files.push({ title, relativePath, mtime: stat.mtimeMs });
+        files.push({ title, relativePath, mtime: stat2.mtimeMs });
       }
     }
   } catch {}
@@ -86880,7 +87020,7 @@ var exports_skill = {};
 __export(exports_skill, {
   skill: () => skill
 });
-import { join as join24, resolve as resolve12, dirname as dirname10 } from "path";
+import { join as join24, resolve as resolve12, dirname as dirname11 } from "path";
 import { homedir as homedir5 } from "os";
 import {
   existsSync as existsSync26,
@@ -86893,7 +87033,7 @@ import {
   lstatSync
 } from "fs";
 function getSkillsSourceDir() {
-  return resolve12(dirname10(new URL(import.meta.url).pathname), "../../skills");
+  return resolve12(dirname11(new URL(import.meta.url).pathname), "../../skills");
 }
 function getAvailableSkills() {
   const dir = getSkillsSourceDir();
@@ -87407,8 +87547,8 @@ switch (command2) {
   case "version":
   case "--version":
   case "-v": {
-    const { resolve: resolve13, dirname: dirname11 } = await import("path");
-    const cliPath = resolve13(dirname11(new URL(import.meta.url).pathname));
+    const { resolve: resolve13, dirname: dirname12 } = await import("path");
+    const cliPath = resolve13(dirname12(new URL(import.meta.url).pathname));
     const { readFileSync: readFileSync25 } = await import("fs");
     try {
       const pkg = JSON.parse(readFileSync25(resolve13(cliPath, "../package.json"), "utf-8"));

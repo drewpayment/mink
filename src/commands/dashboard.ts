@@ -12,7 +12,7 @@ export async function dashboard(cwd: string, args: string[]): Promise<void> {
   const noOpen = args.includes("--no-open");
 
   const { startDashboardServer } = await import("../core/dashboard-server");
-  const { url } = startDashboardServer(cwd, { port, open: !noOpen });
+  const { url } = await startDashboardServer(cwd, { port, open: !noOpen });
 
   console.log(`[mink] dashboard running at ${url}`);
   console.log("[mink] press Ctrl+C to stop");

@@ -1,6 +1,6 @@
 import { watch, type FSWatcher } from "fs";
 import { existsSync } from "fs";
-import { basename, join, extname } from "path";
+import { basename, dirname, join, extname } from "path";
 import { projectDir, designCapturesDir } from "./paths";
 import {
   loadOverview,
@@ -17,6 +17,7 @@ import {
 } from "./dashboard-api";
 import { listRegisteredProjects, getProjectMeta } from "./project-registry";
 import { generateProjectId } from "./project-id";
+import { runtimeFile, runtimeServe, runtimeSpawn } from "./runtime";
 import type { StateFileId, StateChangeEvent } from "../types/dashboard";
 import type { RegisteredProject } from "./project-registry";
 
@@ -262,10 +263,10 @@ export interface DashboardServer {
   close(): void;
 }
 
-export function startDashboardServer(
+export async function startDashboardServer(
   cwd: string,
   options: { port?: number; hostname?: string; open?: boolean } = {}
-): DashboardServer {
+): Promise<DashboardServer> {
   const port = options.port ?? 4040;
   const hostname = options.hostname ?? "127.0.0.1";
 
@@ -295,13 +296,15 @@ export function startDashboardServer(
   });
 
   // Resolve the Next.js static build directory
-  const dashboardOutDir = join(
-    import.meta.dir,
-    "..",
-    "..",
-    "dashboard",
-    "out"
-  );
+  // Walk up from import.meta.url to find the package root (where package.json lives).
+  // From source: src/core/ → ../../  From compiled bundle: dist/ → ../
+  const __dir = dirname(new URL(import.meta.url).pathname);
+  let pkgRoot = __dir;
+  while (pkgRoot !== dirname(pkgRoot)) {
+    if (existsSync(join(pkgRoot, "package.json"))) break;
+    pkgRoot = dirname(pkgRoot);
+  }
+  const dashboardOutDir = join(pkgRoot, "dashboard", "out");
   const dashboardBuilt = existsSync(join(dashboardOutDir, "index.html"));
   let clientIdCounter = 0;
 
@@ -311,7 +314,20 @@ export function startDashboardServer(
     );
   }
 
-  const server = Bun.serve({
+  async function serveFile(
+    filePath: string,
+    contentType: string
+  ): Promise<Response | null> {
+    const file = runtimeFile(filePath);
+    if (await file.exists()) {
+      return new Response(await file.bytes() as unknown as BodyInit, {
+        headers: { "Content-Type": contentType },
+      });
+    }
+    return null;
+  }
+
+  const server = await runtimeServe({
     port,
     hostname,
     idleTimeout: 0, // Disable idle timeout — SSE connections are long-lived
@@ -343,30 +359,24 @@ export function startDashboardServer(
             return jsonResponse({ error: "Forbidden" }, 403);
           }
 
-          const file = Bun.file(filePath);
-          if (await file.exists()) {
-            const ext = extname(filePath);
-            const contentType = MIME_TYPES[ext] || "application/octet-stream";
-            return new Response(file, {
-              headers: { "Content-Type": contentType },
-            });
-          }
+          const ext = extname(filePath);
+          const contentType = MIME_TYPES[ext] || "application/octet-stream";
+          const served = await serveFile(filePath, contentType);
+          if (served) return served;
 
           // Client-side routing fallback: try {pathname}.html then index.html
-          const htmlFile = Bun.file(filePath + ".html");
-          if (await htmlFile.exists()) {
-            return new Response(htmlFile, {
-              headers: { "Content-Type": "text/html; charset=utf-8" },
-            });
-          }
+          const htmlServed = await serveFile(
+            filePath + ".html",
+            "text/html; charset=utf-8"
+          );
+          if (htmlServed) return htmlServed;
 
           // SPA fallback — serve index.html for unmatched routes
-          const indexFile = Bun.file(join(dashboardOutDir, "index.html"));
-          if (await indexFile.exists()) {
-            return new Response(indexFile, {
-              headers: { "Content-Type": "text/html; charset=utf-8" },
-            });
-          }
+          const indexServed = await serveFile(
+            join(dashboardOutDir, "index.html"),
+            "text/html; charset=utf-8"
+          );
+          if (indexServed) return indexServed;
         }
       }
 
@@ -376,8 +386,6 @@ export function startDashboardServer(
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             sseManager.addClient(clientId, controller);
-            // Send initial comment immediately to establish the stream
-            // and prevent Bun from treating it as idle/complete
             controller.enqueue(encoder.encode(": connected\nretry: 3000\n\n"));
           },
           cancel() {
@@ -435,15 +443,11 @@ export function startDashboardServer(
               return jsonResponse({ error: "Invalid filename" }, 400);
             }
             const imgPath = join(designCapturesDir(resolvedCwd), filename);
-            const file = Bun.file(imgPath);
-            if (await file.exists()) {
-              return new Response(file, {
-                headers: {
-                  "Content-Type": "image/jpeg",
-                  "Cache-Control": "public, max-age=60",
-                  "Access-Control-Allow-Origin": "*",
-                },
-              });
+            const served = await serveFile(imgPath, "image/jpeg");
+            if (served) {
+              served.headers.set("Cache-Control", "public, max-age=60");
+              served.headers.set("Access-Control-Allow-Origin", "*");
+              return served;
             }
             return jsonResponse({ error: "Image not found" }, 404);
           }
@@ -558,12 +562,7 @@ export function startDashboardServer(
           : platform === "win32"
             ? ["cmd", "/c", "start", serverUrl]
             : ["xdg-open", serverUrl];
-      const proc = Bun.spawn(cmd, {
-        stdout: "ignore",
-        stderr: "ignore",
-        stdin: "ignore",
-      });
-      proc.unref();
+      runtimeSpawn(cmd).unref();
     } catch {
       // Browser open is best-effort
     }

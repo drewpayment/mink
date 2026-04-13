@@ -49,7 +49,7 @@ describe("dashboard server", () => {
 
     // Use a random high port to avoid conflicts
     const port = 10000 + Math.floor(Math.random() * 50000);
-    srv = startDashboardServer(cwd, { port, open: false });
+    srv = await startDashboardServer(cwd, { port, open: false });
   });
 
   afterEach(() => {
