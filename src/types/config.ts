@@ -5,6 +5,10 @@ export interface GlobalConfig {
   "wiki.git-backup"?: string;
   "wiki.git-remote"?: string;
   "notes.default-category"?: string;
+  "sync.enabled"?: string;
+  "sync.remote-url"?: string;
+  "sync.last-push"?: string;
+  "sync.last-pull"?: string;
 }
 
 export type ConfigKey = keyof GlobalConfig & string;
@@ -39,19 +43,43 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     key: "wiki.git-backup",
     default: "false",
     envVar: "MINK_WIKI_GIT_BACKUP",
-    description: "Enable/disable auto-commit and push",
+    description: "Deprecated: use sync.enabled instead",
   },
   {
     key: "wiki.git-remote",
     default: "origin",
     envVar: "MINK_WIKI_GIT_REMOTE",
-    description: "Git remote name for push",
+    description: "Deprecated: use sync.remote-url instead",
   },
   {
     key: "notes.default-category",
     default: "inbox",
     envVar: "MINK_NOTES_DEFAULT_CATEGORY",
     description: "Default category for notes captured via CLI",
+  },
+  {
+    key: "sync.enabled",
+    default: "false",
+    envVar: "MINK_SYNC_ENABLED",
+    description: "Enable/disable automatic git sync of ~/.mink",
+  },
+  {
+    key: "sync.remote-url",
+    default: "",
+    envVar: "MINK_SYNC_REMOTE_URL",
+    description: "Git remote URL for ~/.mink sync",
+  },
+  {
+    key: "sync.last-push",
+    default: "",
+    envVar: "MINK_SYNC_LAST_PUSH",
+    description: "ISO timestamp of last successful sync push",
+  },
+  {
+    key: "sync.last-pull",
+    default: "",
+    envVar: "MINK_SYNC_LAST_PULL",
+    description: "ISO timestamp of last successful sync pull",
   },
 ];
 

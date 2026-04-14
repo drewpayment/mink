@@ -7,6 +7,16 @@ import { isWikiEnabled, isVaultInitialized, isInsideVault } from "../core/vault"
 import { loadVaultIndex } from "../core/note-index";
 
 export function sessionStart(cwd: string): void {
+  // Sync pull before session begins (if enabled)
+  try {
+    const { isSyncInitialized, syncPull } = require("../core/sync");
+    if (isSyncInitialized()) {
+      syncPull((msg: string) => console.error(msg));
+    }
+  } catch {
+    // Never crash hooks
+  }
+
   const dir = projectDir(cwd);
   mkdirSync(dir, { recursive: true });
 

@@ -7,6 +7,9 @@ import {
   isVaultInitialized,
   vaultManifestPath,
   vaultTemplates,
+  linkExternal,
+  unlinkExternal,
+  listLinks,
 } from "../core/vault";
 import { atomicWriteJson } from "../core/fs-utils";
 import { setConfigValue } from "../core/global-config";
@@ -34,13 +37,25 @@ export async function wiki(
     case "organize":
       wikiOrganize();
       break;
+    case "link":
+      wikiLink(args.slice(1));
+      break;
+    case "unlink":
+      wikiUnlink(args.slice(1));
+      break;
+    case "links":
+      wikiLinks();
+      break;
     default:
-      console.log("Usage: mink wiki <init|status|rebuild-index|organize>");
+      console.log("Usage: mink wiki <command>");
       console.log();
       console.log("  init                Initialize the notes/wiki vault");
       console.log("  status              Show vault statistics");
       console.log("  rebuild-index       Full rescan and reindex of vault");
       console.log("  organize            List inbox notes needing categorization");
+      console.log("  link <path> [name]  Symlink external notes into the vault");
+      console.log("  unlink <name>       Remove a symlinked directory from the vault");
+      console.log("  links               List all linked directories");
       break;
   }
 }
@@ -188,6 +203,15 @@ function wikiStatus(): void {
     `  last indexed: ${index.lastScanTimestamp || "never"}`
   );
 
+  const links = listLinks();
+  if (links.length > 0) {
+    console.log();
+    console.log("  Linked directories:");
+    for (const link of links) {
+      console.log(`    ${link.name} -> ${link.target}`);
+    }
+  }
+
   if (categoryCounts.inbox > 0) {
     console.log();
     console.log(
@@ -240,6 +264,87 @@ function wikiOrganize(): void {
   console.log(
     "Use '/mink:note' in Claude Code to intelligently categorize these notes."
   );
+}
+
+function wikiLink(args: string[]): void {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    console.log("  Run 'mink wiki init' first.");
+    return;
+  }
+
+  const targetPath = args[0];
+  if (!targetPath) {
+    console.log("Usage: mink wiki link <path> [name]");
+    console.log();
+    console.log("  Symlinks an external directory into the vault so it appears");
+    console.log("  alongside Mink's content in Obsidian.");
+    console.log();
+    console.log("  Examples:");
+    console.log("    mink wiki link ~/dev/notes");
+    console.log("    mink wiki link ~/dev/notes my-notes");
+    return;
+  }
+
+  const name = args[1]; // optional override
+  const result = linkExternal(targetPath, name);
+
+  if (!result.ok) {
+    console.error(`[mink] ${result.error}`);
+    process.exit(1);
+  }
+
+  console.log(`[mink] linked: ${result.linkName} -> ${targetPath}`);
+  console.log(`  symlink: ${result.linkPath}`);
+  console.log();
+  console.log("  Open ~/.mink/wiki/ as your Obsidian vault to see everything together.");
+}
+
+function wikiUnlink(args: string[]): void {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    return;
+  }
+
+  const name = args[0];
+  if (!name) {
+    console.log("Usage: mink wiki unlink <name>");
+    console.log();
+    console.log("  Run 'mink wiki links' to see linked directories.");
+    return;
+  }
+
+  const result = unlinkExternal(name);
+
+  if (!result.ok) {
+    console.error(`[mink] ${result.error}`);
+    process.exit(1);
+  }
+
+  console.log(`[mink] unlinked: ${name}`);
+  console.log("  (original directory was not modified)");
+}
+
+function wikiLinks(): void {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    return;
+  }
+
+  const links = listLinks();
+
+  if (links.length === 0) {
+    console.log("[mink] no linked directories");
+    console.log("  Use 'mink wiki link <path>' to symlink external notes into the vault.");
+    return;
+  }
+
+  console.log("[mink] linked directories:");
+  console.log();
+  for (const link of links) {
+    console.log(`  ${link.name} -> ${link.target}`);
+    console.log(`    linked: ${link.linkedAt}`);
+  }
 }
 
 function expandPath(raw: string): string {

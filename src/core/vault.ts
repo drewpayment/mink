@@ -1,9 +1,10 @@
-import { join } from "path";
+import { join, basename, resolve } from "path";
 import { homedir } from "os";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readlinkSync } from "fs";
 import { resolveConfigValue } from "./global-config";
 import { safeReadJson } from "./fs-utils";
-import type { VaultManifest } from "../types/note";
+import { atomicWriteJson } from "./fs-utils";
+import type { VaultManifest, VaultLink } from "../types/note";
 
 const DEFAULT_VAULT_PATH = join(homedir(), ".mink", "wiki");
 
@@ -129,4 +130,82 @@ export function categoryToDir(
     default:
       return join(root, "inbox");
   }
+}
+
+// ── Symlink management ────────────────────────────────────────────────────
+
+function saveManifest(manifest: VaultManifest): void {
+  atomicWriteJson(vaultManifestPath(), manifest);
+}
+
+export function linkExternal(targetPath: string, name?: string): { ok: true; linkName: string; linkPath: string } | { ok: false; error: string } {
+  const root = resolveVaultPath();
+  const absTarget = targetPath.startsWith("~/")
+    ? join(homedir(), targetPath.slice(2))
+    : resolve(targetPath);
+
+  if (!existsSync(absTarget)) {
+    return { ok: false, error: `target does not exist: ${absTarget}` };
+  }
+
+  if (!lstatSync(absTarget).isDirectory()) {
+    return { ok: false, error: `target is not a directory: ${absTarget}` };
+  }
+
+  const linkName = name ?? basename(absTarget);
+  const linkPath = join(root, linkName);
+
+  // Don't overwrite existing vault directories
+  if (existsSync(linkPath)) {
+    if (lstatSync(linkPath).isSymbolicLink()) {
+      const existing = readlinkSync(linkPath);
+      if (existing === absTarget) {
+        return { ok: false, error: `already linked: ${linkName} -> ${absTarget}` };
+      }
+      return { ok: false, error: `a different link already exists at ${linkName} -> ${existing}` };
+    }
+    return { ok: false, error: `${linkName} already exists in the vault and is not a symlink` };
+  }
+
+  symlinkSync(absTarget, linkPath, "dir");
+
+  // Record in manifest
+  const manifest = loadVaultManifest();
+  if (manifest) {
+    const links = manifest.links ?? [];
+    links.push({ name: linkName, target: absTarget, linkedAt: new Date().toISOString() });
+    manifest.links = links;
+    saveManifest(manifest);
+  }
+
+  return { ok: true, linkName, linkPath };
+}
+
+export function unlinkExternal(name: string): { ok: true } | { ok: false; error: string } {
+  const root = resolveVaultPath();
+  const linkPath = join(root, name);
+
+  if (!existsSync(linkPath)) {
+    return { ok: false, error: `no link named "${name}" in the vault` };
+  }
+
+  if (!lstatSync(linkPath).isSymbolicLink()) {
+    return { ok: false, error: `"${name}" is not a symlink — refusing to remove` };
+  }
+
+  unlinkSync(linkPath);
+
+  // Remove from manifest
+  const manifest = loadVaultManifest();
+  if (manifest && manifest.links) {
+    manifest.links = manifest.links.filter(l => l.name !== name);
+    saveManifest(manifest);
+  }
+
+  return { ok: true };
+}
+
+export function listLinks(): VaultLink[] {
+  const manifest = loadVaultManifest();
+  return manifest?.links ?? [];
 }
