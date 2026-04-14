@@ -195,7 +195,7 @@ switch (command) {
     console.log("  config [key] [value]    Manage global user settings");
     console.log();
     console.log("Notes & Wiki:");
-    console.log("  wiki <cmd>              Manage the notes/wiki vault (init|status|rebuild-index|organize)");
+    console.log("  wiki <cmd>              Manage the notes/wiki vault (init|status|link|unlink|links|rebuild-index|organize)");
     console.log("  note \"text\"             Capture a note to the vault");
     console.log("  note --daily [text]     Create or append to today's daily note");
     console.log("  note list [filters]     List notes (--category, --tag, --recent)");

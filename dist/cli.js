@@ -677,9 +677,9 @@ var init_global_config = __esm(() => {
 });
 
 // src/core/vault.ts
-import { join as join2 } from "path";
+import { join as join2, basename as basename2, resolve } from "path";
 import { homedir as homedir2 } from "os";
-import { existsSync, mkdirSync as mkdirSync2 } from "fs";
+import { existsSync, mkdirSync as mkdirSync2, symlinkSync, unlinkSync, lstatSync, readlinkSync } from "fs";
 function resolveVaultPath() {
   const resolved = resolveConfigValue("wiki.path");
   const raw = resolved.value;
@@ -720,6 +720,12 @@ function isWikiEnabled() {
   const resolved = resolveConfigValue("wiki.enabled");
   return resolved.value === "true";
 }
+function loadVaultManifest() {
+  const raw = safeReadJson(vaultManifestPath());
+  if (raw === null || typeof raw !== "object")
+    return null;
+  return raw;
+}
 function ensureVaultStructure() {
   const root = resolveVaultPath();
   for (const dir of VAULT_DIRS) {
@@ -742,9 +748,65 @@ function categoryToDir(category, projectSlug) {
       return join2(root, "inbox");
   }
 }
+function saveManifest(manifest) {
+  atomicWriteJson(vaultManifestPath(), manifest);
+}
+function linkExternal(targetPath, name) {
+  const root = resolveVaultPath();
+  const absTarget = targetPath.startsWith("~/") ? join2(homedir2(), targetPath.slice(2)) : resolve(targetPath);
+  if (!existsSync(absTarget)) {
+    return { ok: false, error: `target does not exist: ${absTarget}` };
+  }
+  if (!lstatSync(absTarget).isDirectory()) {
+    return { ok: false, error: `target is not a directory: ${absTarget}` };
+  }
+  const linkName = name ?? basename2(absTarget);
+  const linkPath = join2(root, linkName);
+  if (existsSync(linkPath)) {
+    if (lstatSync(linkPath).isSymbolicLink()) {
+      const existing = readlinkSync(linkPath);
+      if (existing === absTarget) {
+        return { ok: false, error: `already linked: ${linkName} -> ${absTarget}` };
+      }
+      return { ok: false, error: `a different link already exists at ${linkName} -> ${existing}` };
+    }
+    return { ok: false, error: `${linkName} already exists in the vault and is not a symlink` };
+  }
+  symlinkSync(absTarget, linkPath, "dir");
+  const manifest = loadVaultManifest();
+  if (manifest) {
+    const links = manifest.links ?? [];
+    links.push({ name: linkName, target: absTarget, linkedAt: new Date().toISOString() });
+    manifest.links = links;
+    saveManifest(manifest);
+  }
+  return { ok: true, linkName, linkPath };
+}
+function unlinkExternal(name) {
+  const root = resolveVaultPath();
+  const linkPath = join2(root, name);
+  if (!existsSync(linkPath)) {
+    return { ok: false, error: `no link named "${name}" in the vault` };
+  }
+  if (!lstatSync(linkPath).isSymbolicLink()) {
+    return { ok: false, error: `"${name}" is not a symlink — refusing to remove` };
+  }
+  unlinkSync(linkPath);
+  const manifest = loadVaultManifest();
+  if (manifest && manifest.links) {
+    manifest.links = manifest.links.filter((l) => l.name !== name);
+    saveManifest(manifest);
+  }
+  return { ok: true };
+}
+function listLinks() {
+  const manifest = loadVaultManifest();
+  return manifest?.links ?? [];
+}
 var DEFAULT_VAULT_PATH, VAULT_DIRS;
 var init_vault = __esm(() => {
   init_global_config();
+  init_fs_utils();
   init_fs_utils();
   DEFAULT_VAULT_PATH = join2(homedir2(), ".mink", "wiki");
   VAULT_DIRS = [
@@ -2150,7 +2212,7 @@ var init_scanner = __esm(() => {
 });
 
 // src/core/description.ts
-import { basename as basename2, extname } from "path";
+import { basename as basename3, extname } from "path";
 function truncate(str) {
   if (str.length <= MAX_DESCRIPTION_LENGTH)
     return str;
@@ -2206,7 +2268,7 @@ function extractComponent(content, filePath) {
   if (![".tsx", ".jsx", ".vue", ".svelte"].includes(ext))
     return null;
   const namedMatch = content.match(/(?:export\s+(?:default\s+)?function|export\s+const)\s+([A-Z]\w+)/);
-  const componentName = namedMatch ? namedMatch[1] : basename2(filePath, ext);
+  const componentName = namedMatch ? namedMatch[1] : basename3(filePath, ext);
   const elements = [];
   if (/<form[\s>]/i.test(content))
     elements.push("form");
@@ -2224,13 +2286,13 @@ function extractComponent(content, filePath) {
 }
 function extractCiWorkflow(content, filePath) {
   const normalized = filePath.replace(/\\/g, "/");
-  const isCi = normalized.includes(".github/workflows/") || normalized.includes(".gitlab-ci") || basename2(filePath).toLowerCase() === "jenkinsfile";
+  const isCi = normalized.includes(".github/workflows/") || normalized.includes(".gitlab-ci") || basename3(filePath).toLowerCase() === "jenkinsfile";
   if (!isCi)
     return null;
   const nameMatch = content.match(/^name:\s*(.+)$/m);
   if (nameMatch)
     return `CI: ${nameMatch[1].trim()}`;
-  return `CI: ${basename2(filePath)}`;
+  return `CI: ${basename3(filePath)}`;
 }
 function extractMigration(content, filePath) {
   const normalized = filePath.toLowerCase();
@@ -2240,7 +2302,7 @@ function extractMigration(content, filePath) {
   const tableMatch = content.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["`]?(\w+)/i);
   if (tableMatch)
     return `migration: create ${tableMatch[1]}`;
-  return `migration: ${basename2(filePath)}`;
+  return `migration: ${basename3(filePath)}`;
 }
 function extractFallback(content) {
   const lines = content.split(`
@@ -2254,7 +2316,7 @@ function extractFallback(content) {
   return null;
 }
 function extractDescription(filePath, content) {
-  const name = basename2(filePath);
+  const name = basename3(filePath);
   const ext = extname(filePath).toLowerCase();
   if (content.length === 0)
     return `${name} — empty file`;
@@ -2477,7 +2539,7 @@ __export(exports_seed, {
   parseGoMod: () => parseGoMod,
   parseCargoToml: () => parseCargoToml
 });
-import { basename as basename3, join as join11 } from "path";
+import { basename as basename4, join as join11 } from "path";
 import { readFileSync as readFileSync9, existsSync as existsSync7 } from "fs";
 function readFile(filePath) {
   if (!existsSync7(filePath))
@@ -2558,7 +2620,7 @@ function parseGoMod(filePath) {
     return null;
   const moduleMatch = raw.match(/^module\s+(\S+)/m);
   const modulePath = moduleMatch ? moduleMatch[1] : "";
-  const projectName = modulePath ? basename3(modulePath) : "";
+  const projectName = modulePath ? basename4(modulePath) : "";
   const frameworks = [];
   for (const [key, label] of Object.entries(GO_FRAMEWORKS)) {
     if (raw.includes(key)) {
@@ -2579,7 +2641,7 @@ function seedLearningMemory(projectRoot) {
     () => parseGoMod(join11(projectRoot, "go.mod"))
   ];
   const infos = parsers.map((fn) => fn()).filter((info) => info !== null);
-  const projectName = infos.find((i) => i.projectName)?.projectName ?? basename3(projectRoot);
+  const projectName = infos.find((i) => i.projectName)?.projectName ?? basename4(projectRoot);
   const mem = createEmptyLearningMemory(projectName);
   const infoWithDesc = infos.find((i) => i.description);
   if (infoWithDesc?.description) {
@@ -2661,7 +2723,7 @@ __export(exports_init, {
 });
 import { execSync as execSync2 } from "child_process";
 import { mkdirSync as mkdirSync5, existsSync as existsSync8 } from "fs";
-import { resolve, dirname as dirname3, basename as basename4, join as join12 } from "path";
+import { resolve as resolve2, dirname as dirname3, basename as basename5, join as join12 } from "path";
 function detectRuntime() {
   try {
     execSync2("bun --version", { stdio: "ignore" });
@@ -2676,11 +2738,11 @@ function resolveCliPath() {
   if (selfPath.endsWith("dist/cli.js")) {
     return selfPath;
   }
-  const projectRoot = resolve(selfDir, "../..");
+  const projectRoot = resolve2(selfDir, "../..");
   const distPath = join12(projectRoot, "dist", "cli.js");
   if (existsSync8(distPath))
     return distPath;
-  return resolve(selfDir, "../cli.ts");
+  return resolve2(selfDir, "../cli.ts");
 }
 function buildHooksConfig(runtime, cliPath) {
   const isTsSource = cliPath.endsWith(".ts");
@@ -2735,7 +2797,7 @@ async function init(cwd) {
   const runtime = detectRuntime();
   const cliPath = resolveCliPath();
   const hooks = buildHooksConfig(runtime, cliPath);
-  const settingsPath = resolve(cwd, ".claude", "settings.json");
+  const settingsPath = resolve2(cwd, ".claude", "settings.json");
   const dir = projectDir(cwd);
   const upgrading = isExistingInstallation(cwd);
   if (upgrading) {
@@ -2753,7 +2815,7 @@ async function init(cwd) {
   atomicWriteJson(metaPath, {
     ...existingMeta ?? {},
     cwd,
-    name: basename4(cwd),
+    name: basename5(cwd),
     initTimestamp: existingMeta?.initTimestamp ?? new Date().toISOString(),
     version: "0.1.0",
     ...isNotesProject ? { projectType: "notes" } : {}
@@ -2781,7 +2843,7 @@ async function init(cwd) {
   }
   if (isWikiEnabled() && isVaultInitialized() && !isNotesProject) {
     try {
-      const projectSlug = basename4(cwd);
+      const projectSlug = basename5(cwd);
       const overviewPath = join12(vaultProjects(projectSlug), "overview.md");
       if (!existsSync8(overviewPath)) {
         const now = new Date().toISOString();
@@ -2820,9 +2882,9 @@ var init_init = __esm(() => {
 });
 
 // src/core/daemon.ts
-import { readFileSync as readFileSync10, writeFileSync as writeFileSync4, unlinkSync, openSync } from "fs";
+import { readFileSync as readFileSync10, writeFileSync as writeFileSync4, unlinkSync as unlinkSync2, openSync } from "fs";
 import { mkdirSync as mkdirSync6 } from "fs";
-import { dirname as dirname4, resolve as resolve2 } from "path";
+import { dirname as dirname4, resolve as resolve3 } from "path";
 function readPidFile() {
   try {
     const raw = readFileSync10(schedulerPidPath(), "utf-8");
@@ -2842,7 +2904,7 @@ function writePidFile(data) {
 }
 function removePidFile() {
   try {
-    unlinkSync(schedulerPidPath());
+    unlinkSync2(schedulerPidPath());
   } catch {}
 }
 function isProcessAlive(pid) {
@@ -2863,7 +2925,7 @@ function startDaemon(cwd) {
     removePidFile();
   }
   const __dir = dirname4(new URL(import.meta.url).pathname);
-  const cliPath = resolve2(__dir, "../cli.ts");
+  const cliPath = resolve3(__dir, "../cli.ts");
   const logPath = schedulerLogPath();
   mkdirSync6(dirname4(logPath), { recursive: true });
   const logFd = openSync(logPath, "a");
@@ -3528,12 +3590,12 @@ var init_pre_write = __esm(() => {
 });
 
 // src/core/write-exclusions.ts
-import { basename as basename5 } from "path";
+import { basename as basename6 } from "path";
 function isWriteExcluded(relativePath) {
   if (relativePath === ".mink" || relativePath.startsWith(".mink/") || relativePath.startsWith(".mink\\")) {
     return true;
   }
-  const name = basename5(relativePath);
+  const name = basename6(relativePath);
   if (name === ".env" || name.startsWith(".env.")) {
     return true;
   }
@@ -4165,7 +4227,7 @@ function loadManifest(cwd) {
   }
   return null;
 }
-function saveManifest(cwd, manifest) {
+function saveManifest2(cwd, manifest) {
   atomicWriteJson(schedulerManifestPath(cwd), manifest);
 }
 function getOrCreateManifest(cwd, now) {
@@ -4173,7 +4235,7 @@ function getOrCreateManifest(cwd, now) {
   if (existing)
     return existing;
   const fresh = createInitialManifest(now);
-  saveManifest(cwd, fresh);
+  saveManifest2(cwd, fresh);
   return fresh;
 }
 function recoverManifest(manifest, now) {
@@ -4222,7 +4284,7 @@ function createScheduler(projectCwd, options = {}) {
   let ticking = false;
   manifest = getOrCreateManifest(projectCwd, startedAt);
   recoverManifest(manifest, startedAt);
-  saveManifest(projectCwd, manifest);
+  saveManifest2(projectCwd, manifest);
   async function tick() {
     if (ticking)
       return;
@@ -4263,7 +4325,7 @@ function createScheduler(projectCwd, options = {}) {
     record.status = "running";
     record.lastRunAt = now.toISOString();
     activeTasks.push(taskId);
-    saveManifest(projectCwd, manifest);
+    saveManifest2(projectCwd, manifest);
     try {
       await executeTask(taskId, projectCwd);
       record.status = "idle";
@@ -4296,12 +4358,12 @@ function createScheduler(projectCwd, options = {}) {
       }
     } finally {
       activeTasks = activeTasks.filter((id) => id !== taskId);
-      saveManifest(projectCwd, manifest);
+      saveManifest2(projectCwd, manifest);
     }
   }
   function emitHeartbeat() {
     manifest.lastHeartbeat = new Date().toISOString();
-    saveManifest(projectCwd, manifest);
+    saveManifest2(projectCwd, manifest);
     console.log(`[mink] heartbeat at ${manifest.lastHeartbeat}`);
   }
   return {
@@ -4450,7 +4512,7 @@ async function cronRun(cwd, taskId) {
       errorMessages: [lastError?.message ?? "Unknown error"],
       attemptCount: task.retryPolicy.maxAttempts
     });
-    saveManifest(cwd, manifest);
+    saveManifest2(cwd, manifest);
   }
   process.exit(1);
 }
@@ -4492,7 +4554,7 @@ async function cronDeadLetter(cwd, args) {
       record.status = "idle";
       record.currentAttempt = 0;
     }
-    saveManifest(cwd, manifest);
+    saveManifest2(cwd, manifest);
     console.log(`[mink] retrying dead-lettered task: ${taskId}`);
     try {
       await executeTask(taskId, cwd);
@@ -4502,7 +4564,7 @@ async function cronDeadLetter(cwd, args) {
         record.lastRunAt = new Date().toISOString();
         record.consecutiveFailures = 0;
       }
-      saveManifest(cwd, manifest);
+      saveManifest2(cwd, manifest);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error(`[mink] task ${taskId} failed again: ${errorMsg}`);
@@ -4516,7 +4578,7 @@ async function cronDeadLetter(cwd, args) {
       if (record) {
         record.status = "dead-lettered";
       }
-      saveManifest(cwd, manifest);
+      saveManifest2(cwd, manifest);
       process.exit(1);
     }
     return;
@@ -4769,7 +4831,7 @@ async function triggerDeadLetterRetry(cwd, taskId) {
       record.consecutiveFailures = 0;
       record.currentAttempt = 0;
     }
-    saveManifest(cwd, manifest);
+    saveManifest2(cwd, manifest);
     await executeTask(taskId, cwd);
     return { success: true };
   } catch (err) {
@@ -4916,7 +4978,7 @@ async function runtimeServe(opts) {
   }
   const { createServer } = await import("node:http");
   const { Readable } = await import("node:stream");
-  return new Promise((resolve3) => {
+  return new Promise((resolve4) => {
     const httpServer = createServer(async (req, res) => {
       const url = `http://${opts.hostname}:${opts.port}${req.url ?? "/"}`;
       const headers = new Headers;
@@ -4975,7 +5037,7 @@ async function runtimeServe(opts) {
     httpServer.listen(opts.port, opts.hostname, () => {
       const addr = httpServer.address();
       const boundPort = typeof addr === "object" && addr ? addr.port : opts.port;
-      resolve3({
+      resolve4({
         port: boundPort,
         stop: (close) => {
           if (close)
@@ -4998,7 +5060,7 @@ __export(exports_dashboard_server, {
 });
 import { watch } from "fs";
 import { existsSync as existsSync14 } from "fs";
-import { basename as basename6, dirname as dirname5, join as join15, extname as extname2 } from "path";
+import { basename as basename7, dirname as dirname5, join as join15, extname as extname2 } from "path";
 
 class SSEManager {
   clients = new Map;
@@ -5077,7 +5139,7 @@ function getProjectsList(startupCwd, activeCwd) {
     registered.unshift({
       id: startupId,
       cwd: startupCwd,
-      name: meta?.name ?? basename6(startupCwd),
+      name: meta?.name ?? basename7(startupCwd),
       version: meta?.version ?? "0.1.0"
     });
   }
@@ -5088,7 +5150,7 @@ function getProjectsList(startupCwd, activeCwd) {
       registered.unshift({
         id: activeId,
         cwd: activeCwd,
-        name: meta?.name ?? basename6(activeCwd),
+        name: meta?.name ?? basename7(activeCwd),
         version: meta?.version ?? "0.1.0"
       });
     }
@@ -5103,7 +5165,7 @@ function createFileWatcher(cwd, onChange) {
     watcher = watch(dir, (eventType, filename) => {
       if (!filename)
         return;
-      const name = basename6(filename);
+      const name = basename7(filename);
       if (name.endsWith(".tmp"))
         return;
       const fileId = STATE_FILE_MAP[name];
@@ -5495,13 +5557,13 @@ function printValidKeys() {
   }
 }
 function readLineFromStdin() {
-  return new Promise((resolve3) => {
+  return new Promise((resolve4) => {
     const chunks = [];
     process.stdin.resume();
     process.stdin.setEncoding("utf-8");
     process.stdin.once("data", (data) => {
       process.stdin.pause();
-      resolve3(String(data).trim());
+      resolve4(String(data).trim());
     });
   });
 }
@@ -5574,7 +5636,7 @@ var init_config2 = __esm(() => {
 // src/commands/init.ts
 import { execSync as execSync3 } from "child_process";
 import { mkdirSync as mkdirSync7, existsSync as existsSync17 } from "fs";
-import { resolve as resolve3, dirname as dirname6, basename as basename7, join as join16 } from "path";
+import { resolve as resolve4, dirname as dirname6, basename as basename8, join as join16 } from "path";
 function detectRuntime2() {
   try {
     execSync3("bun --version", { stdio: "ignore" });
@@ -5638,7 +5700,7 @@ var exports_update = {};
 __export(exports_update, {
   update: () => update
 });
-import { resolve as resolve4, dirname as dirname7 } from "path";
+import { resolve as resolve5, dirname as dirname7 } from "path";
 function parseArgs(args) {
   let dryRun = false;
   let project = null;
@@ -5686,7 +5748,7 @@ async function update(cwd, args) {
     return;
   }
   const runtime = detectRuntime2();
-  const cliPath = resolve4(dirname7(new URL(import.meta.url).pathname), "../cli.ts");
+  const cliPath = resolve5(dirname7(new URL(import.meta.url).pathname), "../cli.ts");
   const newHooks = buildHooksConfig2(runtime, cliPath);
   for (const target of targets) {
     console.log(`[mink] updating: ${target.name} (${target.id})`);
@@ -5697,7 +5759,7 @@ async function update(cwd, args) {
     }
     const backupName = createBackup(target.cwd);
     console.log(`  backup: ${backupName}`);
-    const settingsPath = resolve4(target.cwd, ".claude", "settings.json");
+    const settingsPath = resolve5(target.cwd, ".claude", "settings.json");
     mergeHooksIntoSettings2(settingsPath, newHooks);
     console.log("  hooks: updated");
     const metaPath = projectMetaPath(target.cwd);
@@ -5929,11 +5991,11 @@ function __extends(d, b) {
 }
 function __awaiter(thisArg, _arguments, P, generator) {
   function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve5) {
-      resolve5(value);
+    return value instanceof P ? value : new P(function(resolve6) {
+      resolve6(value);
     });
   }
-  return new (P || (P = Promise))(function(resolve5, reject) {
+  return new (P || (P = Promise))(function(resolve6, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -5949,7 +6011,7 @@ function __awaiter(thisArg, _arguments, P, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve5(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve6(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -6132,14 +6194,14 @@ function __asyncValues(o) {
   }, i);
   function verb(n) {
     i[n] = o[n] && function(v) {
-      return new Promise(function(resolve5, reject) {
-        v = o[n](v), settle(resolve5, reject, v.done, v.value);
+      return new Promise(function(resolve6, reject) {
+        v = o[n](v), settle(resolve6, reject, v.done, v.value);
       });
     };
   }
-  function settle(resolve5, reject, d, v) {
+  function settle(resolve6, reject, d, v) {
     Promise.resolve(v).then(function(v2) {
-      resolve5({ value: v2, done: d });
+      resolve6({ value: v2, done: d });
     }, reject);
   }
 }
@@ -6670,7 +6732,7 @@ function of() {
 }
 function lastValueFrom(source, config22) {
   var hasConfig = typeof config22 === "object";
-  return new Promise(function(resolve5, reject) {
+  return new Promise(function(resolve6, reject) {
     var _hasValue = false;
     var _value;
     source.subscribe({
@@ -6681,9 +6743,9 @@ function lastValueFrom(source, config22) {
       error: reject,
       complete: function() {
         if (_hasValue) {
-          resolve5(_value);
+          resolve6(_value);
         } else if (hasConfig) {
-          resolve5(config22.defaultValue);
+          resolve6(config22.defaultValue);
         } else {
           reject(new EmptyError);
         }
@@ -6693,16 +6755,16 @@ function lastValueFrom(source, config22) {
 }
 function firstValueFrom(source, config22) {
   var hasConfig = typeof config22 === "object";
-  return new Promise(function(resolve5, reject) {
+  return new Promise(function(resolve6, reject) {
     var subscriber = new SafeSubscriber({
       next: function(value) {
-        resolve5(value);
+        resolve6(value);
         subscriber.unsubscribe();
       },
       error: reject,
       complete: function() {
         if (hasConfig) {
-          resolve5(config22.defaultValue);
+          resolve6(config22.defaultValue);
         } else {
           reject(new EmptyError);
         }
@@ -7754,7 +7816,7 @@ var init_rxjs = __esm(() => {
     Observable2.prototype.forEach = function(next, promiseCtor) {
       var _this = this;
       promiseCtor = getPromiseCtor(promiseCtor);
-      return new promiseCtor(function(resolve5, reject) {
+      return new promiseCtor(function(resolve6, reject) {
         var subscriber = new SafeSubscriber({
           next: function(value) {
             try {
@@ -7765,7 +7827,7 @@ var init_rxjs = __esm(() => {
             }
           },
           error: reject,
-          complete: resolve5
+          complete: resolve6
         });
         _this.subscribe(subscriber);
       });
@@ -7787,14 +7849,14 @@ var init_rxjs = __esm(() => {
     Observable2.prototype.toPromise = function(promiseCtor) {
       var _this = this;
       promiseCtor = getPromiseCtor(promiseCtor);
-      return new promiseCtor(function(resolve5, reject) {
+      return new promiseCtor(function(resolve6, reject) {
         var value;
         _this.subscribe(function(x) {
           return value = x;
         }, function(err) {
           return reject(err);
         }, function() {
-          return resolve5(value);
+          return resolve6(value);
         });
       });
     };
@@ -9720,8 +9782,8 @@ class Deferred {
   #isRejected = false;
   #value;
   #resolve;
-  #taskPromise = new Promise((resolve5) => {
-    this.#resolve = resolve5;
+  #taskPromise = new Promise((resolve6) => {
+    this.#resolve = resolve6;
   });
   #timeoutId;
   #timeoutError;
@@ -9810,12 +9872,12 @@ var init_Mutex = __esm(() => {
       return new Mutex.Guard(this, onRelease);
     }
     release() {
-      const resolve5 = this.#acquirers.shift();
-      if (!resolve5) {
+      const resolve6 = this.#acquirers.shift();
+      if (!resolve6) {
         this.#locked = false;
         return;
       }
-      resolve5();
+      resolve6();
     }
   };
 });
@@ -11559,12 +11621,12 @@ var init_locators = __esm(() => {
       }
       return defer(() => {
         return from(handle.evaluate((element) => {
-          return new Promise((resolve5) => {
+          return new Promise((resolve6) => {
             window.requestAnimationFrame(() => {
               const rect1 = element.getBoundingClientRect();
               window.requestAnimationFrame(() => {
                 const rect2 = element.getBoundingClientRect();
-                resolve5([
+                resolve6([
                   {
                     x: rect1.x,
                     y: rect1.y,
@@ -12855,9 +12917,9 @@ var init_ElementHandle = __esm(() => {
           const handle = await this.#asSVGElementHandle();
           const target = __addDisposableResource6(env_5, handle && await handle.#getOwnerSVGElement(), false);
           return await (target ?? this).evaluate(async (element, threshold) => {
-            const visibleRatio = await new Promise((resolve5) => {
+            const visibleRatio = await new Promise((resolve6) => {
               const observer = new IntersectionObserver((entries) => {
-                resolve5(entries[0].intersectionRatio);
+                resolve6(entries[0].intersectionRatio);
                 observer.disconnect();
               });
               observer.observe(element);
@@ -13251,7 +13313,7 @@ var init_Frame = __esm(() => {
         }
         type = type ?? "text/javascript";
         return await this.mainRealm().transferHandle(await this.isolatedRealm().evaluateHandle(async ({ url, id, type: type2, content: content2 }) => {
-          return await new Promise((resolve5, reject) => {
+          return await new Promise((resolve6, reject) => {
             const script = document.createElement("script");
             script.type = type2;
             script.text = content2;
@@ -13264,12 +13326,12 @@ var init_Frame = __esm(() => {
             if (url) {
               script.src = url;
               script.addEventListener("load", () => {
-                resolve5(script);
+                resolve6(script);
               }, { once: true });
               document.head.appendChild(script);
             } else {
               document.head.appendChild(script);
-              resolve5(script);
+              resolve6(script);
             }
           });
         }, { ...options, type, content }));
@@ -13286,7 +13348,7 @@ var init_Frame = __esm(() => {
           options.content = content;
         }
         return await this.mainRealm().transferHandle(await this.isolatedRealm().evaluateHandle(async ({ url, content: content2 }) => {
-          return await new Promise((resolve5, reject) => {
+          return await new Promise((resolve6, reject) => {
             let element;
             if (!url) {
               element = document.createElement("style");
@@ -13298,7 +13360,7 @@ var init_Frame = __esm(() => {
               element = link;
             }
             element.addEventListener("load", () => {
-              resolve5(element);
+              resolve6(element);
             }, { once: true });
             element.addEventListener("error", (event) => {
               reject(new Error(event.message ?? "Could not load style"));
@@ -14152,9 +14214,9 @@ var init_Page = __esm(() => {
         ++this.#screencastSessionCount;
         if (!this.#startScreencastPromise) {
           this.#startScreencastPromise = this.mainFrame().client.send("Page.startScreencast", { format: "png" }).then(() => {
-            return new Promise((resolve5) => {
+            return new Promise((resolve6) => {
               return this.mainFrame().client.once("Page.screencastFrame", () => {
-                return resolve5();
+                return resolve6();
               });
             });
           });
@@ -16812,11 +16874,11 @@ function addPageBinding(type, name, prefix) {
           return value instanceof Node;
         })
       }));
-      return new Promise((resolve5, reject) => {
+      return new Promise((resolve6, reject) => {
         callPuppeteer.callbacks.set(seq, {
           resolve(value) {
             callPuppeteer.args.delete(seq);
-            resolve5(value);
+            resolve6(value);
           },
           reject(value) {
             callPuppeteer.args.delete(seq);
@@ -20279,8 +20341,8 @@ var init_Input2 = __esm(() => {
       if (typeof delay === "number") {
         await Promise.all(actions);
         actions.length = 0;
-        await new Promise((resolve5) => {
-          setTimeout(resolve5, delay);
+        await new Promise((resolve6) => {
+          setTimeout(resolve6, delay);
         });
       }
       actions.push(this.up({ ...options, clickCount }));
@@ -20300,9 +20362,9 @@ var init_Input2 = __esm(() => {
       });
     }
     async drag(start, target) {
-      const promise = new Promise((resolve5) => {
+      const promise = new Promise((resolve6) => {
         this.#client.once("Input.dragIntercepted", (event) => {
-          return resolve5(event.data);
+          return resolve6(event.data);
         });
       });
       await this.move(start.x, start.y);
@@ -20343,8 +20405,8 @@ var init_Input2 = __esm(() => {
       await this.dragEnter(target, data);
       await this.dragOver(target, data);
       if (delay) {
-        await new Promise((resolve5) => {
-          return setTimeout(resolve5, delay);
+        await new Promise((resolve6) => {
+          return setTimeout(resolve6, delay);
         });
       }
       await this.drop(target, data);
@@ -21156,9 +21218,9 @@ var init_Page2 = __esm(() => {
     async captureHeapSnapshot(options) {
       const { createWriteStream } = environment.value.fs;
       const stream = createWriteStream(options.path);
-      const streamPromise = new Promise((resolve5, reject) => {
+      const streamPromise = new Promise((resolve6, reject) => {
         stream.on("error", reject);
-        stream.on("finish", resolve5);
+        stream.on("finish", resolve6);
       });
       const client = this.#primaryTargetClient;
       await client.send("HeapProfiler.enable");
@@ -22671,10 +22733,10 @@ __export(exports_BrowserWebSocketTransport, {
 
 class BrowserWebSocketTransport {
   static create(url) {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       const ws = new WebSocket(url);
       ws.addEventListener("open", () => {
-        return resolve5(new BrowserWebSocketTransport(ws));
+        return resolve6(new BrowserWebSocketTransport(ws));
       });
       ws.addEventListener("error", reject);
     });
@@ -25508,11 +25570,11 @@ var require_BrowsingContextProcessor = __commonJS((exports) => {
       }
       const parentCdpClient = context2.cdpTarget.parentCdpClient;
       try {
-        const detachedFromTargetPromise = new Promise((resolve5) => {
+        const detachedFromTargetPromise = new Promise((resolve6) => {
           const onContextDestroyed = (event) => {
             if (event.targetId === params.context) {
               parentCdpClient.off("Target.detachedFromTarget", onContextDestroyed);
-              resolve5();
+              resolve6();
             }
           };
           parentCdpClient.on("Target.detachedFromTarget", onContextDestroyed);
@@ -26832,7 +26894,7 @@ var require_ActionDispatcher = __commonJS((exports) => {
         }
       }
       const promises = [
-        new Promise((resolve5) => setTimeout(resolve5, this.#tickDuration))
+        new Promise((resolve6) => setTimeout(resolve6, this.#tickDuration))
       ];
       for (const option of options) {
         promises.push(this.#dispatchAction(option));
@@ -27431,8 +27493,8 @@ var require_Mutex = __commonJS((exports) => {
     acquire() {
       const state = { resolved: false };
       if (this.#locked) {
-        return new Promise((resolve5) => {
-          this.#acquirers.push(() => resolve5(this.#release.bind(this, state)));
+        return new Promise((resolve6) => {
+          this.#acquirers.push(() => resolve6(this.#release.bind(this, state)));
         });
       }
       this.#locked = true;
@@ -27443,12 +27505,12 @@ var require_Mutex = __commonJS((exports) => {
         throw new Error("Cannot release more than once.");
       }
       state.resolved = true;
-      const resolve5 = this.#acquirers.shift();
-      if (!resolve5) {
+      const resolve6 = this.#acquirers.shift();
+      if (!resolve6) {
         this.#locked = false;
         return;
       }
-      resolve5();
+      resolve6();
     }
     async run(action) {
       const release = await this.acquire();
@@ -28575,8 +28637,8 @@ var require_ChannelProxy = __commonJS((exports) => {
         let queueNonEmptyResolver = null;
         return {
           async getMessage() {
-            const onMessage = queue.length > 0 ? Promise.resolve() : new Promise((resolve5) => {
-              queueNonEmptyResolver = resolve5;
+            const onMessage = queue.length > 0 ? Promise.resolve() : new Promise((resolve6) => {
+              queueNonEmptyResolver = resolve6;
             });
             await onMessage;
             return queue.shift();
@@ -28662,7 +28724,7 @@ var require_ChannelProxy = __commonJS((exports) => {
         functionDeclaration: String((id) => {
           const w = window;
           if (w[id] === undefined) {
-            return new Promise((resolve5) => w[id] = resolve5);
+            return new Promise((resolve6) => w[id] = resolve6);
           }
           const channelProxy = w[id];
           delete w[id];
@@ -30013,8 +30075,8 @@ var require_Deferred = __commonJS((exports) => {
       return this.#result;
     }
     constructor() {
-      this.#promise = new Promise((resolve5, reject) => {
-        this.#resolve = resolve5;
+      this.#promise = new Promise((resolve6, reject) => {
+        this.#resolve = resolve6;
         this.#reject = reject;
       });
       this.#promise.catch((_error) => {});
@@ -34339,11 +34401,11 @@ var require_BrowsingContextStorage = __commonJS((exports) => {
       if (this.#contexts.has(browsingContextId)) {
         return Promise.resolve(this.getContext(browsingContextId));
       }
-      return new Promise((resolve5) => {
+      return new Promise((resolve6) => {
         const listener = (event) => {
           if (event.browsingContext.id === browsingContextId) {
             this.#eventEmitter.off("added", listener);
-            resolve5(event.browsingContext);
+            resolve6(event.browsingContext);
           }
         };
         this.#eventEmitter.on("added", listener);
@@ -37839,8 +37901,8 @@ var init_ExposedFunction = __esm(() => {
       const functionDeclaration = stringifyFunction(interpolateFunction((callback) => {
         Object.assign(globalThis, {
           [PLACEHOLDER("name")]: function(...args) {
-            return new Promise((resolve5, reject) => {
-              callback([resolve5, reject, args]);
+            return new Promise((resolve6, reject) => {
+              callback([resolve6, reject, args]);
             });
           }
         });
@@ -37928,8 +37990,8 @@ var init_ExposedFunction = __esm(() => {
           return;
         }
         try {
-          await dataHandle.evaluate(([resolve5], result2) => {
-            resolve5(result2);
+          await dataHandle.evaluate(([resolve6], result2) => {
+            resolve6(result2);
           }, result);
         } catch (error) {
           debugError(error);
@@ -45221,7 +45283,7 @@ __export(exports_NodeWebSocketTransport, {
 
 class NodeWebSocketTransport {
   static create(url, headers) {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       const ws = new wrapper_default(url, [], {
         followRedirects: true,
         perMessageDeflate: false,
@@ -45233,7 +45295,7 @@ class NodeWebSocketTransport {
         }
       });
       ws.addEventListener("open", () => {
-        return resolve5(new NodeWebSocketTransport(ws));
+        return resolve6(new NodeWebSocketTransport(ws));
       });
       ws.addEventListener("error", reject);
     });
@@ -48125,8 +48187,8 @@ var require_helpers = __commonJS((exports) => {
   function req(url, opts = {}) {
     const href = typeof url === "string" ? url : url.href;
     const req2 = (href.startsWith("https:") ? https : http).request(url, opts);
-    const promise = new Promise((resolve5, reject) => {
-      req2.once("response", resolve5).once("error", reject).end();
+    const promise = new Promise((resolve6, reject) => {
+      req2.once("response", resolve6).once("error", reject).end();
     });
     req2.then = promise.then.bind(promise);
     return req2;
@@ -48497,7 +48559,7 @@ var require_parse_proxy_response = __commonJS((exports) => {
   var debug_1 = __importDefault(require_src());
   var debug2 = (0, debug_1.default)("https-proxy-agent:parse-proxy-response");
   function parseProxyResponse(socket) {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       let buffersLength = 0;
       const buffers = [];
       function read() {
@@ -48566,7 +48628,7 @@ var require_parse_proxy_response = __commonJS((exports) => {
         }
         debug2("got proxy server response: %o %o", firstLine, headers);
         cleanup();
-        resolve5({
+        resolve6({
           connect: {
             statusCode,
             statusText,
@@ -50670,11 +50732,11 @@ var require_receivebuffer = __commonJS((exports) => {
 var require_socksclient = __commonJS((exports) => {
   var __awaiter2 = exports && exports.__awaiter || function(thisArg, _arguments, P, generator) {
     function adopt(value) {
-      return value instanceof P ? value : new P(function(resolve5) {
-        resolve5(value);
+      return value instanceof P ? value : new P(function(resolve6) {
+        resolve6(value);
       });
     }
-    return new (P || (P = Promise))(function(resolve5, reject) {
+    return new (P || (P = Promise))(function(resolve6, reject) {
       function fulfilled(value) {
         try {
           step(generator.next(value));
@@ -50690,7 +50752,7 @@ var require_socksclient = __commonJS((exports) => {
         }
       }
       function step(result) {
-        result.done ? resolve5(result.value) : adopt(result.value).then(fulfilled, rejected);
+        result.done ? resolve6(result.value) : adopt(result.value).then(fulfilled, rejected);
       }
       step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
@@ -50717,13 +50779,13 @@ var require_socksclient = __commonJS((exports) => {
       this.setState(constants_1.SocksClientState.Created);
     }
     static createConnection(options, callback) {
-      return new Promise((resolve5, reject) => {
+      return new Promise((resolve6, reject) => {
         try {
           (0, helpers_1.validateSocksClientOptions)(options, ["connect"]);
         } catch (err) {
           if (typeof callback === "function") {
             callback(err);
-            return resolve5(err);
+            return resolve6(err);
           } else {
             return reject(err);
           }
@@ -50734,16 +50796,16 @@ var require_socksclient = __commonJS((exports) => {
           client.removeAllListeners();
           if (typeof callback === "function") {
             callback(null, info);
-            resolve5(info);
+            resolve6(info);
           } else {
-            resolve5(info);
+            resolve6(info);
           }
         });
         client.once("error", (err) => {
           client.removeAllListeners();
           if (typeof callback === "function") {
             callback(err);
-            resolve5(err);
+            resolve6(err);
           } else {
             reject(err);
           }
@@ -50751,13 +50813,13 @@ var require_socksclient = __commonJS((exports) => {
       });
     }
     static createConnectionChain(options, callback) {
-      return new Promise((resolve5, reject) => __awaiter2(this, undefined, undefined, function* () {
+      return new Promise((resolve6, reject) => __awaiter2(this, undefined, undefined, function* () {
         try {
           (0, helpers_1.validateSocksClientChainOptions)(options);
         } catch (err) {
           if (typeof callback === "function") {
             callback(err);
-            return resolve5(err);
+            return resolve6(err);
           } else {
             return reject(err);
           }
@@ -50783,14 +50845,14 @@ var require_socksclient = __commonJS((exports) => {
           }
           if (typeof callback === "function") {
             callback(null, { socket: sock });
-            resolve5({ socket: sock });
+            resolve6({ socket: sock });
           } else {
-            resolve5({ socket: sock });
+            resolve6({ socket: sock });
           }
         } catch (err) {
           if (typeof callback === "function") {
             callback(err);
-            resolve5(err);
+            resolve6(err);
           } else {
             reject(err);
           }
@@ -51390,12 +51452,12 @@ var require_dist4 = __commonJS((exports) => {
       let { host } = opts;
       const { port, lookup: lookupFn = dns.lookup } = opts;
       if (shouldLookup) {
-        host = await new Promise((resolve5, reject) => {
+        host = await new Promise((resolve6, reject) => {
           lookupFn(host, {}, (err, res) => {
             if (err) {
               reject(err);
             } else {
-              resolve5(res);
+              resolve6(res);
             }
           });
         });
@@ -52402,7 +52464,7 @@ var require_netUtils = __commonJS((exports) => {
     return `${socket.remoteAddress}:${socket.remotePort}`;
   }
   function upgradeSocket(socket, options) {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       const tlsOptions = Object.assign({}, options, {
         socket
       });
@@ -52412,7 +52474,7 @@ var require_netUtils = __commonJS((exports) => {
           reject(tlsSocket.authorizationError);
         } else {
           tlsSocket.removeAllListeners("error");
-          resolve5(tlsSocket);
+          resolve6(tlsSocket);
         }
       }).once("error", (error) => {
         reject(error);
@@ -52504,7 +52566,7 @@ var require_transfer = __commonJS((exports) => {
     };
   }
   function connectForPassiveTransfer(host, port, ftp) {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       let socket = ftp._newSocket();
       const handleConnErr = function(err) {
         err.message = "Can't open data connection in passive mode: " + err.message;
@@ -52527,7 +52589,7 @@ var require_transfer = __commonJS((exports) => {
         socket.removeListener("error", handleConnErr);
         socket.removeListener("timeout", handleTimeout);
         ftp.dataSocket = socket;
-        resolve5();
+        resolve6();
       });
     });
   }
@@ -64538,11 +64600,11 @@ var require_tslib = __commonJS((exports, module) => {
     };
     __awaiter2 = function(thisArg, _arguments, P, generator) {
       function adopt(value) {
-        return value instanceof P ? value : new P(function(resolve5) {
-          resolve5(value);
+        return value instanceof P ? value : new P(function(resolve6) {
+          resolve6(value);
         });
       }
-      return new (P || (P = Promise))(function(resolve5, reject) {
+      return new (P || (P = Promise))(function(resolve6, reject) {
         function fulfilled(value) {
           try {
             step(generator.next(value));
@@ -64558,7 +64620,7 @@ var require_tslib = __commonJS((exports, module) => {
           }
         }
         function step(result) {
-          result.done ? resolve5(result.value) : adopt(result.value).then(fulfilled, rejected);
+          result.done ? resolve6(result.value) : adopt(result.value).then(fulfilled, rejected);
         }
         step((generator = generator.apply(thisArg, _arguments || [])).next());
       });
@@ -64787,14 +64849,14 @@ var require_tslib = __commonJS((exports, module) => {
       }, i);
       function verb(n) {
         i[n] = o[n] && function(v) {
-          return new Promise(function(resolve5, reject) {
-            v = o[n](v), settle(resolve5, reject, v.done, v.value);
+          return new Promise(function(resolve6, reject) {
+            v = o[n](v), settle(resolve6, reject, v.done, v.value);
           });
         };
       }
-      function settle(resolve5, reject, d, v) {
+      function settle(resolve6, reject, d, v) {
         Promise.resolve(v).then(function(v2) {
-          resolve5({ value: v2, done: d });
+          resolve6({ value: v2, done: d });
         }, reject);
       }
     };
@@ -68033,12 +68095,12 @@ var require_util3 = __commonJS((exports) => {
   exports.isGMT = exports.dnsLookup = undefined;
   var dns_1 = __require("dns");
   function dnsLookup(host, opts) {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       (0, dns_1.lookup)(host, opts, (err, res) => {
         if (err) {
           reject(err);
         } else {
-          resolve5(res);
+          resolve6(res);
         }
       });
     });
@@ -68612,10 +68674,10 @@ var require_myIpAddress = __commonJS((exports) => {
   var ip_1 = require_ip();
   var net_1 = __importDefault(__require("net"));
   async function myIpAddress() {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       const socket = net_1.default.connect({ host: "8.8.8.8", port: 53 });
       const onError = () => {
-        resolve5(ip_1.ip.address());
+        resolve6(ip_1.ip.address());
       };
       socket.once("error", onError);
       socket.once("connect", () => {
@@ -68623,9 +68685,9 @@ var require_myIpAddress = __commonJS((exports) => {
         const addr = socket.address();
         socket.destroy();
         if (typeof addr === "string") {
-          resolve5(addr);
+          resolve6(addr);
         } else if (addr.address) {
-          resolve5(addr.address);
+          resolve6(addr.address);
         } else {
           reject(new Error("Expected a `string`"));
         }
@@ -69139,8 +69201,8 @@ var require_deferred_promise = __commonJS((exports) => {
       this.context = args.context;
       this.owner = args.context.runtime;
       this.handle = args.promiseHandle;
-      this.settled = new Promise((resolve5) => {
-        this.onSettled = resolve5;
+      this.settled = new Promise((resolve6) => {
+        this.onSettled = resolve6;
       });
       this.resolveHandle = args.resolveHandle;
       this.rejectHandle = args.rejectHandle;
@@ -69532,13 +69594,13 @@ var require_context = __commonJS((exports) => {
       if (vmResolveResult.error) {
         return Promise.resolve(vmResolveResult);
       }
-      return new Promise((resolve5) => {
+      return new Promise((resolve6) => {
         lifetime_1.Scope.withScope((scope) => {
           const resolveHandle = scope.manage(this.newFunction("resolve", (value) => {
-            resolve5({ value: value && value.dup() });
+            resolve6({ value: value && value.dup() });
           }));
           const rejectHandle = scope.manage(this.newFunction("reject", (error) => {
-            resolve5({ error: error && error.dup() });
+            resolve6({ error: error && error.dup() });
           }));
           const promiseHandle = scope.manage(vmResolveResult.value);
           const promiseThenHandle = scope.manage(this.getProp(promiseHandle, "then"));
@@ -70306,7 +70368,7 @@ var require_ffi_WASM_RELEASE_SYNC = __commonJS((exports) => {
 
 // node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js
 var require_emscripten_module_WASM_RELEASE_SYNC = __commonJS((exports, module) => {
-  var __dirname = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
+  var __dirname = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
   var QuickJSRaw = (() => {
     var _scriptDir = typeof document !== "undefined" && document.currentScript ? document.currentScript.src : undefined;
     if (typeof __filename !== "undefined")
@@ -71652,13 +71714,13 @@ import * as http from "node:http";
 import * as https from "node:https";
 import { URL as URL2, urlToHttpOptions } from "node:url";
 function headHttpRequest(url) {
-  return new Promise((resolve5) => {
+  return new Promise((resolve6) => {
     const request3 = httpRequest(url, "HEAD", (response) => {
       response.resume();
-      resolve5(response.statusCode === 200);
+      resolve6(response.statusCode === 200);
     }, false);
     request3.on("error", () => {
-      resolve5(false);
+      resolve6(false);
     });
   });
 }
@@ -71686,7 +71748,7 @@ function httpRequest(url, method, response, keepAlive = true) {
   return request3;
 }
 function downloadFile(url, destinationPath, progressCallback) {
-  return new Promise((resolve5, reject) => {
+  return new Promise((resolve6, reject) => {
     let downloadedBytes = 0;
     let totalBytes = 0;
     function onData(chunk) {
@@ -71702,7 +71764,7 @@ function downloadFile(url, destinationPath, progressCallback) {
       }
       const file = createWriteStream(destinationPath);
       file.on("close", () => {
-        return resolve5();
+        return resolve6();
       });
       file.on("error", (error) => {
         return reject(error);
@@ -71727,7 +71789,7 @@ async function getJSON(url) {
   }
 }
 function getText(url) {
-  return new Promise((resolve5, reject) => {
+  return new Promise((resolve6, reject) => {
     const request3 = httpRequest(url, "GET", (response) => {
       let data = "";
       if (response.statusCode && response.statusCode >= 400) {
@@ -71738,7 +71800,7 @@ function getText(url) {
       });
       response.on("end", () => {
         try {
-          return resolve5(String(data));
+          return resolve6(String(data));
         } catch {
           return reject(new Error(`Failed to read text response from ${url}`));
         }
@@ -72959,7 +73021,7 @@ class Process {
     if (opts.onExit) {
       this.#onExitHook = opts.onExit;
     }
-    this.#browserProcessExiting = new Promise((resolve5, reject) => {
+    this.#browserProcessExiting = new Promise((resolve6, reject) => {
       this.#browserProcess.once("exit", async () => {
         debugLaunch(`Browser process ${this.#browserProcess.pid} onExit`);
         this.#clearListeners();
@@ -72970,7 +73032,7 @@ class Process {
           reject(err);
           return;
         }
-        resolve5();
+        resolve6();
       });
     });
   }
@@ -73080,7 +73142,7 @@ Error cause: ${isErrorLike2(error) ? error.stack : error}`);
     return [...this.#logs];
   }
   waitForLineOutput(regex, timeout2 = 0) {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       const onClose = (errorOrCode) => {
         cleanup();
         reject(new Error([
@@ -73118,7 +73180,7 @@ Error cause: ${isErrorLike2(error) ? error.stack : error}`);
           return;
         }
         cleanup();
-        resolve5(match[1]);
+        resolve6(match[1]);
       }
     });
   }
@@ -73648,7 +73710,7 @@ var require_get_stream = __commonJS((exports, module) => {
     };
     const { maxBuffer } = options;
     let stream;
-    await new Promise((resolve5, reject) => {
+    await new Promise((resolve6, reject) => {
       const rejectPromise = (error) => {
         if (error && stream.getBufferedLength() <= BufferConstants.MAX_LENGTH) {
           error.bufferedData = stream.getBufferedValue();
@@ -73660,7 +73722,7 @@ var require_get_stream = __commonJS((exports, module) => {
           rejectPromise(error);
           return;
         }
-        resolve5();
+        resolve6();
       });
       stream.on("data", () => {
         if (stream.getBufferedLength() > maxBuffer) {
@@ -75021,7 +75083,7 @@ var require_extract_zip = __commonJS((exports, module) => {
       debug4("opening", this.zipPath, "with opts", this.opts);
       this.zipfile = await openZip(this.zipPath, { lazyEntries: true });
       this.canceled = false;
-      return new Promise((resolve5, reject) => {
+      return new Promise((resolve6, reject) => {
         this.zipfile.on("error", (err) => {
           this.canceled = true;
           reject(err);
@@ -75030,7 +75092,7 @@ var require_extract_zip = __commonJS((exports, module) => {
         this.zipfile.on("close", () => {
           if (!this.canceled) {
             debug4("zip extraction complete");
-            resolve5();
+            resolve6();
           }
         });
         this.zipfile.on("entry", async (entry) => {
@@ -76372,8 +76434,8 @@ var require_streamx = __commonJS((exports, module) => {
           return this;
         },
         next() {
-          return new Promise(function(resolve5, reject) {
-            promiseResolve = resolve5;
+          return new Promise(function(resolve6, reject) {
+            promiseResolve = resolve6;
             promiseReject = reject;
             const data = stream.read();
             if (data !== null)
@@ -76410,14 +76472,14 @@ var require_streamx = __commonJS((exports, module) => {
       }
       function destroy(err) {
         stream.destroy(err);
-        return new Promise((resolve5, reject) => {
+        return new Promise((resolve6, reject) => {
           if (stream._duplexState & DESTROYED)
-            return resolve5({ value: undefined, done: true });
+            return resolve6({ value: undefined, done: true });
           stream.once("close", function() {
             if (err)
               reject(err);
             else
-              resolve5({ value: undefined, done: true });
+              resolve6({ value: undefined, done: true });
           });
         });
       }
@@ -76469,8 +76531,8 @@ var require_streamx = __commonJS((exports, module) => {
         return Promise.resolve(true);
       if (state.drains === null)
         state.drains = [];
-      return new Promise((resolve5) => {
-        state.drains.push({ writes, resolve: resolve5 });
+      return new Promise((resolve6) => {
+        state.drains.push({ writes, resolve: resolve6 });
       });
     }
     write(data) {
@@ -76584,11 +76646,11 @@ var require_streamx = __commonJS((exports, module) => {
     cb(null);
   }
   function pipelinePromise(...streams) {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       return pipeline(...streams, (err) => {
         if (err)
           return reject(err);
-        resolve5();
+        resolve6();
       });
     });
   }
@@ -77302,16 +77364,16 @@ var require_extract = __commonJS((exports, module) => {
         entryCallback = null;
         cb(err);
       }
-      function onnext(resolve5, reject) {
+      function onnext(resolve6, reject) {
         if (error) {
           return reject(error);
         }
         if (entryStream) {
-          resolve5({ value: entryStream, done: false });
+          resolve6({ value: entryStream, done: false });
           entryStream = null;
           return;
         }
-        promiseResolve = resolve5;
+        promiseResolve = resolve6;
         promiseReject = reject;
         consumeCallback(null);
         if (extract._finished && promiseResolve) {
@@ -77342,14 +77404,14 @@ var require_extract = __commonJS((exports, module) => {
       function destroy(err) {
         extract.destroy(err);
         consumeCallback(err);
-        return new Promise((resolve5, reject) => {
+        return new Promise((resolve6, reject) => {
           if (extract.destroyed)
-            return resolve5({ value: undefined, done: true });
+            return resolve6({ value: undefined, done: true });
           extract.once("close", function() {
             if (err)
               reject(err);
             else
-              resolve5({ value: undefined, done: true });
+              resolve6({ value: undefined, done: true });
           });
         });
       }
@@ -78731,10 +78793,10 @@ var init_cliui = __esm(() => {
 });
 
 // node_modules/escalade/sync/index.mjs
-import { dirname as dirname8, resolve as resolve6 } from "path";
+import { dirname as dirname8, resolve as resolve7 } from "path";
 import { readdirSync as readdirSync6, statSync as statSync9 } from "fs";
 function sync_default(start, callback) {
-  let dir = resolve6(".", start);
+  let dir = resolve7(".", start);
   let tmp, stats = statSync9(dir);
   if (!stats.isDirectory()) {
     dir = dirname8(dir);
@@ -78742,7 +78804,7 @@ function sync_default(start, callback) {
   while (true) {
     tmp = callback(dir, readdirSync6(dir));
     if (tmp)
-      return resolve6(dir, tmp);
+      return resolve7(dir, tmp);
     dir = dirname8(tmp = dir);
     if (tmp === dir)
       break;
@@ -79689,7 +79751,7 @@ var init_yargs_parser = __esm(() => {
 
 // node_modules/yargs-parser/build/lib/index.js
 import { format } from "util";
-import { normalize, resolve as resolve7 } from "path";
+import { normalize, resolve as resolve8 } from "path";
 var _a3, _b, _c, minNodeVersion, nodeVersion, env, parser, yargsParser = function Parser(args, opts) {
   const result = parser.parse(args.slice(), opts);
   return result.argv;
@@ -79712,7 +79774,7 @@ var init_lib2 = __esm(() => {
     },
     format,
     normalize,
-    resolve: resolve7,
+    resolve: resolve8,
     require: (path9) => {
       if (true) {
         return __require(path9);
@@ -79765,7 +79827,7 @@ var init_yerror = __esm(() => {
 // node_modules/y18n/build/lib/platform-shims/node.js
 import { readFileSync as readFileSync20, statSync as statSync10, writeFile } from "fs";
 import { format as format2 } from "util";
-import { resolve as resolve8 } from "path";
+import { resolve as resolve9 } from "path";
 var node_default;
 var init_node = __esm(() => {
   node_default = {
@@ -79774,7 +79836,7 @@ var init_node = __esm(() => {
       writeFile
     },
     format: format2,
-    resolve: resolve8,
+    resolve: resolve9,
     exists: (file) => {
       try {
         return statSync10(file).isFile();
@@ -79957,7 +80019,7 @@ import { notStrictEqual, strictEqual } from "assert";
 import { inspect } from "util";
 import { readFileSync as readFileSync21 } from "fs";
 import { fileURLToPath } from "url";
-import { basename as basename9, dirname as dirname9, extname as extname3, relative as relative7, resolve as resolve9 } from "path";
+import { basename as basename10, dirname as dirname9, extname as extname3, relative as relative7, resolve as resolve10 } from "path";
 var REQUIRE_ERROR = "require is not supported by ESM", REQUIRE_DIRECTORY_ERROR = "loading a directory of commands is not supported yet for ESM", __dirname2, mainFilename, esm_default;
 var init_esm = __esm(() => {
   init_cliui();
@@ -79989,11 +80051,11 @@ var init_esm = __esm(() => {
     mainFilename: mainFilename || process.cwd(),
     Parser: lib_default,
     path: {
-      basename: basename9,
+      basename: basename10,
       dirname: dirname9,
       extname: extname3,
       relative: relative7,
-      resolve: resolve9
+      resolve: resolve10
     },
     process: {
       argv: () => process.argv,
@@ -80015,7 +80077,7 @@ var init_esm = __esm(() => {
       return [...str].length;
     },
     y18n: y18n_default({
-      directory: resolve9(__dirname2, "../../../locales"),
+      directory: resolve10(__dirname2, "../../../locales"),
       updateFiles: false
     })
   };
@@ -82263,12 +82325,12 @@ var init_yargs_factory = __esm(() => {
     async getCompletion(args, done) {
       argsert("<array> [function]", [args, done], arguments.length);
       if (!done) {
-        return new Promise((resolve10, reject) => {
+        return new Promise((resolve11, reject) => {
           __classPrivateFieldGet(this, _YargsInstance_completion, "f").getCompletion(args, (err, completions) => {
             if (err)
               reject(err);
             else
-              resolve10(completions);
+              resolve11(completions);
           });
         });
       } else {
@@ -84761,8 +84823,8 @@ var init_ScreenRecorder = __esm(() => {
       static {
         const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(_classSuper[Symbol.metadata] ?? null) : undefined;
         __esDecorate22(this, _private_writeFrame_descriptor = { value: __setFunctionName5(async function(buffer) {
-          const error = await new Promise((resolve10) => {
-            this.#process.stdin.write(buffer, resolve10);
+          const error = await new Promise((resolve11) => {
+            this.#process.stdin.write(buffer, resolve11);
           });
           if (error) {
             console.log(`ffmpeg failed to write: ${error.message}.`);
@@ -84917,8 +84979,8 @@ var init_ScreenRecorder = __esm(() => {
         const [buffer, timestamp] = await this.#lastFrame;
         await Promise.all(Array(Math.max(1, Math.round(this.#fps * (performance.now() - timestamp) / 1000))).fill(buffer).map(this.#writeFrame.bind(this)));
         this.#process.stdin.end();
-        await new Promise((resolve10) => {
-          this.#process.once("close", resolve10);
+        await new Promise((resolve11) => {
+          this.#process.once("close", resolve11);
         });
       }
       async[(_private_writeFrame_decorators = [guarded()], _stop_decorators = [guarded()], asyncDisposeSymbol)]() {
@@ -86748,7 +86810,7 @@ __export(exports_wiki, {
   wiki: () => wiki
 });
 import { existsSync as existsSync24, statSync as statSync13 } from "fs";
-import { resolve as resolve10 } from "path";
+import { resolve as resolve11 } from "path";
 import { homedir as homedir4 } from "os";
 async function wiki(_cwd, args) {
   const sub = args[0];
@@ -86765,13 +86827,25 @@ async function wiki(_cwd, args) {
     case "organize":
       wikiOrganize();
       break;
+    case "link":
+      wikiLink(args.slice(1));
+      break;
+    case "unlink":
+      wikiUnlink(args.slice(1));
+      break;
+    case "links":
+      wikiLinks();
+      break;
     default:
-      console.log("Usage: mink wiki <init|status|rebuild-index|organize>");
+      console.log("Usage: mink wiki <command>");
       console.log();
       console.log("  init                Initialize the notes/wiki vault");
       console.log("  status              Show vault statistics");
       console.log("  rebuild-index       Full rescan and reindex of vault");
       console.log("  organize            List inbox notes needing categorization");
+      console.log("  link <path> [name]  Symlink external notes into the vault");
+      console.log("  unlink <name>       Remove a symlinked directory from the vault");
+      console.log("  links               List all linked directories");
       break;
   }
 }
@@ -86879,6 +86953,14 @@ function wikiStatus() {
   }
   console.log();
   console.log(`  last indexed: ${index.lastScanTimestamp || "never"}`);
+  const links = listLinks();
+  if (links.length > 0) {
+    console.log();
+    console.log("  Linked directories:");
+    for (const link of links) {
+      console.log(`    ${link.name} -> ${link.target}`);
+    }
+  }
   if (categoryCounts.inbox > 0) {
     console.log();
     console.log(`  ${categoryCounts.inbox} notes in inbox need categorization`);
@@ -86918,11 +87000,78 @@ function wikiOrganize() {
   }
   console.log("Use '/mink:note' in Claude Code to intelligently categorize these notes.");
 }
+function wikiLink(args) {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    console.log("  Run 'mink wiki init' first.");
+    return;
+  }
+  const targetPath = args[0];
+  if (!targetPath) {
+    console.log("Usage: mink wiki link <path> [name]");
+    console.log();
+    console.log("  Symlinks an external directory into the vault so it appears");
+    console.log("  alongside Mink's content in Obsidian.");
+    console.log();
+    console.log("  Examples:");
+    console.log("    mink wiki link ~/dev/notes");
+    console.log("    mink wiki link ~/dev/notes my-notes");
+    return;
+  }
+  const name = args[1];
+  const result = linkExternal(targetPath, name);
+  if (!result.ok) {
+    console.error(`[mink] ${result.error}`);
+    process.exit(1);
+  }
+  console.log(`[mink] linked: ${result.linkName} -> ${targetPath}`);
+  console.log(`  symlink: ${result.linkPath}`);
+  console.log();
+  console.log("  Open ~/.mink/wiki/ as your Obsidian vault to see everything together.");
+}
+function wikiUnlink(args) {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    return;
+  }
+  const name = args[0];
+  if (!name) {
+    console.log("Usage: mink wiki unlink <name>");
+    console.log();
+    console.log("  Run 'mink wiki links' to see linked directories.");
+    return;
+  }
+  const result = unlinkExternal(name);
+  if (!result.ok) {
+    console.error(`[mink] ${result.error}`);
+    process.exit(1);
+  }
+  console.log(`[mink] unlinked: ${name}`);
+  console.log("  (original directory was not modified)");
+}
+function wikiLinks() {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    return;
+  }
+  const links = listLinks();
+  if (links.length === 0) {
+    console.log("[mink] no linked directories");
+    console.log("  Use 'mink wiki link <path>' to symlink external notes into the vault.");
+    return;
+  }
+  console.log("[mink] linked directories:");
+  console.log();
+  for (const link of links) {
+    console.log(`  ${link.name} -> ${link.target}`);
+    console.log(`    linked: ${link.linkedAt}`);
+  }
+}
 function expandPath(raw) {
   if (raw.startsWith("~/")) {
-    return resolve10(homedir4(), raw.slice(2));
+    return resolve11(homedir4(), raw.slice(2));
   }
-  return resolve10(raw);
+  return resolve11(raw);
 }
 var init_wiki = __esm(() => {
   init_vault();
@@ -87095,7 +87244,7 @@ var exports_note = {};
 __export(exports_note, {
   note: () => note
 });
-import { resolve as resolve11 } from "path";
+import { resolve as resolve12 } from "path";
 import { existsSync as existsSync26, readFileSync as readFileSync25 } from "fs";
 async function note(cwd, args) {
   if (!isWikiEnabled()) {
@@ -87126,7 +87275,7 @@ async function note(cwd, args) {
     return;
   }
   if (parsed.file) {
-    const sourcePath = resolve11(cwd, parsed.file);
+    const sourcePath = resolve12(cwd, parsed.file);
     if (!existsSync26(sourcePath)) {
       console.error(`[mink] file not found: ${sourcePath}`);
       process.exit(1);
@@ -87288,20 +87437,20 @@ var exports_skill = {};
 __export(exports_skill, {
   skill: () => skill
 });
-import { join as join25, resolve as resolve12, dirname as dirname11 } from "path";
+import { join as join25, resolve as resolve13, dirname as dirname11 } from "path";
 import { homedir as homedir5 } from "os";
 import {
   existsSync as existsSync27,
   mkdirSync as mkdirSync10,
   copyFileSync,
-  unlinkSync as unlinkSync2,
+  unlinkSync as unlinkSync3,
   readdirSync as readdirSync8,
   rmSync,
-  symlinkSync,
-  lstatSync
+  symlinkSync as symlinkSync2,
+  lstatSync as lstatSync2
 } from "fs";
 function getSkillsSourceDir() {
-  return resolve12(dirname11(new URL(import.meta.url).pathname), "../../skills");
+  return resolve13(dirname11(new URL(import.meta.url).pathname), "../../skills");
 }
 function getAvailableSkills() {
   const dir = getSkillsSourceDir();
@@ -87359,14 +87508,14 @@ function skillInstall(name) {
     const symlink = join25(CLAUDE_SKILLS_DIR, skillName);
     try {
       if (existsSync27(symlink)) {
-        if (lstatSync(symlink).isSymbolicLink() || lstatSync(symlink).isFile()) {
-          unlinkSync2(symlink);
+        if (lstatSync2(symlink).isSymbolicLink() || lstatSync2(symlink).isFile()) {
+          unlinkSync3(symlink);
         } else {
           rmSync(symlink, { recursive: true, force: true });
         }
       }
       const relativeTarget = join25("..", "..", ".agents", "skills", skillName);
-      symlinkSync(relativeTarget, symlink);
+      symlinkSync2(relativeTarget, symlink);
     } catch {}
     console.log(`[mink] installed: ${skillName} -> ${destDir}`);
   }
@@ -87385,7 +87534,7 @@ function skillUninstall(name) {
     const symlink = join25(CLAUDE_SKILLS_DIR, skillName);
     try {
       if (existsSync27(symlink))
-        unlinkSync2(symlink);
+        unlinkSync3(symlink);
     } catch {}
     console.log(`[mink] uninstalled: ${skillName}`);
   }
@@ -87878,11 +88027,11 @@ switch (command2) {
   case "version":
   case "--version":
   case "-v": {
-    const { resolve: resolve13, dirname: dirname12 } = await import("path");
-    const cliPath = resolve13(dirname12(new URL(import.meta.url).pathname));
+    const { resolve: resolve14, dirname: dirname12 } = await import("path");
+    const cliPath = resolve14(dirname12(new URL(import.meta.url).pathname));
     const { readFileSync: readFileSync26 } = await import("fs");
     try {
-      const pkg = JSON.parse(readFileSync26(resolve13(cliPath, "../package.json"), "utf-8"));
+      const pkg = JSON.parse(readFileSync26(resolve14(cliPath, "../package.json"), "utf-8"));
       console.log(`mink ${pkg.version}`);
     } catch {
       console.log("mink (unknown version)");
@@ -87904,7 +88053,7 @@ switch (command2) {
     console.log("  config [key] [value]    Manage global user settings");
     console.log();
     console.log("Notes & Wiki:");
-    console.log("  wiki <cmd>              Manage the notes/wiki vault (init|status|rebuild-index|organize)");
+    console.log("  wiki <cmd>              Manage the notes/wiki vault (init|status|link|unlink|links|rebuild-index|organize)");
     console.log('  note "text"             Capture a note to the vault');
     console.log("  note --daily [text]     Create or append to today's daily note");
     console.log("  note list [filters]     List notes (--category, --tag, --recent)");
