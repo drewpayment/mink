@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/drewpayment/mink/compare/v0.2.2...v0.3.0) (2026-04-14)
+
+
+### Features
+
+* add `mink wiki link` to symlink external notes into the vault ([c805019](https://github.com/drewpayment/mink/commit/c80501949c8066c0e0f97d212ef23bb1fe148c85))
+* add mink sync for cross-device ~/.mink git backup ([#28](https://github.com/drewpayment/mink/issues/28)) ([bab88b2](https://github.com/drewpayment/mink/commit/bab88b2de7e6c200ebd6a5383690a214bd4c9270))
+
 ## [0.2.2](https://github.com/drewpayment/mink/compare/v0.2.1...v0.2.2) (2026-04-13)
 
 
