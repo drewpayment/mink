@@ -21,6 +21,7 @@ Mink intercepts these lifecycle events and maintains structured state so the ass
 - **Advise on frameworks** with a decision tree and migration guides
 - **Build a cross-project wiki** that accumulates knowledge across all your projects
 - **Capture notes from anywhere** with an AI-powered Claude Code skill that categorizes, tags, and links notes automatically
+- **Sync across machines** with git-backed `~/.mink` syncing — auto-pull on session start, auto-push on session stop
 
 ## How It Works
 
@@ -69,7 +70,7 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 - **Claude Code Skill** — `/mink:note` skill uses Claude as the AI brain for intelligent categorization, tagging, and wikilink insertion
 - **Daily Notes** — `mink note --daily` creates or appends to daily journal entries
 - **Vault Index** — Token-efficient file index for the vault, with search and tag aggregation
-- **Git Backup** — Auto-commit and push vault changes on session end
+- **External Linking** — Symlink external notes directories into the vault for a unified Obsidian experience
 - **Templates** — 6 built-in templates (quick-capture, daily, meeting, project, area, person)
 
 ### Advanced
@@ -249,19 +250,77 @@ The vault is a standard markdown directory fully compatible with Obsidian:
 
 Open the vault directory as an Obsidian vault and everything works out of the box.
 
-### Git backup
+### Link external notes
 
-Enable automatic git backup to sync your vault across machines:
+If you already have a notes repository, you can symlink it into the vault so everything appears together in Obsidian:
 
 ```bash
-# Enable git backup
-mink config wiki.git-backup true
+# Symlink your existing notes into the vault
+mink wiki link ~/dev/notes
 
-# Set the remote (default: origin)
-mink config wiki.git-remote origin
+# Result: ~/.mink/wiki/notes -> ~/dev/notes
+
+# Custom name
+mink wiki link ~/dev/notes my-notes
+
+# List linked directories
+mink wiki links
+
+# Remove a link (original directory is untouched)
+mink wiki unlink notes
 ```
 
-When enabled, Mink auto-commits and pushes vault changes at the end of each session. Pushes are best-effort with a 10-second timeout — if the push fails, the local commit is preserved and will be included in the next push.
+Open `~/.mink/wiki/` as your Obsidian vault and you'll see Mink's generated content (projects, patterns, inbox) alongside your own notes — with `[[wikilinks]]` working across both.
+
+## Sync
+
+Mink can sync your entire `~/.mink` directory (wiki, config, project knowledge) across machines using git.
+
+### Set up sync
+
+```bash
+# Initialize sync with a remote repository
+mink sync init git@github.com:you/mink-data.git
+```
+
+This initializes git in `~/.mink`, sets the remote, and creates a `.gitignore` that excludes machine-specific state (PIDs, logs, backups).
+
+### Automatic sync
+
+Once initialized, sync happens automatically:
+
+- **Session start** — pulls remote changes (rebase-based, preserves local work)
+- **Session stop** — commits and pushes local changes
+
+No manual intervention needed. Your wiki, config, learning memory, and bug history stay in sync.
+
+### Manual sync
+
+```bash
+# Full sync (pull then push)
+mink sync
+
+# Individual operations
+mink sync pull
+mink sync push
+
+# Check sync state
+mink sync status
+
+# Temporarily disable auto-sync
+mink sync pause
+mink sync resume
+
+# Remove git tracking (data preserved)
+mink sync disconnect
+```
+
+### Conflict handling
+
+- Pull uses stash + rebase to preserve local changes
+- If a rebase conflict occurs, the rebase is aborted and you're warned to resolve manually
+- Push failures preserve the local commit — it will be included in the next push
+- Git operations have timeouts (5-15s) so they never block your session
 
 ### Hook integration
 
@@ -292,9 +351,11 @@ mink config notes.default-category inbox
 | `wiki.path` | `~/.mink/wiki/` | `MINK_WIKI_PATH` | Vault directory |
 | `wiki.enabled` | `true` | `MINK_WIKI_ENABLED` | Toggle wiki feature |
 | `wiki.sync-mode` | `immediate` | `MINK_WIKI_SYNC_MODE` | Update timing |
-| `wiki.git-backup` | `false` | `MINK_WIKI_GIT_BACKUP` | Auto-commit and push |
-| `wiki.git-remote` | `origin` | `MINK_WIKI_GIT_REMOTE` | Git remote for push |
 | `notes.default-category` | `inbox` | `MINK_NOTES_DEFAULT_CATEGORY` | Default note category |
+| `sync.enabled` | `false` | — | Enable git sync for ~/.mink |
+| `sync.remote-url` | — | — | Git remote URL for sync |
+| `sync.last-push` | — | — | Timestamp of last push |
+| `sync.last-pull` | — | — | Timestamp of last pull |
 
 ## Architecture
 
@@ -379,7 +440,7 @@ mink/
 │   │   ├── post-read.ts      # Hook: post-read tracking
 │   │   ├── pre-write.ts      # Hook: write enforcement
 │   │   ├── post-write.ts     # Hook: post-write tracking
-│   │   ├── wiki.ts           # Wiki vault management (init, status, rebuild, organize)
+│   │   ├── wiki.ts           # Wiki vault management (init, status, link, unlink, rebuild, organize)
 │   │   ├── note.ts           # Note capture, list, and search
 │   │   ├── skill.ts          # Claude Code skill installer
 │   │   ├── status.ts         # Project health display
@@ -421,6 +482,7 @@ mink/
 │   │   ├── note-writer.ts    # Note creation, frontmatter, daily notes
 │   │   ├── note-linker.ts    # Wikilink extraction, insertion, backlinks
 │   │   ├── note-index.ts     # Vault file index with search
+│   │   ├── sync.ts           # Git-based ~/.mink sync engine
 │   │   └── ...               # Global config, backup, reflection, etc.
 │   ├── dashboard/            # Embedded dashboard UI (HTML/CSS/JS generation)
 │   │   ├── get-dashboard-html.ts  # Main HTML assembly
@@ -490,6 +552,13 @@ bun src/cli.ts note "Testing the notes feature"
 bun src/cli.ts note --daily "Today I worked on mink"
 bun src/cli.ts note list --recent 5
 bun src/cli.ts note search "testing"
+
+# Link external notes into the vault
+bun src/cli.ts wiki link ~/dev/notes
+
+# Set up cross-device sync
+bun src/cli.ts sync init git@github.com:you/mink-data.git
+bun src/cli.ts sync status
 
 # Install the Claude Code skill
 bun src/cli.ts skill install
