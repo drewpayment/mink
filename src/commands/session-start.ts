@@ -7,6 +7,22 @@ import { isWikiEnabled, isVaultInitialized, isInsideVault } from "../core/vault"
 import { loadVaultIndex } from "../core/note-index";
 
 export function sessionStart(cwd: string): void {
+  // Migrate config to shared/local split if needed (before sync pull)
+  try {
+    const { migrateConfigIfNeeded } = require("../core/global-config");
+    migrateConfigIfNeeded();
+  } catch {
+    // Never crash hooks
+  }
+
+  // Register/update this device in the registry
+  try {
+    const { updateDeviceHeartbeat } = require("../core/device");
+    updateDeviceHeartbeat();
+  } catch {
+    // Never crash hooks
+  }
+
   // Sync pull before session begins (if enabled)
   try {
     const { isSyncInitialized, syncPull } = require("../core/sync");

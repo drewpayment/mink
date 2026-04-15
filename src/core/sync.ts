@@ -3,6 +3,7 @@ import { join } from "path";
 import { execSync } from "child_process";
 import { minkRoot } from "./paths";
 import { resolveConfigValue, setConfigValue } from "./global-config";
+import { updateDeviceHeartbeat } from "./device";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -13,6 +14,10 @@ const FETCH_TIMEOUT = 15_000;
 const GITIGNORE_CONTENTS = `# Runtime state — machine-specific
 scheduler.pid
 scheduler.log
+
+# Device identity and local config — machine-specific
+device-id
+config.local
 
 # Local backups — machine-specific snapshots
 projects/*/backups/
@@ -171,6 +176,8 @@ export function syncPull(
 ): void {
   if (!isSyncInitialized()) return;
 
+  ensureGitignore();
+
   const root = minkRoot();
 
   try {
@@ -218,6 +225,8 @@ export function syncPull(
     }
 
     setConfigValue("sync.last-pull", new Date().toISOString());
+
+    try { updateDeviceHeartbeat(); } catch { /* never crash hooks */ }
   } catch (err) {
     onMessage(
       `[mink] sync pull error: ${err instanceof Error ? err.message : String(err)}`
@@ -229,6 +238,9 @@ export function syncPush(
   onMessage: (msg: string) => void = (msg) => console.error(msg)
 ): void {
   if (!isSyncInitialized()) return;
+
+  ensureGitignore();
+  try { updateDeviceHeartbeat(); } catch { /* never crash hooks */ }
 
   const root = minkRoot();
 

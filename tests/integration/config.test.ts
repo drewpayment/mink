@@ -9,19 +9,25 @@ import {
   resetConfigKey,
   resetAllConfig,
 } from "../../src/core/global-config";
-import { globalConfigPath } from "../../src/core/paths";
+import { globalConfigPath, localConfigPath } from "../../src/core/paths";
 import { CONFIG_KEYS } from "../../src/types/config";
 
 describe("config integration", () => {
   let savedConfig: string | null = null;
+  let savedLocalConfig: string | null = null;
   const originalEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    // Save existing config
+    // Save existing config files
     try {
       savedConfig = readFileSync(globalConfigPath(), "utf-8");
     } catch {
       savedConfig = null;
+    }
+    try {
+      savedLocalConfig = readFileSync(localConfigPath(), "utf-8");
+    } catch {
+      savedLocalConfig = null;
     }
     // Clear env vars
     for (const meta of CONFIG_KEYS) {
@@ -33,15 +39,24 @@ describe("config integration", () => {
   });
 
   afterEach(() => {
-    // Restore original config
+    const { mkdirSync, writeFileSync } = require("fs");
+    const { dirname } = require("path");
+    // Restore original shared config
     if (savedConfig !== null) {
-      const { mkdirSync, writeFileSync } = require("fs");
-      const { dirname } = require("path");
       mkdirSync(dirname(globalConfigPath()), { recursive: true });
       writeFileSync(globalConfigPath(), savedConfig);
     } else {
       try {
         rmSync(globalConfigPath(), { force: true });
+      } catch {}
+    }
+    // Restore original local config
+    if (savedLocalConfig !== null) {
+      mkdirSync(dirname(localConfigPath()), { recursive: true });
+      writeFileSync(localConfigPath(), savedLocalConfig);
+    } else {
+      try {
+        rmSync(localConfigPath(), { force: true });
       } catch {}
     }
     // Restore env vars
@@ -109,13 +124,24 @@ describe("config integration", () => {
     expect(Object.keys(config).length).toBe(0);
   });
 
-  test("config file created automatically on set", () => {
+  test("config file created automatically on set (shared key)", () => {
     try {
       rmSync(globalConfigPath(), { force: true });
     } catch {}
 
-    setConfigValue("wiki.path", "/new/path");
+    setConfigValue("wiki.enabled", "false");
     expect(existsSync(globalConfigPath())).toBe(true);
+    const result = resolveConfigValue("wiki.enabled");
+    expect(result.value).toBe("false");
+  });
+
+  test("local config file created automatically on set (local key)", () => {
+    try {
+      rmSync(localConfigPath(), { force: true });
+    } catch {}
+
+    setConfigValue("wiki.path", "/new/path");
+    expect(existsSync(localConfigPath())).toBe(true);
     const result = resolveConfigValue("wiki.path");
     expect(result.value).toBe("/new/path");
   });

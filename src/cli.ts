@@ -143,6 +143,12 @@ switch (command) {
     break;
   }
 
+  case "device": {
+    const { device } = await import("./commands/device");
+    device(process.argv.slice(3));
+    break;
+  }
+
   case "bug-search": {
     const { bugSearch } = await import("./commands/bug-search");
     bugSearch(cwd, process.argv.slice(3).join(" "));
@@ -202,7 +208,10 @@ switch (command) {
     console.log("  note search <term>      Full-text search across the vault");
     console.log("  skill install           Install /mink:note skill for Claude Code");
     console.log();
-    console.log("Sync:");
+    console.log("Devices & Sync:");
+    console.log("  device                  Show current device info");
+    console.log("  device list             List all registered devices");
+    console.log("  device rename <name>    Set a friendly name for this device");
     console.log("  sync                    Full manual sync (pull then push)");
     console.log("  sync init <remote-url>  Connect ~/.mink to a git remote for cross-device sync");
     console.log("  sync status             Show sync state (remote, last sync, pending changes)");

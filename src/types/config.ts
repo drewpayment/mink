@@ -13,11 +13,26 @@ export interface GlobalConfig {
 
 export type ConfigKey = keyof GlobalConfig & string;
 
+export type ConfigScope = "shared" | "local";
+
 export interface ConfigKeyMeta {
   key: ConfigKey;
   default: string;
   envVar: string;
   description: string;
+  scope: ConfigScope;
+}
+
+export interface DeviceInfo {
+  name: string;
+  hostname: string;
+  platform: string;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface DeviceRegistry {
+  devices: Record<string, DeviceInfo>;
 }
 
 export const CONFIG_KEYS: ConfigKeyMeta[] = [
@@ -26,60 +41,70 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     default: "~/.mink/wiki/",
     envVar: "MINK_WIKI_PATH",
     description: "Wiki vault location",
+    scope: "local",
   },
   {
     key: "wiki.enabled",
     default: "true",
     envVar: "MINK_WIKI_ENABLED",
     description: "Enable/disable the wiki feature",
+    scope: "shared",
   },
   {
     key: "wiki.sync-mode",
     default: "immediate",
     envVar: "MINK_WIKI_SYNC_MODE",
     description: "Sync mode: immediate or batched",
+    scope: "shared",
   },
   {
     key: "wiki.git-backup",
     default: "false",
     envVar: "MINK_WIKI_GIT_BACKUP",
     description: "Deprecated: use sync.enabled instead",
+    scope: "shared",
   },
   {
     key: "wiki.git-remote",
     default: "origin",
     envVar: "MINK_WIKI_GIT_REMOTE",
     description: "Deprecated: use sync.remote-url instead",
+    scope: "shared",
   },
   {
     key: "notes.default-category",
     default: "inbox",
     envVar: "MINK_NOTES_DEFAULT_CATEGORY",
     description: "Default category for notes captured via CLI",
+    scope: "shared",
   },
   {
     key: "sync.enabled",
     default: "false",
     envVar: "MINK_SYNC_ENABLED",
     description: "Enable/disable automatic git sync of ~/.mink",
+    scope: "shared",
   },
   {
     key: "sync.remote-url",
     default: "",
     envVar: "MINK_SYNC_REMOTE_URL",
     description: "Git remote URL for ~/.mink sync",
+    scope: "shared",
   },
   {
     key: "sync.last-push",
     default: "",
     envVar: "MINK_SYNC_LAST_PUSH",
     description: "ISO timestamp of last successful sync push",
+    scope: "local",
   },
   {
     key: "sync.last-pull",
     default: "",
     envVar: "MINK_SYNC_LAST_PULL",
     description: "ISO timestamp of last successful sync pull",
+    scope: "local",
   },
 ];
 

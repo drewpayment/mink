@@ -10,13 +10,15 @@ import { tmpdir } from "os";
 import {
   loadGlobalConfig,
   saveGlobalConfig,
+  loadLocalConfig,
+  saveLocalConfig,
   resolveConfigValue,
   resolveAllConfig,
   setConfigValue,
   resetConfigKey,
   resetAllConfig,
 } from "../../src/core/global-config";
-import { globalConfigPath } from "../../src/core/paths";
+import { globalConfigPath, localConfigPath } from "../../src/core/paths";
 import { CONFIG_KEYS, isValidConfigKey } from "../../src/types/config";
 
 describe("config types", () => {
@@ -44,19 +46,31 @@ describe("config types", () => {
       expect(meta.default).toBeDefined();
       expect(meta.envVar).toBeTruthy();
       expect(meta.description).toBeTruthy();
+      expect(["shared", "local"]).toContain(meta.scope);
     }
   });
 });
 
 describe("loadGlobalConfig", () => {
   const configDir = join(tmpdir(), `mink-config-test-${Date.now()}`);
+  let savedLocalConfig: string | null = null;
 
   beforeEach(() => {
     mkdirSync(configDir, { recursive: true });
+    try {
+      savedLocalConfig = readFileSync(localConfigPath(), "utf-8");
+    } catch {
+      savedLocalConfig = null;
+    }
+    // Clear local config so tests see defaults
+    try { rmSync(localConfigPath(), { force: true }); } catch {}
   });
 
   afterEach(() => {
     rmSync(configDir, { recursive: true, force: true });
+    if (savedLocalConfig !== null) {
+      writeFileSync(localConfigPath(), savedLocalConfig);
+    }
   });
 
   test("returns empty object when file missing", () => {
@@ -70,12 +84,20 @@ describe("loadGlobalConfig", () => {
 
 describe("resolveConfigValue", () => {
   const originalEnv: Record<string, string | undefined> = {};
+  let savedLocalConfig: string | null = null;
 
   beforeEach(() => {
     // Save original env vars
     for (const meta of CONFIG_KEYS) {
       originalEnv[meta.envVar] = process.env[meta.envVar];
     }
+    // Save and clear local config so tests see defaults for local-scoped keys
+    try {
+      savedLocalConfig = readFileSync(localConfigPath(), "utf-8");
+    } catch {
+      savedLocalConfig = null;
+    }
+    try { rmSync(localConfigPath(), { force: true }); } catch {}
   });
 
   afterEach(() => {
@@ -86,6 +108,10 @@ describe("resolveConfigValue", () => {
       } else {
         process.env[meta.envVar] = originalEnv[meta.envVar];
       }
+    }
+    // Restore local config
+    if (savedLocalConfig !== null) {
+      writeFileSync(localConfigPath(), savedLocalConfig);
     }
   });
 
@@ -136,22 +162,55 @@ describe("resolveConfigValue", () => {
 });
 
 describe("saveGlobalConfig / setConfigValue / resetConfigKey", () => {
+  let savedLocalConfig: string | null = null;
+  let savedGlobalConfig: string | null = null;
+
+  beforeEach(() => {
+    try {
+      savedLocalConfig = readFileSync(localConfigPath(), "utf-8");
+    } catch {
+      savedLocalConfig = null;
+    }
+    try {
+      savedGlobalConfig = readFileSync(globalConfigPath(), "utf-8");
+    } catch {
+      savedGlobalConfig = null;
+    }
+  });
+
+  afterEach(() => {
+    if (savedLocalConfig !== null) {
+      writeFileSync(localConfigPath(), savedLocalConfig);
+    } else {
+      try { rmSync(localConfigPath(), { force: true }); } catch {}
+    }
+    if (savedGlobalConfig !== null) {
+      writeFileSync(globalConfigPath(), savedGlobalConfig);
+    } else {
+      try { rmSync(globalConfigPath(), { force: true }); } catch {}
+    }
+  });
+
   test("setConfigValue and resetConfigKey round-trip", () => {
     // Set a value
     setConfigValue("wiki.path", "/my/wiki");
     const resolved = resolveConfigValue("wiki.path");
-    // It should be either from config file or default depending on file state
-    // Since we're writing to the real ~/.mink/config, just verify no crash
-    expect(resolved.value).toBeDefined();
+    expect(resolved.value).toBe("/my/wiki");
+    expect(resolved.source).toBe("config file");
 
     // Reset
     resetConfigKey("wiki.path");
+    const afterReset = resolveConfigValue("wiki.path");
+    expect(afterReset.source).toBe("default");
   });
 
   test("resetAllConfig clears everything", () => {
     setConfigValue("wiki.path", "/tmp/reset-test");
+    setConfigValue("wiki.enabled", "false");
     resetAllConfig();
-    const config = loadGlobalConfig();
-    expect(Object.keys(config).length).toBe(0);
+    const sharedConfig = loadGlobalConfig();
+    const localConfig = loadLocalConfig();
+    expect(Object.keys(sharedConfig).length).toBe(0);
+    expect(Object.keys(localConfig).length).toBe(0);
   });
 });

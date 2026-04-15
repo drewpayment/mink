@@ -61,6 +61,18 @@ export function globalConfigPath(): string {
   return join(MINK_ROOT, "config");
 }
 
+export function localConfigPath(): string {
+  return join(MINK_ROOT, "config.local");
+}
+
+export function deviceIdPath(): string {
+  return join(MINK_ROOT, "device-id");
+}
+
+export function deviceRegistryPath(): string {
+  return join(MINK_ROOT, "devices.json");
+}
+
 export function projectMetaPath(cwd: string): string {
   return join(projectDir(cwd), "project-meta.json");
 }
