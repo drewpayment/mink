@@ -1,4 +1,4 @@
-import { globalConfigPath } from "./paths";
+import { globalConfigPath, localConfigPath } from "./paths";
 import { safeReadJson, atomicWriteJson } from "./fs-utils";
 import {
   CONFIG_KEYS,
@@ -6,31 +6,57 @@ import {
   getConfigKeyMeta,
   type GlobalConfig,
   type ConfigKey,
+  type ConfigScope,
 } from "../types/config";
 
-export function loadGlobalConfig(): GlobalConfig {
-  const raw = safeReadJson(globalConfigPath());
+function loadConfigFile(path: string): GlobalConfig {
+  const raw = safeReadJson(path);
   if (raw === null) return {};
   if (typeof raw !== "object" || Array.isArray(raw)) {
-    console.warn("[mink] warning: corrupt config file at " + globalConfigPath());
+    console.warn("[mink] warning: corrupt config file at " + path);
     return {};
   }
   return raw as GlobalConfig;
+}
+
+export function loadGlobalConfig(): GlobalConfig {
+  return loadConfigFile(globalConfigPath());
 }
 
 export function saveGlobalConfig(config: GlobalConfig): void {
   atomicWriteJson(globalConfigPath(), config);
 }
 
+export function loadLocalConfig(): GlobalConfig {
+  return loadConfigFile(localConfigPath());
+}
+
+export function saveLocalConfig(config: GlobalConfig): void {
+  atomicWriteJson(localConfigPath(), config);
+}
+
+function loadConfigForScope(scope: ConfigScope): GlobalConfig {
+  return scope === "local" ? loadLocalConfig() : loadGlobalConfig();
+}
+
+function saveConfigForScope(scope: ConfigScope, config: GlobalConfig): void {
+  if (scope === "local") {
+    saveLocalConfig(config);
+  } else {
+    saveGlobalConfig(config);
+  }
+}
+
 export interface ResolvedValue {
   value: string;
   source: "default" | "config file" | "environment variable";
+  scope: ConfigScope;
   configFileValue?: string;
 }
 
 export function resolveConfigValue(key: ConfigKey): ResolvedValue {
   const meta = getConfigKeyMeta(key);
-  const config = loadGlobalConfig();
+  const config = loadConfigForScope(meta.scope);
 
   const envValue = process.env[meta.envVar];
   const fileValue = config[key];
@@ -39,15 +65,16 @@ export function resolveConfigValue(key: ConfigKey): ResolvedValue {
     return {
       value: envValue,
       source: "environment variable",
+      scope: meta.scope,
       configFileValue: fileValue,
     };
   }
 
   if (fileValue !== undefined) {
-    return { value: fileValue, source: "config file" };
+    return { value: fileValue, source: "config file", scope: meta.scope };
   }
 
-  return { value: meta.default, source: "default" };
+  return { value: meta.default, source: "default", scope: meta.scope };
 }
 
 export function resolveAllConfig(): Array<ResolvedValue & { key: ConfigKey }> {
@@ -58,17 +85,51 @@ export function resolveAllConfig(): Array<ResolvedValue & { key: ConfigKey }> {
 }
 
 export function setConfigValue(key: ConfigKey, value: string): void {
-  const config = loadGlobalConfig();
+  const meta = getConfigKeyMeta(key);
+  const config = loadConfigForScope(meta.scope);
   config[key] = value;
-  saveGlobalConfig(config);
+  saveConfigForScope(meta.scope, config);
 }
 
 export function resetConfigKey(key: ConfigKey): void {
-  const config = loadGlobalConfig();
+  const meta = getConfigKeyMeta(key);
+  const config = loadConfigForScope(meta.scope);
   delete config[key];
-  saveGlobalConfig(config);
+  saveConfigForScope(meta.scope, config);
 }
 
 export function resetAllConfig(): void {
   saveGlobalConfig({});
+  saveLocalConfig({});
+}
+
+// ── Migration ─────────────────────────────────────────────────────────────
+
+let migrationRan = false;
+
+export function migrateConfigIfNeeded(): void {
+  if (migrationRan) return;
+  migrationRan = true;
+
+  const { existsSync } = require("fs");
+  if (existsSync(localConfigPath())) return;
+
+  const shared = loadGlobalConfig();
+  const localKeys = CONFIG_KEYS.filter((k) => k.scope === "local");
+  const localConfig: GlobalConfig = {};
+  let hasLocal = false;
+
+  for (const meta of localKeys) {
+    const val = shared[meta.key];
+    if (val !== undefined) {
+      localConfig[meta.key] = val;
+      delete shared[meta.key];
+      hasLocal = true;
+    }
+  }
+
+  if (hasLocal) {
+    saveLocalConfig(localConfig);
+    saveGlobalConfig(shared);
+  }
 }

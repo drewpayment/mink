@@ -69,7 +69,7 @@ export async function config(args: string[]): Promise<void> {
     const all = resolveAllConfig();
     console.log("[mink] configuration:");
     for (const entry of all) {
-      let line = `  ${entry.key} = ${entry.value} (source: ${entry.source})`;
+      let line = `  ${entry.key} = ${entry.value} (${entry.scope}, source: ${entry.source})`;
       if (
         entry.source === "environment variable" &&
         entry.configFileValue !== undefined

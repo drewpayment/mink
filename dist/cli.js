@@ -189,11 +189,14 @@ __export(exports_paths, {
   projectMetaPath: () => projectMetaPath,
   projectDir: () => projectDir,
   minkRoot: () => minkRoot,
+  localConfigPath: () => localConfigPath,
   learningMemoryPath: () => learningMemoryPath,
   globalConfigPath: () => globalConfigPath,
   frameworkAdvisorPath: () => frameworkAdvisorPath,
   frameworkAdvisorJsonPath: () => frameworkAdvisorJsonPath,
   fileIndexPath: () => fileIndexPath,
+  deviceRegistryPath: () => deviceRegistryPath,
+  deviceIdPath: () => deviceIdPath,
   designReportPath: () => designReportPath,
   designCapturesDir: () => designCapturesDir,
   configPath: () => configPath,
@@ -245,6 +248,15 @@ function schedulerManifestPath(cwd) {
 }
 function globalConfigPath() {
   return join(MINK_ROOT, "config");
+}
+function localConfigPath() {
+  return join(MINK_ROOT, "config.local");
+}
+function deviceIdPath() {
+  return join(MINK_ROOT, "device-id");
+}
+function deviceRegistryPath() {
+  return join(MINK_ROOT, "devices.json");
 }
 function projectMetaPath(cwd) {
   return join(projectDir(cwd), "project-meta.json");
@@ -560,96 +572,139 @@ var init_config = __esm(() => {
       key: "wiki.path",
       default: "~/.mink/wiki/",
       envVar: "MINK_WIKI_PATH",
-      description: "Wiki vault location"
+      description: "Wiki vault location",
+      scope: "local"
     },
     {
       key: "wiki.enabled",
       default: "true",
       envVar: "MINK_WIKI_ENABLED",
-      description: "Enable/disable the wiki feature"
+      description: "Enable/disable the wiki feature",
+      scope: "shared"
     },
     {
       key: "wiki.sync-mode",
       default: "immediate",
       envVar: "MINK_WIKI_SYNC_MODE",
-      description: "Sync mode: immediate or batched"
+      description: "Sync mode: immediate or batched",
+      scope: "shared"
     },
     {
       key: "wiki.git-backup",
       default: "false",
       envVar: "MINK_WIKI_GIT_BACKUP",
-      description: "Deprecated: use sync.enabled instead"
+      description: "Deprecated: use sync.enabled instead",
+      scope: "shared"
     },
     {
       key: "wiki.git-remote",
       default: "origin",
       envVar: "MINK_WIKI_GIT_REMOTE",
-      description: "Deprecated: use sync.remote-url instead"
+      description: "Deprecated: use sync.remote-url instead",
+      scope: "shared"
     },
     {
       key: "notes.default-category",
       default: "inbox",
       envVar: "MINK_NOTES_DEFAULT_CATEGORY",
-      description: "Default category for notes captured via CLI"
+      description: "Default category for notes captured via CLI",
+      scope: "shared"
     },
     {
       key: "sync.enabled",
       default: "false",
       envVar: "MINK_SYNC_ENABLED",
-      description: "Enable/disable automatic git sync of ~/.mink"
+      description: "Enable/disable automatic git sync of ~/.mink",
+      scope: "shared"
     },
     {
       key: "sync.remote-url",
       default: "",
       envVar: "MINK_SYNC_REMOTE_URL",
-      description: "Git remote URL for ~/.mink sync"
+      description: "Git remote URL for ~/.mink sync",
+      scope: "shared"
     },
     {
       key: "sync.last-push",
       default: "",
       envVar: "MINK_SYNC_LAST_PUSH",
-      description: "ISO timestamp of last successful sync push"
+      description: "ISO timestamp of last successful sync push",
+      scope: "local"
     },
     {
       key: "sync.last-pull",
       default: "",
       envVar: "MINK_SYNC_LAST_PULL",
-      description: "ISO timestamp of last successful sync pull"
+      description: "ISO timestamp of last successful sync pull",
+      scope: "local"
     }
   ];
   VALID_KEYS = new Set(CONFIG_KEYS.map((k) => k.key));
 });
 
 // src/core/global-config.ts
-function loadGlobalConfig() {
-  const raw = safeReadJson(globalConfigPath());
+var exports_global_config = {};
+__export(exports_global_config, {
+  setConfigValue: () => setConfigValue,
+  saveLocalConfig: () => saveLocalConfig,
+  saveGlobalConfig: () => saveGlobalConfig,
+  resolveConfigValue: () => resolveConfigValue,
+  resolveAllConfig: () => resolveAllConfig,
+  resetConfigKey: () => resetConfigKey,
+  resetAllConfig: () => resetAllConfig,
+  migrateConfigIfNeeded: () => migrateConfigIfNeeded,
+  loadLocalConfig: () => loadLocalConfig,
+  loadGlobalConfig: () => loadGlobalConfig
+});
+function loadConfigFile(path) {
+  const raw = safeReadJson(path);
   if (raw === null)
     return {};
   if (typeof raw !== "object" || Array.isArray(raw)) {
-    console.warn("[mink] warning: corrupt config file at " + globalConfigPath());
+    console.warn("[mink] warning: corrupt config file at " + path);
     return {};
   }
   return raw;
 }
+function loadGlobalConfig() {
+  return loadConfigFile(globalConfigPath());
+}
 function saveGlobalConfig(config) {
   atomicWriteJson(globalConfigPath(), config);
 }
+function loadLocalConfig() {
+  return loadConfigFile(localConfigPath());
+}
+function saveLocalConfig(config) {
+  atomicWriteJson(localConfigPath(), config);
+}
+function loadConfigForScope(scope) {
+  return scope === "local" ? loadLocalConfig() : loadGlobalConfig();
+}
+function saveConfigForScope(scope, config) {
+  if (scope === "local") {
+    saveLocalConfig(config);
+  } else {
+    saveGlobalConfig(config);
+  }
+}
 function resolveConfigValue(key) {
   const meta = getConfigKeyMeta(key);
-  const config = loadGlobalConfig();
+  const config = loadConfigForScope(meta.scope);
   const envValue = process.env[meta.envVar];
   const fileValue = config[key];
   if (envValue !== undefined && envValue !== "") {
     return {
       value: envValue,
       source: "environment variable",
+      scope: meta.scope,
       configFileValue: fileValue
     };
   }
   if (fileValue !== undefined) {
-    return { value: fileValue, source: "config file" };
+    return { value: fileValue, source: "config file", scope: meta.scope };
   }
-  return { value: meta.default, source: "default" };
+  return { value: meta.default, source: "default", scope: meta.scope };
 }
 function resolveAllConfig() {
   return CONFIG_KEYS.map((meta) => ({
@@ -658,18 +713,46 @@ function resolveAllConfig() {
   }));
 }
 function setConfigValue(key, value) {
-  const config = loadGlobalConfig();
+  const meta = getConfigKeyMeta(key);
+  const config = loadConfigForScope(meta.scope);
   config[key] = value;
-  saveGlobalConfig(config);
+  saveConfigForScope(meta.scope, config);
 }
 function resetConfigKey(key) {
-  const config = loadGlobalConfig();
+  const meta = getConfigKeyMeta(key);
+  const config = loadConfigForScope(meta.scope);
   delete config[key];
-  saveGlobalConfig(config);
+  saveConfigForScope(meta.scope, config);
 }
 function resetAllConfig() {
   saveGlobalConfig({});
+  saveLocalConfig({});
 }
+function migrateConfigIfNeeded() {
+  if (migrationRan)
+    return;
+  migrationRan = true;
+  const { existsSync } = __require("fs");
+  if (existsSync(localConfigPath()))
+    return;
+  const shared = loadGlobalConfig();
+  const localKeys = CONFIG_KEYS.filter((k) => k.scope === "local");
+  const localConfig = {};
+  let hasLocal = false;
+  for (const meta of localKeys) {
+    const val = shared[meta.key];
+    if (val !== undefined) {
+      localConfig[meta.key] = val;
+      delete shared[meta.key];
+      hasLocal = true;
+    }
+  }
+  if (hasLocal) {
+    saveLocalConfig(localConfig);
+    saveGlobalConfig(shared);
+  }
+}
+var migrationRan = false;
 var init_global_config = __esm(() => {
   init_paths();
   init_fs_utils();
@@ -1010,6 +1093,81 @@ var init_note_index = __esm(() => {
   ]);
 });
 
+// src/core/device.ts
+var exports_device = {};
+__export(exports_device, {
+  updateDeviceHeartbeat: () => updateDeviceHeartbeat,
+  setDeviceName: () => setDeviceName,
+  saveDeviceRegistry: () => saveDeviceRegistry,
+  loadDeviceRegistry: () => loadDeviceRegistry,
+  listDevices: () => listDevices,
+  getOrCreateDeviceId: () => getOrCreateDeviceId
+});
+import { existsSync as existsSync3, readFileSync as readFileSync4, writeFileSync as writeFileSync2, mkdirSync as mkdirSync3 } from "fs";
+import { dirname as dirname2 } from "path";
+import { hostname, platform } from "os";
+import { randomUUID } from "crypto";
+function getOrCreateDeviceId() {
+  const idPath = deviceIdPath();
+  if (existsSync3(idPath)) {
+    return readFileSync4(idPath, "utf-8").trim();
+  }
+  const id = randomUUID();
+  mkdirSync3(dirname2(idPath), { recursive: true });
+  writeFileSync2(idPath, id + `
+`);
+  return id;
+}
+function loadDeviceRegistry() {
+  const raw = safeReadJson(deviceRegistryPath());
+  if (raw !== null && typeof raw === "object" && !Array.isArray(raw) && "devices" in raw) {
+    return raw;
+  }
+  return { devices: {} };
+}
+function saveDeviceRegistry(registry) {
+  atomicWriteJson(deviceRegistryPath(), registry);
+}
+function updateDeviceHeartbeat() {
+  const id = getOrCreateDeviceId();
+  const registry = loadDeviceRegistry();
+  const now = new Date().toISOString();
+  const existing = registry.devices[id];
+  registry.devices[id] = {
+    name: existing?.name ?? hostname(),
+    hostname: hostname(),
+    platform: platform(),
+    firstSeen: existing?.firstSeen ?? now,
+    lastSeen: now
+  };
+  saveDeviceRegistry(registry);
+}
+function listDevices() {
+  const registry = loadDeviceRegistry();
+  return Object.entries(registry.devices).map(([id, info]) => ({
+    id,
+    ...info
+  }));
+}
+function setDeviceName(name) {
+  const id = getOrCreateDeviceId();
+  const registry = loadDeviceRegistry();
+  const now = new Date().toISOString();
+  const existing = registry.devices[id];
+  registry.devices[id] = {
+    name,
+    hostname: hostname(),
+    platform: platform(),
+    firstSeen: existing?.firstSeen ?? now,
+    lastSeen: now
+  };
+  saveDeviceRegistry(registry);
+}
+var init_device = __esm(() => {
+  init_paths();
+  init_fs_utils();
+});
+
 // src/core/sync.ts
 var exports_sync = {};
 __export(exports_sync, {
@@ -1021,7 +1179,7 @@ __export(exports_sync, {
   ensureGitignore: () => ensureGitignore,
   disconnectSync: () => disconnectSync
 });
-import { existsSync as existsSync3, writeFileSync as writeFileSync2 } from "fs";
+import { existsSync as existsSync4, writeFileSync as writeFileSync3 } from "fs";
 import { join as join4 } from "path";
 import { execSync } from "child_process";
 function git(args, timeoutMs = GIT_TIMEOUT) {
@@ -1042,15 +1200,15 @@ function isSyncInitialized() {
   const enabled = resolveConfigValue("sync.enabled").value;
   if (enabled !== "true")
     return false;
-  return existsSync3(join4(minkRoot(), ".git"));
+  return existsSync4(join4(minkRoot(), ".git"));
 }
 function ensureGitignore() {
   const gitignorePath = join4(minkRoot(), ".gitignore");
-  writeFileSync2(gitignorePath, GITIGNORE_CONTENTS);
+  writeFileSync3(gitignorePath, GITIGNORE_CONTENTS);
 }
 function getSyncStatus() {
   const enabled = resolveConfigValue("sync.enabled").value === "true";
-  const gitInitialized = existsSync3(join4(minkRoot(), ".git"));
+  const gitInitialized = existsSync4(join4(minkRoot(), ".git"));
   const remoteUrl = resolveConfigValue("sync.remote-url").value;
   const lastPush = resolveConfigValue("sync.last-push").value;
   const lastPull = resolveConfigValue("sync.last-pull").value;
@@ -1077,7 +1235,7 @@ function getSyncStatus() {
 function initSync(remoteUrl) {
   const root = minkRoot();
   const gitDir = join4(root, ".git");
-  if (existsSync3(gitDir)) {
+  if (existsSync4(gitDir)) {
     console.log("[mink] sync is already initialized in " + root);
     console.log("[mink] run 'mink sync disconnect' first to reinitialize");
     return;
@@ -1129,6 +1287,7 @@ function initSync(remoteUrl) {
 function syncPull(onMessage = (msg) => console.error(msg)) {
   if (!isSyncInitialized())
     return;
+  ensureGitignore();
   const root = minkRoot();
   try {
     const status = gitSafe("status --porcelain");
@@ -1140,7 +1299,7 @@ function syncPull(onMessage = (msg) => console.error(msg)) {
     try {
       git(`pull --rebase origin ${branch}`, FETCH_TIMEOUT);
     } catch (err) {
-      if (existsSync3(join4(root, ".git", "rebase-merge")) || existsSync3(join4(root, ".git", "rebase-apply"))) {
+      if (existsSync4(join4(root, ".git", "rebase-merge")) || existsSync4(join4(root, ".git", "rebase-apply"))) {
         gitSafe("rebase --abort");
         onMessage("[mink] sync pull: rebase conflict detected — aborted rebase, local state preserved");
         onMessage("[mink] resolve manually with 'mink sync pull' or 'cd ~/.mink && git pull --rebase origin main'");
@@ -1156,6 +1315,9 @@ function syncPull(onMessage = (msg) => console.error(msg)) {
       }
     }
     setConfigValue("sync.last-pull", new Date().toISOString());
+    try {
+      updateDeviceHeartbeat();
+    } catch {}
   } catch (err) {
     onMessage(`[mink] sync pull error: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -1163,6 +1325,10 @@ function syncPull(onMessage = (msg) => console.error(msg)) {
 function syncPush(onMessage = (msg) => console.error(msg)) {
   if (!isSyncInitialized())
     return;
+  ensureGitignore();
+  try {
+    updateDeviceHeartbeat();
+  } catch {}
   const root = minkRoot();
   try {
     const status = gitSafe("status --porcelain");
@@ -1182,7 +1348,7 @@ function syncPush(onMessage = (msg) => console.error(msg)) {
     try {
       git(`pull --rebase origin ${branch}`, FETCH_TIMEOUT);
     } catch {
-      if (existsSync3(join4(root, ".git", "rebase-merge")) || existsSync3(join4(root, ".git", "rebase-apply"))) {
+      if (existsSync4(join4(root, ".git", "rebase-merge")) || existsSync4(join4(root, ".git", "rebase-apply"))) {
         gitSafe("rebase --abort");
         onMessage("[mink] sync: rebase conflict during push — local commit preserved, skipping push");
         onMessage("[mink] resolve manually with 'mink sync pull' then 'mink sync push'");
@@ -1202,7 +1368,7 @@ function syncPush(onMessage = (msg) => console.error(msg)) {
 function disconnectSync() {
   const root = minkRoot();
   const gitDir = join4(root, ".git");
-  if (!existsSync3(gitDir)) {
+  if (!existsSync4(gitDir)) {
     console.log("[mink] sync is not initialized — nothing to disconnect");
     return;
   }
@@ -1228,12 +1394,17 @@ var GIT_TIMEOUT = 5000, PUSH_TIMEOUT = 1e4, FETCH_TIMEOUT = 15000, GITIGNORE_CON
 scheduler.pid
 scheduler.log
 
+# Device identity and local config — machine-specific
+device-id
+config.local
+
 # Local backups — machine-specific snapshots
 projects/*/backups/
 `;
 var init_sync = __esm(() => {
   init_paths();
   init_global_config();
+  init_device();
 });
 
 // src/core/learning-memory.ts
@@ -1611,13 +1782,13 @@ var exports_reflect = {};
 __export(exports_reflect, {
   reflect: () => reflect
 });
-import { existsSync as existsSync4, readFileSync as readFileSync5 } from "fs";
+import { existsSync as existsSync5, readFileSync as readFileSync6 } from "fs";
 function reflect(projectDir2, memoryPath, configPath2) {
-  if (!existsSync4(memoryPath)) {
+  if (!existsSync5(memoryPath)) {
     console.log("[mink] no learning memory found");
     return null;
   }
-  const markdown = readFileSync5(memoryPath, "utf-8");
+  const markdown = readFileSync6(memoryPath, "utf-8");
   const mem = parseLearningMemory(markdown);
   const config = safeReadJson(configPath2);
   const tokenBudget = config?.learningMemoryTokenBudget ?? DEFAULT_TOKEN_BUDGET;
@@ -1913,11 +2084,14 @@ __export(exports_paths2, {
   projectMetaPath: () => projectMetaPath2,
   projectDir: () => projectDir2,
   minkRoot: () => minkRoot2,
+  localConfigPath: () => localConfigPath2,
   learningMemoryPath: () => learningMemoryPath2,
   globalConfigPath: () => globalConfigPath2,
   frameworkAdvisorPath: () => frameworkAdvisorPath2,
   frameworkAdvisorJsonPath: () => frameworkAdvisorJsonPath2,
   fileIndexPath: () => fileIndexPath2,
+  deviceRegistryPath: () => deviceRegistryPath2,
+  deviceIdPath: () => deviceIdPath2,
   designReportPath: () => designReportPath2,
   designCapturesDir: () => designCapturesDir2,
   configPath: () => configPath2,
@@ -1970,6 +2144,15 @@ function schedulerManifestPath2(cwd) {
 function globalConfigPath2() {
   return join7(MINK_ROOT2, "config");
 }
+function localConfigPath2() {
+  return join7(MINK_ROOT2, "config.local");
+}
+function deviceIdPath2() {
+  return join7(MINK_ROOT2, "device-id");
+}
+function deviceRegistryPath2() {
+  return join7(MINK_ROOT2, "devices.json");
+}
 function projectMetaPath2(cwd) {
   return join7(projectDir2(cwd), "project-meta.json");
 }
@@ -2002,11 +2185,11 @@ __export(exports_backup, {
   createBackup: () => createBackup
 });
 import {
-  mkdirSync as mkdirSync4,
+  mkdirSync as mkdirSync5,
   readdirSync as readdirSync2,
-  readFileSync as readFileSync7,
-  writeFileSync as writeFileSync3,
-  existsSync as existsSync6,
+  readFileSync as readFileSync8,
+  writeFileSync as writeFileSync4,
+  existsSync as existsSync7,
   statSync as statSync3
 } from "fs";
 import { join as join8 } from "path";
@@ -2021,7 +2204,7 @@ function formatTimestamp(date) {
   return `${y}${mo}${d}-${h}${mi}${s}${ms}`;
 }
 function copyDirectoryFiles(srcDir, destDir, excludeDirs) {
-  mkdirSync4(destDir, { recursive: true });
+  mkdirSync5(destDir, { recursive: true });
   const entries = readdirSync2(srcDir, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory()) {
@@ -2029,7 +2212,7 @@ function copyDirectoryFiles(srcDir, destDir, excludeDirs) {
         continue;
       copyDirectoryFiles(join8(srcDir, entry.name), join8(destDir, entry.name), excludeDirs);
     } else if (entry.isFile()) {
-      writeFileSync3(join8(destDir, entry.name), readFileSync7(join8(srcDir, entry.name)));
+      writeFileSync4(join8(destDir, entry.name), readFileSync8(join8(srcDir, entry.name)));
     }
   }
 }
@@ -2038,7 +2221,7 @@ function createBackup(cwd) {
   const dir = backupDirPath(cwd);
   let name = base;
   let suffix = 1;
-  while (existsSync6(join8(dir, name))) {
+  while (existsSync7(join8(dir, name))) {
     name = `${base}-${suffix}`;
     suffix++;
   }
@@ -2049,7 +2232,7 @@ function createBackup(cwd) {
 }
 function listBackups(cwd) {
   const dir = backupDirPath(cwd);
-  if (!existsSync6(dir))
+  if (!existsSync7(dir))
     return [];
   const entries = readdirSync2(dir, { withFileTypes: true });
   const backups = [];
@@ -2080,7 +2263,7 @@ function listBackups(cwd) {
 }
 function restoreBackup(cwd, backupName) {
   const backupPath = join8(backupDirPath(cwd), backupName);
-  if (!existsSync6(backupPath)) {
+  if (!existsSync7(backupPath)) {
     throw new Error(`backup not found: ${backupName}`);
   }
   createBackup(cwd);
@@ -2450,7 +2633,7 @@ var exports_scan = {};
 __export(exports_scan, {
   scan: () => scan
 });
-import { readFileSync as readFileSync8 } from "fs";
+import { readFileSync as readFileSync9 } from "fs";
 import { join as join10 } from "path";
 function loadExistingIndex(indexPath) {
   const raw = safeReadJson(indexPath);
@@ -2504,7 +2687,7 @@ function scan(cwd, options) {
     const fullPath = join10(cwd, file.relativePath);
     let content;
     try {
-      content = readFileSync8(fullPath, "utf-8");
+      content = readFileSync9(fullPath, "utf-8");
     } catch {
       continue;
     }
@@ -2540,12 +2723,12 @@ __export(exports_seed, {
   parseCargoToml: () => parseCargoToml
 });
 import { basename as basename4, join as join11 } from "path";
-import { readFileSync as readFileSync9, existsSync as existsSync7 } from "fs";
+import { readFileSync as readFileSync10, existsSync as existsSync8 } from "fs";
 function readFile(filePath) {
-  if (!existsSync7(filePath))
+  if (!existsSync8(filePath))
     return null;
   try {
-    return readFileSync9(filePath, "utf-8");
+    return readFileSync10(filePath, "utf-8");
   } catch {
     return null;
   }
@@ -2722,8 +2905,8 @@ __export(exports_init, {
   buildHooksConfig: () => buildHooksConfig
 });
 import { execSync as execSync2 } from "child_process";
-import { mkdirSync as mkdirSync5, existsSync as existsSync8 } from "fs";
-import { resolve as resolve2, dirname as dirname3, basename as basename5, join as join12 } from "path";
+import { mkdirSync as mkdirSync6, existsSync as existsSync9 } from "fs";
+import { resolve as resolve2, dirname as dirname4, basename as basename5, join as join12 } from "path";
 function detectRuntime() {
   try {
     execSync2("bun --version", { stdio: "ignore" });
@@ -2734,13 +2917,13 @@ function detectRuntime() {
 }
 function resolveCliPath() {
   const selfPath = new URL(import.meta.url).pathname;
-  const selfDir = dirname3(selfPath);
+  const selfDir = dirname4(selfPath);
   if (selfPath.endsWith("dist/cli.js")) {
     return selfPath;
   }
   const projectRoot = resolve2(selfDir, "../..");
   const distPath = join12(projectRoot, "dist", "cli.js");
-  if (existsSync8(distPath))
+  if (existsSync9(distPath))
     return distPath;
   return resolve2(selfDir, "../cli.ts");
 }
@@ -2776,7 +2959,7 @@ function isMinkHook(entry) {
   return false;
 }
 function mergeHooksIntoSettings(settingsPath, newHooks) {
-  mkdirSync5(dirname3(settingsPath), { recursive: true });
+  mkdirSync6(dirname4(settingsPath), { recursive: true });
   const existing = safeReadJson(settingsPath) ?? {};
   const existingHooks = existing.hooks ?? {};
   for (const [event, entries] of Object.entries(newHooks)) {
@@ -2789,9 +2972,9 @@ function mergeHooksIntoSettings(settingsPath, newHooks) {
 }
 function isExistingInstallation(cwd) {
   const dir = projectDir(cwd);
-  if (!existsSync8(dir))
+  if (!existsSync9(dir))
     return false;
-  return existsSync8(join12(dir, "file-index.json"));
+  return existsSync9(join12(dir, "file-index.json"));
 }
 async function init(cwd) {
   const runtime = detectRuntime();
@@ -2807,7 +2990,7 @@ async function init(cwd) {
     console.log(`  backup: ${backupName}`);
   }
   mergeHooksIntoSettings(settingsPath, hooks);
-  mkdirSync5(dir, { recursive: true });
+  mkdirSync6(dir, { recursive: true });
   const projectId = generateProjectId(cwd);
   const isNotesProject = isWikiEnabled() && isVaultInitialized() && isInsideVault(cwd);
   const metaPath = projectMetaPath(cwd);
@@ -2835,7 +3018,7 @@ async function init(cwd) {
   scan2(cwd, { check: false });
   const { learningMemoryPath: learningMemoryPath3 } = await Promise.resolve().then(() => (init_paths(), exports_paths));
   const memPath = learningMemoryPath3(cwd);
-  if (!existsSync8(memPath)) {
+  if (!existsSync9(memPath)) {
     const { seedLearningMemory: seedLearningMemory2 } = await Promise.resolve().then(() => (init_seed(), exports_seed));
     const { serializeLearningMemory: serializeLearningMemory2 } = await Promise.resolve().then(() => (init_learning_memory(), exports_learning_memory));
     const mem = seedLearningMemory2(cwd);
@@ -2845,7 +3028,7 @@ async function init(cwd) {
     try {
       const projectSlug = basename5(cwd);
       const overviewPath = join12(vaultProjects(projectSlug), "overview.md");
-      if (!existsSync8(overviewPath)) {
+      if (!existsSync9(overviewPath)) {
         const now = new Date().toISOString();
         const overview = [
           `---`,
@@ -2882,12 +3065,12 @@ var init_init = __esm(() => {
 });
 
 // src/core/daemon.ts
-import { readFileSync as readFileSync10, writeFileSync as writeFileSync4, unlinkSync as unlinkSync2, openSync } from "fs";
-import { mkdirSync as mkdirSync6 } from "fs";
-import { dirname as dirname4, resolve as resolve3 } from "path";
+import { readFileSync as readFileSync11, writeFileSync as writeFileSync5, unlinkSync as unlinkSync2, openSync } from "fs";
+import { mkdirSync as mkdirSync7 } from "fs";
+import { dirname as dirname5, resolve as resolve3 } from "path";
 function readPidFile() {
   try {
-    const raw = readFileSync10(schedulerPidPath(), "utf-8");
+    const raw = readFileSync11(schedulerPidPath(), "utf-8");
     const data = JSON.parse(raw);
     if (data && typeof data.pid === "number" && typeof data.startedAt === "string" && typeof data.projectCwd === "string") {
       return data;
@@ -2899,8 +3082,8 @@ function readPidFile() {
 }
 function writePidFile(data) {
   const pidPath = schedulerPidPath();
-  mkdirSync6(dirname4(pidPath), { recursive: true });
-  writeFileSync4(pidPath, JSON.stringify(data, null, 2));
+  mkdirSync7(dirname5(pidPath), { recursive: true });
+  writeFileSync5(pidPath, JSON.stringify(data, null, 2));
 }
 function removePidFile() {
   try {
@@ -2924,10 +3107,10 @@ function startDaemon(cwd) {
   if (existing) {
     removePidFile();
   }
-  const __dir = dirname4(new URL(import.meta.url).pathname);
+  const __dir = dirname5(new URL(import.meta.url).pathname);
   const cliPath = resolve3(__dir, "../cli.ts");
   const logPath = schedulerLogPath();
-  mkdirSync6(dirname4(logPath), { recursive: true });
+  mkdirSync7(dirname5(logPath), { recursive: true });
   const logFd = openSync(logPath, "a");
   const proc = Bun.spawn(["bun", "run", cliPath, "cron", "__daemon"], {
     cwd,
@@ -2997,9 +3180,9 @@ var exports_status = {};
 __export(exports_status, {
   status: () => status
 });
-import { existsSync as existsSync10, readFileSync as readFileSync11, statSync as statSync5 } from "fs";
+import { existsSync as existsSync11, readFileSync as readFileSync12, statSync as statSync5 } from "fs";
 function checkJsonFile(name, filePath, validator) {
-  if (!existsSync10(filePath))
+  if (!existsSync11(filePath))
     return { name, path: filePath, status: "missing" };
   const data = safeReadJson(filePath);
   if (data === null)
@@ -3009,10 +3192,10 @@ function checkJsonFile(name, filePath, validator) {
   return { name, path: filePath, status: "ok" };
 }
 function checkTextFile(name, filePath) {
-  if (!existsSync10(filePath))
+  if (!existsSync11(filePath))
     return { name, path: filePath, status: "missing" };
   try {
-    readFileSync11(filePath, "utf-8");
+    readFileSync12(filePath, "utf-8");
     return { name, path: filePath, status: "ok" };
   } catch {
     return { name, path: filePath, status: "corrupt" };
@@ -3072,8 +3255,8 @@ function status(cwd) {
   console.log();
   try {
     const memPath = learningMemoryPath(cwd);
-    if (existsSync10(memPath)) {
-      const content = readFileSync11(memPath, "utf-8");
+    if (existsSync11(memPath)) {
+      const content = readFileSync12(memPath, "utf-8");
       const mem = parseLearningMemory(content);
       const total = totalEntryCount(mem);
       const mtime = statSync5(memPath).mtime;
@@ -3127,7 +3310,7 @@ var exports_scan2 = {};
 __export(exports_scan2, {
   scan: () => scan2
 });
-import { readFileSync as readFileSync12 } from "fs";
+import { readFileSync as readFileSync13 } from "fs";
 import { join as join13 } from "path";
 function loadExistingIndex2(indexPath) {
   const raw = safeReadJson(indexPath);
@@ -3181,7 +3364,7 @@ function scan2(cwd, options) {
     const fullPath = join13(cwd, file.relativePath);
     let content;
     try {
-      content = readFileSync12(fullPath, "utf-8");
+      content = readFileSync13(fullPath, "utf-8");
     } catch {
       continue;
     }
@@ -3212,13 +3395,13 @@ var exports_reflect2 = {};
 __export(exports_reflect2, {
   reflect: () => reflect2
 });
-import { existsSync as existsSync11, readFileSync as readFileSync13 } from "fs";
+import { existsSync as existsSync12, readFileSync as readFileSync14 } from "fs";
 function reflect2(projectDir3, memoryPath, configPath3) {
-  if (!existsSync11(memoryPath)) {
+  if (!existsSync12(memoryPath)) {
     console.log("[mink] no learning memory found");
     return null;
   }
-  const markdown = readFileSync13(memoryPath, "utf-8");
+  const markdown = readFileSync14(memoryPath, "utf-8");
   const mem = parseLearningMemory(markdown);
   const config = safeReadJson(configPath3);
   const tokenBudget = config?.learningMemoryTokenBudget ?? DEFAULT_TOKEN_BUDGET2;
@@ -3499,7 +3682,7 @@ __export(exports_pre_write, {
   analyzePreWrite: () => analyzePreWrite
 });
 import { relative as relative4 } from "path";
-import { readFileSync as readFileSync14 } from "fs";
+import { readFileSync as readFileSync15 } from "fs";
 function analyzePreWrite(filePath, writeContent, doNotRepeatEntries, bugMemory) {
   const warnings = [];
   const allMatches = [];
@@ -3553,7 +3736,7 @@ async function preWrite(cwd) {
     const writeContent = extractWriteContent(input);
     let doNotRepeatEntries = [];
     try {
-      const markdown = readFileSync14(learningMemoryPath(cwd), "utf-8");
+      const markdown = readFileSync15(learningMemoryPath(cwd), "utf-8");
       const mem = parseLearningMemory(markdown);
       doNotRepeatEntries = getEntries(mem, "Do-Not-Repeat");
     } catch {}
@@ -3610,7 +3793,7 @@ __export(exports_post_write, {
   analyzePostWrite: () => analyzePostWrite
 });
 import { relative as relative5 } from "path";
-import { readFileSync as readFileSync15 } from "fs";
+import { readFileSync as readFileSync16 } from "fs";
 function analyzePostWrite(filePath, fileContent, index) {
   if (isWriteExcluded(filePath)) {
     return {
@@ -3674,7 +3857,7 @@ async function postWrite(cwd) {
     const filePath = relative5(cwd, absolutePath);
     let fileContent = null;
     try {
-      fileContent = readFileSync15(absolutePath, "utf-8");
+      fileContent = readFileSync16(absolutePath, "utf-8");
     } catch {}
     const rawState = safeReadJson(sessionPath(cwd));
     const state = isSessionState(rawState) ? rawState : createSessionState();
@@ -4094,10 +4277,10 @@ async function executeTask(taskId, projectCwd) {
       if (task.actionType === "ai-cli") {
         try {
           const { learningMemoryPath: learningMemoryPath4 } = await Promise.resolve().then(() => (init_paths(), exports_paths));
-          const { readFileSync: readFileSync16 } = await import("fs");
+          const { readFileSync: readFileSync17 } = await import("fs");
           let memoryContent;
           try {
-            memoryContent = readFileSync16(learningMemoryPath4(projectCwd), "utf-8");
+            memoryContent = readFileSync17(learningMemoryPath4(projectCwd), "utf-8");
           } catch {
             console.log("[mink] no learning memory found, skipping reflection");
             return;
@@ -4655,9 +4838,9 @@ var init_design_eval = __esm(() => {
 });
 
 // src/core/dashboard-api.ts
-import { existsSync as existsSync12, readFileSync as readFileSync16 } from "fs";
+import { existsSync as existsSync13, readFileSync as readFileSync17 } from "fs";
 function checkJsonFile2(name, filePath, validator) {
-  if (!existsSync12(filePath))
+  if (!existsSync13(filePath))
     return { name, status: "missing" };
   const data = safeReadJson(filePath);
   if (data === null)
@@ -4667,10 +4850,10 @@ function checkJsonFile2(name, filePath, validator) {
   return { name, status: "ok" };
 }
 function checkTextFile2(name, filePath) {
-  if (!existsSync12(filePath))
+  if (!existsSync13(filePath))
     return { name, status: "missing" };
   try {
-    readFileSync16(filePath, "utf-8");
+    readFileSync17(filePath, "utf-8");
     return { name, status: "ok" };
   } catch {
     return { name, status: "corrupt" };
@@ -4753,7 +4936,7 @@ function loadSchedulerPanel(cwd) {
 }
 function loadLearningMemoryPanel(cwd) {
   const memPath = learningMemoryPath(cwd);
-  if (!existsSync12(memPath)) {
+  if (!existsSync13(memPath)) {
     return {
       projectName: "unknown",
       sections: {
@@ -4765,7 +4948,7 @@ function loadLearningMemoryPanel(cwd) {
     };
   }
   try {
-    const content = readFileSync16(memPath, "utf-8");
+    const content = readFileSync17(memPath, "utf-8");
     return parseLearningMemory(content);
   } catch {
     return {
@@ -4867,7 +5050,7 @@ var init_dashboard_api = __esm(() => {
 });
 
 // src/core/project-registry.ts
-import { readdirSync as readdirSync4, existsSync as existsSync13 } from "fs";
+import { readdirSync as readdirSync4, existsSync as existsSync14 } from "fs";
 import { join as join14 } from "path";
 function getProjectMeta(projDir) {
   const metaPath = join14(projDir, "project-meta.json");
@@ -4888,7 +5071,7 @@ function getProjectMeta(projDir) {
 }
 function listRegisteredProjects() {
   const projectsDir = join14(minkRoot(), "projects");
-  if (!existsSync13(projectsDir))
+  if (!existsSync14(projectsDir))
     return [];
   const entries = readdirSync4(projectsDir, { withFileTypes: true });
   const projects = [];
@@ -5059,8 +5242,8 @@ __export(exports_dashboard_server, {
   startDashboardServer: () => startDashboardServer
 });
 import { watch } from "fs";
-import { existsSync as existsSync14 } from "fs";
-import { basename as basename7, dirname as dirname5, join as join15, extname as extname2 } from "path";
+import { existsSync as existsSync15 } from "fs";
+import { basename as basename7, dirname as dirname6, join as join15, extname as extname2 } from "path";
 
 class SSEManager {
   clients = new Map;
@@ -5213,7 +5396,7 @@ function extractPathParam(pathname, prefix) {
 }
 async function startDashboardServer(cwd, options = {}) {
   const port = options.port ?? 4040;
-  const hostname = options.hostname ?? "127.0.0.1";
+  const hostname2 = options.hostname ?? "127.0.0.1";
   const sseManager = new SSEManager;
   sseManager.start();
   let activeCwd = cwd;
@@ -5233,15 +5416,15 @@ async function startDashboardServer(cwd, options = {}) {
       timestamp: new Date().toISOString()
     });
   });
-  const __dir = dirname5(new URL(import.meta.url).pathname);
+  const __dir = dirname6(new URL(import.meta.url).pathname);
   let pkgRoot = __dir;
-  while (pkgRoot !== dirname5(pkgRoot)) {
-    if (existsSync14(join15(pkgRoot, "package.json")))
+  while (pkgRoot !== dirname6(pkgRoot)) {
+    if (existsSync15(join15(pkgRoot, "package.json")))
       break;
-    pkgRoot = dirname5(pkgRoot);
+    pkgRoot = dirname6(pkgRoot);
   }
   const dashboardOutDir = join15(pkgRoot, "dashboard", "out");
-  const dashboardBuilt = existsSync14(join15(dashboardOutDir, "index.html"));
+  const dashboardBuilt = existsSync15(join15(dashboardOutDir, "index.html"));
   let clientIdCounter = 0;
   if (!dashboardBuilt) {
     console.warn("[mink] dashboard not built. Run: cd dashboard && bun run build");
@@ -5257,7 +5440,7 @@ async function startDashboardServer(cwd, options = {}) {
   }
   const server = await runtimeServe({
     port,
-    hostname,
+    hostname: hostname2,
     idleTimeout: 0,
     async fetch(req) {
       const url = new URL(req.url);
@@ -5420,11 +5603,11 @@ retry: 3000
       return jsonResponse({ error: "Not found" }, 404);
     }
   });
-  const serverUrl = `http://${hostname}:${server.port}`;
+  const serverUrl = `http://${hostname2}:${server.port}`;
   if (options.open !== false) {
     try {
-      const platform = process.platform;
-      const cmd = platform === "darwin" ? ["open", serverUrl] : platform === "win32" ? ["cmd", "/c", "start", serverUrl] : ["xdg-open", serverUrl];
+      const platform2 = process.platform;
+      const cmd = platform2 === "darwin" ? ["open", serverUrl] : platform2 === "win32" ? ["cmd", "/c", "start", serverUrl] : ["xdg-open", serverUrl];
       runtimeSpawn(cmd).unref();
     } catch {}
   }
@@ -5478,9 +5661,9 @@ var exports_dashboard = {};
 __export(exports_dashboard, {
   dashboard: () => dashboard
 });
-import { existsSync as existsSync15 } from "fs";
+import { existsSync as existsSync16 } from "fs";
 async function dashboard(cwd, args) {
-  if (!existsSync15(projectDir(cwd))) {
+  if (!existsSync16(projectDir(cwd))) {
     console.error("[mink] project not initialized. Run: mink init");
     process.exit(1);
   }
@@ -5502,7 +5685,7 @@ var exports_daemon = {};
 __export(exports_daemon, {
   daemon: () => daemon
 });
-import { readFileSync as readFileSync17, existsSync as existsSync16 } from "fs";
+import { readFileSync as readFileSync18, existsSync as existsSync17 } from "fs";
 async function daemon(cwd, args) {
   const subcommand = args[0];
   switch (subcommand) {
@@ -5518,12 +5701,12 @@ async function daemon(cwd, args) {
       break;
     case "logs": {
       const logPath = schedulerLogPath();
-      if (!existsSync16(logPath)) {
+      if (!existsSync17(logPath)) {
         console.log("[mink] no log file found");
         return;
       }
       try {
-        const content = readFileSync17(logPath, "utf-8");
+        const content = readFileSync18(logPath, "utf-8");
         const lines = content.split(`
 `);
         const tail = lines.slice(-50).join(`
@@ -5600,7 +5783,7 @@ async function config(args) {
     const all = resolveAllConfig();
     console.log("[mink] configuration:");
     for (const entry of all) {
-      let line2 = `  ${entry.key} = ${entry.value} (source: ${entry.source})`;
+      let line2 = `  ${entry.key} = ${entry.value} (${entry.scope}, source: ${entry.source})`;
       if (entry.source === "environment variable" && entry.configFileValue !== undefined) {
         line2 += ` [config file value: ${entry.configFileValue} — overridden]`;
       }
@@ -5635,8 +5818,8 @@ var init_config2 = __esm(() => {
 
 // src/commands/init.ts
 import { execSync as execSync3 } from "child_process";
-import { mkdirSync as mkdirSync7, existsSync as existsSync17 } from "fs";
-import { resolve as resolve4, dirname as dirname6, basename as basename8, join as join16 } from "path";
+import { mkdirSync as mkdirSync8, existsSync as existsSync18 } from "fs";
+import { resolve as resolve4, dirname as dirname7, basename as basename8, join as join16 } from "path";
 function detectRuntime2() {
   try {
     execSync3("bun --version", { stdio: "ignore" });
@@ -5677,7 +5860,7 @@ function isMinkHook2(entry) {
   return false;
 }
 function mergeHooksIntoSettings2(settingsPath, newHooks) {
-  mkdirSync7(dirname6(settingsPath), { recursive: true });
+  mkdirSync8(dirname7(settingsPath), { recursive: true });
   const existing = safeReadJson(settingsPath) ?? {};
   const existingHooks = existing.hooks ?? {};
   for (const [event, entries] of Object.entries(newHooks)) {
@@ -5700,7 +5883,7 @@ var exports_update = {};
 __export(exports_update, {
   update: () => update
 });
-import { resolve as resolve5, dirname as dirname7 } from "path";
+import { resolve as resolve5, dirname as dirname8 } from "path";
 function parseArgs(args) {
   let dryRun = false;
   let project = null;
@@ -5748,7 +5931,7 @@ async function update(cwd, args) {
     return;
   }
   const runtime = detectRuntime2();
-  const cliPath = resolve5(dirname7(new URL(import.meta.url).pathname), "../cli.ts");
+  const cliPath = resolve5(dirname8(new URL(import.meta.url).pathname), "../cli.ts");
   const newHooks = buildHooksConfig2(runtime, cliPath);
   for (const target of targets) {
     console.log(`[mink] updating: ${target.name} (${target.id})`);
@@ -5817,7 +6000,7 @@ var init_restore = __esm(() => {
 });
 
 // src/core/design-eval/server-detect.ts
-import { readFileSync as readFileSync18 } from "fs";
+import { readFileSync as readFileSync19 } from "fs";
 import { join as join17 } from "path";
 async function probePort(port) {
   try {
@@ -5840,7 +6023,7 @@ async function findRunningServer(ports = DEFAULT_PROBE_PORTS) {
 }
 function detectDevCommand(cwd) {
   try {
-    const raw = readFileSync18(join17(cwd, "package.json"), "utf-8");
+    const raw = readFileSync19(join17(cwd, "package.json"), "utf-8");
     const pkg = JSON.parse(raw);
     const scripts = pkg.scripts;
     if (!scripts || typeof scripts !== "object")
@@ -5860,10 +6043,10 @@ var init_server_detect = __esm(() => {
 });
 
 // src/core/design-eval/route-detect.ts
-import { existsSync as existsSync18, readdirSync as readdirSync5, statSync as statSync8 } from "fs";
+import { existsSync as existsSync19, readdirSync as readdirSync5, statSync as statSync8 } from "fs";
 import { join as join18, relative as relative6, sep } from "path";
 function detectFramework(cwd) {
-  const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync18(join18(cwd, `${name}.${ext}`))) || existsSync18(join18(cwd, name));
+  const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync19(join18(cwd, `${name}.${ext}`))) || existsSync19(join18(cwd, name));
   if (has("next.config"))
     return "nextjs";
   if (has("svelte.config"))
@@ -5889,7 +6072,7 @@ function detectRoutes(cwd) {
 function detectNextRoutes(cwd) {
   const routes = [];
   const appDir = join18(cwd, "app");
-  if (existsSync18(appDir)) {
+  if (existsSync19(appDir)) {
     const pageFiles = findFiles(appDir, /^page\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
       const rel = relative6(appDir, file);
@@ -5901,7 +6084,7 @@ function detectNextRoutes(cwd) {
     }
   }
   const pagesDir = join18(cwd, "pages");
-  if (existsSync18(pagesDir)) {
+  if (existsSync19(pagesDir)) {
     const pageFiles = findFiles(pagesDir, /\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
       const rel = relative6(pagesDir, file);
@@ -5921,7 +6104,7 @@ function detectNextRoutes(cwd) {
 }
 function detectSvelteKitRoutes(cwd) {
   const routesDir = join18(cwd, "src", "routes");
-  if (!existsSync18(routesDir))
+  if (!existsSync19(routesDir))
     return ["/"];
   const routes = [];
   const pageFiles = findFiles(routesDir, /^\+page\.svelte$/);
@@ -5937,7 +6120,7 @@ function detectSvelteKitRoutes(cwd) {
 }
 function detectNuxtRoutes(cwd) {
   const pagesDir = join18(cwd, "pages");
-  if (!existsSync18(pagesDir))
+  if (!existsSync19(pagesDir))
     return ["/"];
   const routes = [];
   const vueFiles = findFiles(pagesDir, /\.vue$/);
@@ -18868,10 +19051,10 @@ var init_NetworkManager = __esm(() => {
         throw error;
       }
     }
-    async setUserAgent(userAgent, userAgentMetadata, platform) {
+    async setUserAgent(userAgent, userAgentMetadata, platform2) {
       this.#userAgent = userAgent;
       this.#userAgentMetadata = userAgentMetadata;
-      this.#platform = platform;
+      this.#platform = platform2;
       await this.#applyToAllClients(this.#applyUserAgent.bind(this));
     }
     async#applyUserAgent(client) {
@@ -40383,22 +40566,22 @@ var init_Page3 = __esm(() => {
       async setUserAgent(userAgentOrOptions, userAgentMetadata) {
         let userAgent;
         let clientHints;
-        let platform;
+        let platform2;
         if (typeof userAgentOrOptions === "string") {
           userAgent = userAgentOrOptions;
           clientHints = userAgentMetadata;
         } else {
           userAgent = userAgentOrOptions.userAgent ?? null;
           clientHints = userAgentOrOptions.userAgentMetadata;
-          platform = userAgentOrOptions.platform === "" ? undefined : userAgentOrOptions.platform;
+          platform2 = userAgentOrOptions.platform === "" ? undefined : userAgentOrOptions.platform;
         }
         if (userAgent === "") {
           userAgent = null;
         }
         await this.#frame.browsingContext.setUserAgent(userAgent);
-        if (platform && platform !== "") {
+        if (platform2 && platform2 !== "") {
           clientHints = clientHints ?? {};
-          clientHints.platform = platform;
+          clientHints.platform = platform2;
         }
         await this.#frame.browsingContext.setClientHintsOverride(clientHints ?? null);
       }
@@ -48364,15 +48547,15 @@ var require_proxy_from_env = __commonJS((exports) => {
   function getProxyForUrl(url) {
     var parsedUrl = typeof url === "string" ? parseUrl(url) : url || {};
     var proto = parsedUrl.protocol;
-    var hostname = parsedUrl.host;
+    var hostname2 = parsedUrl.host;
     var port = parsedUrl.port;
-    if (typeof hostname !== "string" || !hostname || typeof proto !== "string") {
+    if (typeof hostname2 !== "string" || !hostname2 || typeof proto !== "string") {
       return "";
     }
     proto = proto.split(":", 1)[0];
-    hostname = hostname.replace(/:\d*$/, "");
+    hostname2 = hostname2.replace(/:\d*$/, "");
     port = parseInt(port) || DEFAULT_PORTS[proto] || 0;
-    if (!shouldProxy(hostname, port)) {
+    if (!shouldProxy(hostname2, port)) {
       return "";
     }
     var proxy = getEnv("npm_config_" + proto + "_proxy") || getEnv(proto + "_proxy") || getEnv("npm_config_proxy") || getEnv("all_proxy");
@@ -48381,7 +48564,7 @@ var require_proxy_from_env = __commonJS((exports) => {
     }
     return proxy;
   }
-  function shouldProxy(hostname, port) {
+  function shouldProxy(hostname2, port) {
     var NO_PROXY = (getEnv("npm_config_no_proxy") || getEnv("no_proxy")).toLowerCase();
     if (!NO_PROXY) {
       return true;
@@ -48400,12 +48583,12 @@ var require_proxy_from_env = __commonJS((exports) => {
         return true;
       }
       if (!/^[.*]/.test(parsedProxyHostname)) {
-        return hostname !== parsedProxyHostname;
+        return hostname2 !== parsedProxyHostname;
       }
       if (parsedProxyHostname.charAt(0) === "*") {
         parsedProxyHostname = parsedProxyHostname.slice(1);
       }
-      return !stringEndsWith.call(hostname, parsedProxyHostname);
+      return !stringEndsWith.call(hostname2, parsedProxyHostname);
     });
   }
   function getEnv(key) {
@@ -48483,8 +48666,8 @@ var require_dist2 = __commonJS((exports) => {
     setRequestProps(req, opts) {
       const { proxy } = this;
       const protocol = opts.secureEndpoint ? "https:" : "http:";
-      const hostname = req.getHeader("host") || "localhost";
-      const base = `${protocol}//${hostname}`;
+      const hostname2 = req.getHeader("host") || "localhost";
+      const base = `${protocol}//${hostname2}`;
       const url = new url_1.URL(req.path, base);
       if (opts.port !== 80) {
         url.port = String(opts.port);
@@ -71820,8 +72003,8 @@ var init_httpUtil = __esm(() => {
 import { execSync as execSync4 } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-function folder(platform) {
-  switch (platform) {
+function folder(platform2) {
+  switch (platform2) {
     case BrowserPlatform.LINUX_ARM:
     case BrowserPlatform.LINUX:
       return "linux64";
@@ -71835,23 +72018,23 @@ function folder(platform) {
       return "win64";
   }
 }
-function resolveDownloadUrl(platform, buildId, baseUrl = "https://storage.googleapis.com/chrome-for-testing-public") {
-  return `${baseUrl}/${resolveDownloadPath(platform, buildId).join("/")}`;
+function resolveDownloadUrl(platform2, buildId, baseUrl = "https://storage.googleapis.com/chrome-for-testing-public") {
+  return `${baseUrl}/${resolveDownloadPath(platform2, buildId).join("/")}`;
 }
-function resolveDownloadPath(platform, buildId) {
-  return [buildId, folder(platform), `chrome-${folder(platform)}.zip`];
+function resolveDownloadPath(platform2, buildId) {
+  return [buildId, folder(platform2), `chrome-${folder(platform2)}.zip`];
 }
-function relativeExecutablePath(platform, _buildId) {
-  switch (platform) {
+function relativeExecutablePath(platform2, _buildId) {
+  switch (platform2) {
     case BrowserPlatform.MAC:
     case BrowserPlatform.MAC_ARM:
-      return path.join("chrome-" + folder(platform), "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing");
+      return path.join("chrome-" + folder(platform2), "Google Chrome for Testing.app", "Contents", "MacOS", "Google Chrome for Testing");
     case BrowserPlatform.LINUX_ARM:
     case BrowserPlatform.LINUX:
       return path.join("chrome-linux64", "chrome");
     case BrowserPlatform.WIN32:
     case BrowserPlatform.WIN64:
-      return path.join("chrome-" + folder(platform), "chrome.exe");
+      return path.join("chrome-" + folder(platform2), "chrome.exe");
   }
 }
 async function getLastKnownGoodReleaseForChannel(channel) {
@@ -71961,8 +72144,8 @@ function getChromeLinuxOrWslLocation(channel) {
   } catch {}
   return locations;
 }
-function resolveSystemExecutablePaths(platform, channel) {
-  switch (platform) {
+function resolveSystemExecutablePaths(platform2, channel) {
+  switch (platform2) {
     case BrowserPlatform.WIN64:
     case BrowserPlatform.WIN32:
       const prefixLocation = new Set(WINDOWS_ENV_PARAM_NAMES.map((name) => {
@@ -72000,8 +72183,8 @@ function resolveSystemExecutablePaths(platform, channel) {
       return getChromeLinuxOrWslLocation(channel);
   }
 }
-function resolveDefaultUserDataDir(platform, channel) {
-  switch (platform) {
+function resolveDefaultUserDataDir(platform2, channel) {
+  switch (platform2) {
     case BrowserPlatform.WIN64:
     case BrowserPlatform.WIN32:
       switch (channel) {
@@ -72079,8 +72262,8 @@ var init_chrome = __esm(() => {
 
 // node_modules/@puppeteer/browsers/lib/esm/browser-data/chrome-headless-shell.js
 import path2 from "node:path";
-function folder2(platform) {
-  switch (platform) {
+function folder2(platform2) {
+  switch (platform2) {
     case BrowserPlatform.LINUX_ARM:
     case BrowserPlatform.LINUX:
       return "linux64";
@@ -72094,27 +72277,27 @@ function folder2(platform) {
       return "win64";
   }
 }
-function resolveDownloadUrl2(platform, buildId, baseUrl = "https://storage.googleapis.com/chrome-for-testing-public") {
-  return `${baseUrl}/${resolveDownloadPath2(platform, buildId).join("/")}`;
+function resolveDownloadUrl2(platform2, buildId, baseUrl = "https://storage.googleapis.com/chrome-for-testing-public") {
+  return `${baseUrl}/${resolveDownloadPath2(platform2, buildId).join("/")}`;
 }
-function resolveDownloadPath2(platform, buildId) {
+function resolveDownloadPath2(platform2, buildId) {
   return [
     buildId,
-    folder2(platform),
-    `chrome-headless-shell-${folder2(platform)}.zip`
+    folder2(platform2),
+    `chrome-headless-shell-${folder2(platform2)}.zip`
   ];
 }
-function relativeExecutablePath2(platform, _buildId) {
-  switch (platform) {
+function relativeExecutablePath2(platform2, _buildId) {
+  switch (platform2) {
     case BrowserPlatform.MAC:
     case BrowserPlatform.MAC_ARM:
-      return path2.join("chrome-headless-shell-" + folder2(platform), "chrome-headless-shell");
+      return path2.join("chrome-headless-shell-" + folder2(platform2), "chrome-headless-shell");
     case BrowserPlatform.LINUX_ARM:
     case BrowserPlatform.LINUX:
       return path2.join("chrome-headless-shell-linux64", "chrome-headless-shell");
     case BrowserPlatform.WIN32:
     case BrowserPlatform.WIN64:
-      return path2.join("chrome-headless-shell-" + folder2(platform), "chrome-headless-shell.exe");
+      return path2.join("chrome-headless-shell-" + folder2(platform2), "chrome-headless-shell.exe");
   }
 }
 var init_chrome_headless_shell = __esm(() => {
@@ -72124,8 +72307,8 @@ var init_chrome_headless_shell = __esm(() => {
 
 // node_modules/@puppeteer/browsers/lib/esm/browser-data/chromedriver.js
 import path3 from "node:path";
-function folder3(platform) {
-  switch (platform) {
+function folder3(platform2) {
+  switch (platform2) {
     case BrowserPlatform.LINUX_ARM:
     case BrowserPlatform.LINUX:
       return "linux64";
@@ -72139,23 +72322,23 @@ function folder3(platform) {
       return "win64";
   }
 }
-function resolveDownloadUrl3(platform, buildId, baseUrl = "https://storage.googleapis.com/chrome-for-testing-public") {
-  return `${baseUrl}/${resolveDownloadPath3(platform, buildId).join("/")}`;
+function resolveDownloadUrl3(platform2, buildId, baseUrl = "https://storage.googleapis.com/chrome-for-testing-public") {
+  return `${baseUrl}/${resolveDownloadPath3(platform2, buildId).join("/")}`;
 }
-function resolveDownloadPath3(platform, buildId) {
-  return [buildId, folder3(platform), `chromedriver-${folder3(platform)}.zip`];
+function resolveDownloadPath3(platform2, buildId) {
+  return [buildId, folder3(platform2), `chromedriver-${folder3(platform2)}.zip`];
 }
-function relativeExecutablePath3(platform, _buildId) {
-  switch (platform) {
+function relativeExecutablePath3(platform2, _buildId) {
+  switch (platform2) {
     case BrowserPlatform.MAC:
     case BrowserPlatform.MAC_ARM:
-      return path3.join("chromedriver-" + folder3(platform), "chromedriver");
+      return path3.join("chromedriver-" + folder3(platform2), "chromedriver");
     case BrowserPlatform.LINUX_ARM:
     case BrowserPlatform.LINUX:
       return path3.join("chromedriver-linux64", "chromedriver");
     case BrowserPlatform.WIN32:
     case BrowserPlatform.WIN64:
-      return path3.join("chromedriver-" + folder3(platform), "chromedriver.exe");
+      return path3.join("chromedriver-" + folder3(platform2), "chromedriver.exe");
   }
 }
 var init_chromedriver = __esm(() => {
@@ -72165,8 +72348,8 @@ var init_chromedriver = __esm(() => {
 
 // node_modules/@puppeteer/browsers/lib/esm/browser-data/chromium.js
 import path4 from "node:path";
-function archive(platform, buildId) {
-  switch (platform) {
+function archive(platform2, buildId) {
+  switch (platform2) {
     case BrowserPlatform.LINUX_ARM:
     case BrowserPlatform.LINUX:
       return "chrome-linux";
@@ -72178,8 +72361,8 @@ function archive(platform, buildId) {
       return parseInt(buildId, 10) > 591479 ? "chrome-win" : "chrome-win32";
   }
 }
-function folder4(platform) {
-  switch (platform) {
+function folder4(platform2) {
+  switch (platform2) {
     case BrowserPlatform.LINUX_ARM:
     case BrowserPlatform.LINUX:
       return "Linux_x64";
@@ -72193,14 +72376,14 @@ function folder4(platform) {
       return "Win_x64";
   }
 }
-function resolveDownloadUrl4(platform, buildId, baseUrl = "https://storage.googleapis.com/chromium-browser-snapshots") {
-  return `${baseUrl}/${resolveDownloadPath4(platform, buildId).join("/")}`;
+function resolveDownloadUrl4(platform2, buildId, baseUrl = "https://storage.googleapis.com/chromium-browser-snapshots") {
+  return `${baseUrl}/${resolveDownloadPath4(platform2, buildId).join("/")}`;
 }
-function resolveDownloadPath4(platform, buildId) {
-  return [folder4(platform), buildId, `${archive(platform, buildId)}.zip`];
+function resolveDownloadPath4(platform2, buildId) {
+  return [folder4(platform2), buildId, `${archive(platform2, buildId)}.zip`];
 }
-function relativeExecutablePath4(platform, _buildId) {
-  switch (platform) {
+function relativeExecutablePath4(platform2, _buildId) {
+  switch (platform2) {
     case BrowserPlatform.MAC:
     case BrowserPlatform.MAC_ARM:
       return path4.join("chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium");
@@ -72212,8 +72395,8 @@ function relativeExecutablePath4(platform, _buildId) {
       return path4.join("chrome-win", "chrome.exe");
   }
 }
-async function resolveBuildId2(platform) {
-  return await getText(new URL(`https://storage.googleapis.com/chromium-browser-snapshots/${folder4(platform)}/LAST_CHANGE`));
+async function resolveBuildId2(platform2) {
+  return await getText(new URL(`https://storage.googleapis.com/chromium-browser-snapshots/${folder4(platform2)}/LAST_CHANGE`));
 }
 function compareVersions2(a, b) {
   return Number(a) - Number(b);
@@ -72230,8 +72413,8 @@ function getFormat(buildId) {
   const majorVersion = Number(buildId.split(".").shift());
   return majorVersion >= 135 ? "xz" : "bz2";
 }
-function archiveNightly(platform, buildId) {
-  switch (platform) {
+function archiveNightly(platform2, buildId) {
+  switch (platform2) {
     case BrowserPlatform.LINUX:
       return `firefox-${buildId}.en-US.linux-x86_64.tar.${getFormat(buildId)}`;
     case BrowserPlatform.LINUX_ARM:
@@ -72241,11 +72424,11 @@ function archiveNightly(platform, buildId) {
       return `firefox-${buildId}.en-US.mac.dmg`;
     case BrowserPlatform.WIN32:
     case BrowserPlatform.WIN64:
-      return `firefox-${buildId}.en-US.${platform}.zip`;
+      return `firefox-${buildId}.en-US.${platform2}.zip`;
   }
 }
-function archive2(platform, buildId) {
-  switch (platform) {
+function archive2(platform2, buildId) {
+  switch (platform2) {
     case BrowserPlatform.LINUX_ARM:
     case BrowserPlatform.LINUX:
       return `firefox-${buildId}.tar.${getFormat(buildId)}`;
@@ -72257,8 +72440,8 @@ function archive2(platform, buildId) {
       return `Firefox Setup ${buildId}.exe`;
   }
 }
-function platformName(platform) {
-  switch (platform) {
+function platformName(platform2) {
+  switch (platform2) {
     case BrowserPlatform.LINUX:
       return `linux-x86_64`;
     case BrowserPlatform.LINUX_ARM:
@@ -72268,7 +72451,7 @@ function platformName(platform) {
       return `mac`;
     case BrowserPlatform.WIN32:
     case BrowserPlatform.WIN64:
-      return platform;
+      return platform2;
   }
 }
 function parseBuildId(buildId) {
@@ -72280,7 +72463,7 @@ function parseBuildId(buildId) {
   }
   return [FirefoxChannel.NIGHTLY, buildId];
 }
-function resolveDownloadUrl5(platform, buildId, baseUrl) {
+function resolveDownloadUrl5(platform2, buildId, baseUrl) {
   const [channel] = parseBuildId(buildId);
   switch (channel) {
     case FirefoxChannel.NIGHTLY:
@@ -72295,30 +72478,30 @@ function resolveDownloadUrl5(platform, buildId, baseUrl) {
       baseUrl ??= "https://archive.mozilla.org/pub/firefox/releases";
       break;
   }
-  return `${baseUrl}/${resolveDownloadPath5(platform, buildId).join("/")}`;
+  return `${baseUrl}/${resolveDownloadPath5(platform2, buildId).join("/")}`;
 }
-function resolveDownloadPath5(platform, buildId) {
+function resolveDownloadPath5(platform2, buildId) {
   const [channel, resolvedBuildId] = parseBuildId(buildId);
   switch (channel) {
     case FirefoxChannel.NIGHTLY:
-      return [archiveNightly(platform, resolvedBuildId)];
+      return [archiveNightly(platform2, resolvedBuildId)];
     case FirefoxChannel.DEVEDITION:
     case FirefoxChannel.BETA:
     case FirefoxChannel.STABLE:
     case FirefoxChannel.ESR:
       return [
         resolvedBuildId,
-        platformName(platform),
+        platformName(platform2),
         "en-US",
-        archive2(platform, resolvedBuildId)
+        archive2(platform2, resolvedBuildId)
       ];
   }
 }
-function relativeExecutablePath5(platform, buildId) {
+function relativeExecutablePath5(platform2, buildId) {
   const [channel] = parseBuildId(buildId);
   switch (channel) {
     case FirefoxChannel.NIGHTLY:
-      switch (platform) {
+      switch (platform2) {
         case BrowserPlatform.MAC_ARM:
         case BrowserPlatform.MAC:
           return path5.join("Firefox Nightly.app", "Contents", "MacOS", "firefox");
@@ -72333,7 +72516,7 @@ function relativeExecutablePath5(platform, buildId) {
     case FirefoxChannel.DEVEDITION:
     case FirefoxChannel.ESR:
     case FirefoxChannel.STABLE:
-      switch (platform) {
+      switch (platform2) {
         case BrowserPlatform.MAC_ARM:
         case BrowserPlatform.MAC:
           return path5.join("Firefox.app", "Contents", "MacOS", "firefox");
@@ -72498,7 +72681,7 @@ var init_firefox = __esm(() => {
 });
 
 // node_modules/@puppeteer/browsers/lib/esm/browser-data/browser-data.js
-async function resolveBuildIdForBrowserTag(browser, platform, tag) {
+async function resolveBuildIdForBrowserTag(browser, platform2, tag) {
   switch (browser) {
     case Browser6.FIREFOX:
       switch (tag) {
@@ -72573,7 +72756,7 @@ async function resolveBuildIdForBrowserTag(browser, platform, tag) {
     case Browser6.CHROMIUM:
       switch (tag) {
         case BrowserTag.LATEST:
-          return await resolveBuildId2(platform);
+          return await resolveBuildId2(platform2);
         case BrowserTag.NIGHTLY:
         case BrowserTag.CANARY:
         case BrowserTag.DEV:
@@ -72585,10 +72768,10 @@ async function resolveBuildIdForBrowserTag(browser, platform, tag) {
       }
   }
 }
-async function resolveBuildId4(browser, platform, tag) {
+async function resolveBuildId4(browser, platform2, tag) {
   const browserTag = tag;
   if (Object.values(BrowserTag).includes(browserTag)) {
-    return await resolveBuildIdForBrowserTag(browser, platform, browserTag);
+    return await resolveBuildIdForBrowserTag(browser, platform2, browserTag);
   }
   switch (browser) {
     case Browser6.FIREFOX:
@@ -72624,7 +72807,7 @@ async function createProfile2(browser, opts) {
       throw new Error(`Profile creation is not support for ${browser} yet`);
   }
 }
-function resolveDefaultUserDataDir2(browser, platform, channel) {
+function resolveDefaultUserDataDir2(browser, platform2, channel) {
   switch (browser) {
     case Browser6.CHROMEDRIVER:
     case Browser6.CHROMEHEADLESSSHELL:
@@ -72632,10 +72815,10 @@ function resolveDefaultUserDataDir2(browser, platform, channel) {
     case Browser6.CHROMIUM:
       throw new Error(`Default user dir detection is not supported for ${browser} yet.`);
     case Browser6.CHROME:
-      return resolveDefaultUserDataDir(platform, channel);
+      return resolveDefaultUserDataDir(platform2, channel);
   }
 }
-function resolveSystemExecutablePaths2(browser, platform, channel) {
+function resolveSystemExecutablePaths2(browser, platform2, channel) {
   switch (browser) {
     case Browser6.CHROMEDRIVER:
     case Browser6.CHROMEHEADLESSSHELL:
@@ -72643,7 +72826,7 @@ function resolveSystemExecutablePaths2(browser, platform, channel) {
     case Browser6.CHROMIUM:
       throw new Error(`System browser detection is not supported for ${browser} yet.`);
     case Browser6.CHROME:
-      return resolveSystemExecutablePaths(platform, channel);
+      return resolveSystemExecutablePaths(platform2, channel);
   }
 }
 function getVersionComparator(browser) {
@@ -72690,9 +72873,9 @@ var init_browser_data = __esm(() => {
 // node_modules/@puppeteer/browsers/lib/esm/detectPlatform.js
 import os2 from "node:os";
 function detectBrowserPlatform() {
-  const platform = os2.platform();
+  const platform2 = os2.platform();
   const arch = os2.arch();
-  switch (platform) {
+  switch (platform2) {
     case "darwin":
       return arch === "arm64" ? BrowserPlatform.MAC_ARM : BrowserPlatform.MAC;
     case "linux":
@@ -72728,15 +72911,15 @@ class InstalledBrowser {
   platform;
   executablePath;
   #cache;
-  constructor(cache, browser, buildId, platform) {
+  constructor(cache, browser, buildId, platform2) {
     this.#cache = cache;
     this.browser = browser;
     this.buildId = buildId;
-    this.platform = platform;
+    this.platform = platform2;
     this.executablePath = cache.computeExecutablePath({
       browser,
       buildId,
-      platform
+      platform: platform2
     });
   }
   get path() {
@@ -72780,17 +72963,17 @@ class Cache {
     fs2.mkdirSync(path6.dirname(metatadaPath), { recursive: true });
     fs2.writeFileSync(metatadaPath, JSON.stringify(metadata, null, 2));
   }
-  readExecutablePath(browser, platform, buildId) {
+  readExecutablePath(browser, platform2, buildId) {
     const metadata = this.readMetadata(browser);
-    const key = `${platform}-${buildId}`;
+    const key = `${platform2}-${buildId}`;
     return metadata.executablePaths?.[key] ?? null;
   }
-  writeExecutablePath(browser, platform, buildId, executablePath) {
+  writeExecutablePath(browser, platform2, buildId, executablePath) {
     const metadata = this.readMetadata(browser);
     if (!metadata.executablePaths) {
       metadata.executablePaths = {};
     }
-    const key = `${platform}-${buildId}`;
+    const key = `${platform2}-${buildId}`;
     metadata.executablePaths[key] = executablePath;
     this.writeMetadata(browser, metadata);
   }
@@ -72801,8 +72984,8 @@ class Cache {
     }
     return metadata.aliases[alias];
   }
-  installationDir(browser, platform, buildId) {
-    return path6.join(this.browserRoot(browser), `${platform}-${buildId}`);
+  installationDir(browser, platform2, buildId) {
+    return path6.join(this.browserRoot(browser), `${platform2}-${buildId}`);
   }
   clear() {
     fs2.rmSync(this.#rootDir, {
@@ -72812,19 +72995,19 @@ class Cache {
       retryDelay: 500
     });
   }
-  uninstall(browser, platform, buildId) {
+  uninstall(browser, platform2, buildId) {
     const metadata = this.readMetadata(browser);
     for (const alias of Object.keys(metadata.aliases)) {
       if (metadata.aliases[alias] === buildId) {
         delete metadata.aliases[alias];
       }
     }
-    const key = `${platform}-${buildId}`;
+    const key = `${platform2}-${buildId}`;
     if (metadata.executablePaths?.[key]) {
       delete metadata.executablePaths[key];
       this.writeMetadata(browser, metadata);
     }
-    fs2.rmSync(this.installationDir(browser, platform, buildId), {
+    fs2.rmSync(this.installationDir(browser, platform2, buildId), {
       force: true,
       recursive: true,
       maxRetries: 10,
@@ -72876,11 +73059,11 @@ function parseFolderPath(folderPath) {
   if (splits.length !== 2) {
     return;
   }
-  const [platform, buildId] = splits;
-  if (!buildId || !platform) {
+  const [platform2, buildId] = splits;
+  if (!buildId || !platform2) {
     return;
   }
-  return { platform, buildId };
+  return { platform: platform2, buildId };
 }
 var import_debug, debugCache;
 var init_Cache = __esm(() => {
@@ -73383,8 +73566,8 @@ class DefaultProvider {
   getDownloadUrl(options) {
     return this.#getDownloadUrl(options.browser, options.platform, options.buildId);
   }
-  #getDownloadUrl(browser, platform, buildId) {
-    return new URL(downloadUrls[browser](platform, buildId, this.#baseUrl));
+  #getDownloadUrl(browser, platform2, buildId) {
+    return new URL(downloadUrls[browser](platform2, buildId, this.#baseUrl));
   }
   getExecutablePath(options) {
     return executablePathByBrowser[options.browser](options.platform, options.buildId);
@@ -78209,7 +78392,7 @@ var init_fileUtil = __esm(() => {
 // node_modules/@puppeteer/browsers/lib/esm/install.js
 import assert2 from "node:assert";
 import { spawnSync as spawnSync2 } from "node:child_process";
-import { existsSync as existsSync19, readFileSync as readFileSync19 } from "node:fs";
+import { existsSync as existsSync20, readFileSync as readFileSync20 } from "node:fs";
 import { mkdir as mkdir2, unlink } from "node:fs/promises";
 import os5 from "node:os";
 import path8 from "node:path";
@@ -78262,7 +78445,7 @@ async function installWithProviders(options) {
         continue;
       }
       debugInstall(`Successfully got URL from ${provider.getName()}: ${url}`);
-      if (!existsSync19(browserRoot)) {
+      if (!existsSync20(browserRoot)) {
         await mkdir2(browserRoot, { recursive: true });
       }
       return await installUrl(url, options, provider);
@@ -78295,11 +78478,11 @@ async function installDeps(installedBrowser) {
     return;
   }
   const depsPath = path8.join(path8.dirname(installedBrowser.executablePath), "deb.deps");
-  if (!existsSync19(depsPath)) {
+  if (!existsSync20(depsPath)) {
     debugInstall(`deb.deps file was not found at ${depsPath}`);
     return;
   }
-  const data = readFileSync19(depsPath, "utf-8").split(`
+  const data = readFileSync20(depsPath, "utf-8").split(`
 `).join(",");
   if (process.getuid?.() !== 0) {
     throw new Error("Installing system dependencies requires root privileges");
@@ -78337,11 +78520,11 @@ async function installUrl(url, options, provider) {
   const cache = new Cache(options.cacheDir);
   const browserRoot = cache.browserRoot(options.browser);
   const archivePath = path8.join(browserRoot, `${options.buildId}-${fileName}`);
-  if (!existsSync19(browserRoot)) {
+  if (!existsSync20(browserRoot)) {
     await mkdir2(browserRoot, { recursive: true });
   }
   if (!options.unpack) {
-    if (existsSync19(archivePath)) {
+    if (existsSync20(archivePath)) {
       return archivePath;
     }
     debugInstall(`Downloading binary from ${url}`);
@@ -78362,8 +78545,8 @@ async function installUrl(url, options, provider) {
     cache.writeExecutablePath(options.browser, options.platform, options.buildId, relativeExecutablePath6);
   }
   try {
-    if (existsSync19(outputPath)) {
-      if (!existsSync19(installedBrowser.executablePath)) {
+    if (existsSync20(outputPath)) {
+      if (!existsSync20(installedBrowser.executablePath)) {
         throw new Error(`The browser folder (${outputPath}) exists but the executable (${installedBrowser.executablePath}) is missing`);
       }
       await runSetup(installedBrowser);
@@ -78372,7 +78555,7 @@ async function installUrl(url, options, provider) {
       }
       return installedBrowser;
     }
-    if (!existsSync19(archivePath)) {
+    if (!existsSync20(archivePath)) {
       debugInstall(`Downloading binary from ${url}`);
       try {
         debugTime("download");
@@ -78401,7 +78584,7 @@ async function installUrl(url, options, provider) {
     }
     return installedBrowser;
   } finally {
-    if (existsSync19(archivePath)) {
+    if (existsSync20(archivePath)) {
       await unlink(archivePath);
     }
   }
@@ -78412,7 +78595,7 @@ async function runSetup(installedBrowser) {
       debugTime("permissions");
       const browserDir = path8.dirname(installedBrowser.executablePath);
       const setupExePath = path8.join(browserDir, "setup.exe");
-      if (!existsSync19(setupExePath)) {
+      if (!existsSync20(setupExePath)) {
         return;
       }
       spawnSync2(path8.join(browserDir, "setup.exe"), [`--configure-browser-in-directory=` + browserDir], {
@@ -78458,8 +78641,8 @@ async function canDownload(options) {
   }
   return false;
 }
-function getDownloadUrl(browser, platform, buildId, baseUrl) {
-  return new URL(downloadUrls[browser](platform, buildId, baseUrl));
+function getDownloadUrl(browser, platform2, buildId, baseUrl) {
+  return new URL(downloadUrls[browser](platform2, buildId, baseUrl));
 }
 function makeProgressCallback(browser, buildId) {
   let progressBar;
@@ -78793,19 +78976,19 @@ var init_cliui = __esm(() => {
 });
 
 // node_modules/escalade/sync/index.mjs
-import { dirname as dirname8, resolve as resolve7 } from "path";
+import { dirname as dirname9, resolve as resolve7 } from "path";
 import { readdirSync as readdirSync6, statSync as statSync9 } from "fs";
 function sync_default(start, callback) {
   let dir = resolve7(".", start);
   let tmp, stats = statSync9(dir);
   if (!stats.isDirectory()) {
-    dir = dirname8(dir);
+    dir = dirname9(dir);
   }
   while (true) {
     tmp = callback(dir, readdirSync6(dir));
     if (tmp)
       return resolve7(dir, tmp);
-    dir = dirname8(tmp = dir);
+    dir = dirname9(tmp = dir);
     if (tmp === dir)
       break;
   }
@@ -79825,14 +80008,14 @@ var init_yerror = __esm(() => {
 });
 
 // node_modules/y18n/build/lib/platform-shims/node.js
-import { readFileSync as readFileSync20, statSync as statSync10, writeFile } from "fs";
+import { readFileSync as readFileSync21, statSync as statSync10, writeFile } from "fs";
 import { format as format2 } from "util";
 import { resolve as resolve9 } from "path";
 var node_default;
 var init_node = __esm(() => {
   node_default = {
     fs: {
-      readFileSync: readFileSync20,
+      readFileSync: readFileSync21,
       writeFile
     },
     format: format2,
@@ -80017,9 +80200,9 @@ var init_y18n = __esm(() => {
 // node_modules/yargs/lib/platform-shims/esm.mjs
 import { notStrictEqual, strictEqual } from "assert";
 import { inspect } from "util";
-import { readFileSync as readFileSync21 } from "fs";
+import { readFileSync as readFileSync22 } from "fs";
 import { fileURLToPath } from "url";
-import { basename as basename10, dirname as dirname9, extname as extname3, relative as relative7, resolve as resolve10 } from "path";
+import { basename as basename10, dirname as dirname10, extname as extname3, relative as relative7, resolve as resolve10 } from "path";
 var REQUIRE_ERROR = "require is not supported by ESM", REQUIRE_DIRECTORY_ERROR = "loading a directory of commands is not supported yet for ESM", __dirname2, mainFilename, esm_default;
 var init_esm = __esm(() => {
   init_cliui();
@@ -80052,7 +80235,7 @@ var init_esm = __esm(() => {
     Parser: lib_default,
     path: {
       basename: basename10,
-      dirname: dirname9,
+      dirname: dirname10,
       extname: extname3,
       relative: relative7,
       resolve: resolve10
@@ -80066,7 +80249,7 @@ var init_esm = __esm(() => {
       nextTick: process.nextTick,
       stdColumns: typeof process.stdout.columns !== "undefined" ? process.stdout.columns : null
     },
-    readFileSync: readFileSync21,
+    readFileSync: readFileSync22,
     require: () => {
       throw new YError(REQUIRE_ERROR);
     },
@@ -83399,8 +83582,8 @@ import * as readline2 from "node:readline";
 function isValidBrowser(browser) {
   return Object.values(Browser6).includes(browser);
 }
-function isValidPlatform(platform) {
-  return Object.values(BrowserPlatform).includes(platform);
+function isValidPlatform(platform2) {
+  return Object.values(BrowserPlatform).includes(platform2);
 }
 
 class CLI {
@@ -83451,11 +83634,11 @@ class CLI {
       desc: "Platform that the binary needs to be compatible with.",
       choices: Object.values(BrowserPlatform),
       default: detectBrowserPlatform(),
-      coerce: (platform) => {
-        if (!isValidPlatform(platform)) {
-          throw new Error(`Unsupported platform '${platform}'`);
+      coerce: (platform2) => {
+        if (!isValidPlatform(platform2)) {
+          throw new Error(`Unsupported platform '${platform2}'`);
         }
-        return platform;
+        return platform2;
       },
       defaultDescription: "Auto-detected"
     });
@@ -83660,8 +83843,8 @@ var init_CLI = __esm(() => {
 });
 
 // node_modules/@puppeteer/browsers/lib/esm/provider.js
-function buildArchiveFilename(browser, platform, buildId, extension2 = "zip") {
-  return `${browser}-${platform}-${buildId}.${extension2}`;
+function buildArchiveFilename(browser, platform2, buildId, extension2 = "zip") {
+  return `${browser}-${platform2}-${buildId}.${extension2}`;
 }
 
 // node_modules/@puppeteer/browsers/lib/esm/main.js
@@ -83760,13 +83943,13 @@ async function getConnectionTransport(options) {
     };
   } else if (options.channel && isNode) {
     const { detectBrowserPlatform: detectBrowserPlatform2, resolveDefaultUserDataDir: resolveDefaultUserDataDir3, Browser: Browser7 } = await Promise.resolve().then(() => (init_main(), exports_main));
-    const platform = detectBrowserPlatform2();
-    if (!platform) {
+    const platform2 = detectBrowserPlatform2();
+    if (!platform2) {
       throw new Error("Could not detect required browser platform");
     }
     const { convertPuppeteerChannelToBrowsersChannel: convertPuppeteerChannelToBrowsersChannel2 } = await Promise.resolve().then(() => (init_LaunchOptions(), exports_LaunchOptions));
     const { join: join20 } = await import("node:path");
-    const userDataDir = resolveDefaultUserDataDir3(Browser7.CHROME, platform, convertPuppeteerChannelToBrowsersChannel2(options.channel));
+    const userDataDir = resolveDefaultUserDataDir3(Browser7.CHROME, platform2, convertPuppeteerChannelToBrowsersChannel2(options.channel));
     const portPath = join20(userDataDir, "DevToolsActivePort");
     try {
       const fileContent = await environment.value.fs.promises.readFile(portPath, "ascii");
@@ -83991,7 +84174,7 @@ var init_PipeTransport = __esm(() => {
 });
 
 // node_modules/puppeteer-core/lib/esm/puppeteer/node/BrowserLauncher.js
-import { existsSync as existsSync20 } from "node:fs";
+import { existsSync as existsSync21 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join20 } from "node:path";
 
@@ -84018,7 +84201,7 @@ class BrowserLauncher {
       ...options,
       protocol
     });
-    if (!existsSync20(launchArgs.executablePath)) {
+    if (!existsSync21(launchArgs.executablePath)) {
       throw new Error(`Browser was not found at the configured executablePath (${launchArgs.executablePath})`);
     }
     const usePipe = launchArgs.args.includes("--remote-debugging-pipe");
@@ -84093,7 +84276,7 @@ class BrowserLauncher {
       browserCloseCallback();
       const logs = browserProcess.getRecentLogs().join(`
 `);
-      if (logs.includes("Failed to create a ProcessSingleton for your profile directory") || process.platform === "win32" && existsSync20(join20(launchArgs.userDataDir, "lockfile"))) {
+      if (logs.includes("Failed to create a ProcessSingleton for your profile directory") || process.platform === "win32" && existsSync21(join20(launchArgs.userDataDir, "lockfile"))) {
         throw new Error(`The browser is already running for ${launchArgs.userDataDir}. Use a different \`userDataDir\` or stop the running browser first.`);
       }
       if (logs.includes("Missing X server") && options.headless === false) {
@@ -84188,7 +84371,7 @@ class BrowserLauncher {
   resolveExecutablePath(headless, validatePath = true) {
     let executablePath = this.puppeteer.configuration.executablePath;
     if (executablePath) {
-      if (validatePath && !existsSync20(executablePath)) {
+      if (validatePath && !existsSync21(executablePath)) {
         throw new Error(`Tried to find the browser at the configured path (${executablePath}), but no executable was found.`);
       }
       return executablePath;
@@ -84211,7 +84394,7 @@ class BrowserLauncher {
       browser: browserType,
       buildId: this.puppeteer.browserVersion
     });
-    if (validatePath && !existsSync20(executablePath)) {
+    if (validatePath && !existsSync21(executablePath)) {
       const configVersion = this.puppeteer.configuration?.[this.browser]?.version;
       if (configVersion) {
         throw new Error(`Tried to find the browser at the configured path (${executablePath}) for version ${configVersion}, but no executable was found.`);
@@ -84697,8 +84880,8 @@ var init_PuppeteerNode = __esm(() => {
       return this.#getLauncher(options.browser ?? this.lastLaunchedBrowser).defaultArgs(options);
     }
     async trimCache() {
-      const platform = detectBrowserPlatform();
-      if (!platform) {
+      const platform2 = detectBrowserPlatform();
+      if (!platform2) {
         throw new Error("The current platform is not supported.");
       }
       const cacheDir = this.configuration.cacheDirectory;
@@ -84719,7 +84902,7 @@ var init_PuppeteerNode = __esm(() => {
       ];
       await Promise.all(puppeteerBrowsers.map(async (item) => {
         const tag = this.configuration?.[item.product]?.version ?? PUPPETEER_REVISIONS[item.product];
-        item.currentBuildId = await resolveBuildId4(item.browser, platform, tag);
+        item.currentBuildId = await resolveBuildId4(item.browser, platform2, tag);
       }));
       const currentBrowserBuilds = new Set(puppeteerBrowsers.map((browser) => {
         return `${browser.browser}_${browser.currentBuildId}`;
@@ -84736,7 +84919,7 @@ var init_PuppeteerNode = __esm(() => {
         }
         await uninstall({
           browser: installedBrowser.browser,
-          platform,
+          platform: platform2,
           cacheDir,
           buildId: installedBrowser.buildId
         });
@@ -84749,7 +84932,7 @@ var init_PuppeteerNode = __esm(() => {
 import { spawn as spawn2, spawnSync as spawnSync3 } from "node:child_process";
 import fs5 from "node:fs";
 import os8 from "node:os";
-import { dirname as dirname10 } from "node:path";
+import { dirname as dirname11 } from "node:path";
 import { PassThrough } from "node:stream";
 var import_debug6, __runInitializers22 = function(thisArg, initializers, value) {
   var useValue = arguments.length > 2;
@@ -84873,7 +85056,7 @@ var init_ScreenRecorder = __esm(() => {
           filters.push(formatArgs.splice(vf, 2).at(-1) ?? "");
         }
         if (path11) {
-          fs5.mkdirSync(dirname10(path11), { recursive: overwrite });
+          fs5.mkdirSync(dirname11(path11), { recursive: overwrite });
         }
         this.#process = spawn2(ffmpegPath, [
           ["-loglevel", "error"],
@@ -85026,17 +85209,17 @@ var init_puppeteer_core = __esm(() => {
 });
 
 // src/core/design-eval/capture.ts
-import { mkdirSync as mkdirSync8, statSync as statSync11, existsSync as existsSync21 } from "fs";
+import { mkdirSync as mkdirSync9, statSync as statSync11, existsSync as existsSync22 } from "fs";
 import { join as join21 } from "path";
 function findBrowser() {
-  const platform = process.platform;
-  const paths = CHROME_PATHS[platform] ?? [];
+  const platform2 = process.platform;
+  const paths = CHROME_PATHS[platform2] ?? [];
   for (const p of paths) {
-    if (existsSync21(p))
+    if (existsSync22(p))
       return p;
   }
   const minkBrowsers = join21(minkRoot(), "browsers");
-  if (existsSync21(minkBrowsers)) {
+  if (existsSync22(minkBrowsers)) {
     const found = findChromeInDir(minkBrowsers);
     if (found)
       return found;
@@ -85137,7 +85320,7 @@ async function captureRoute(page, route, baseUrl, viewport, options) {
   return results;
 }
 async function captureAllRoutes(routes, baseUrl, viewports, options, outputDir) {
-  mkdirSync8(outputDir, { recursive: true });
+  mkdirSync9(outputDir, { recursive: true });
   const executablePath = findBrowser();
   const browser = await puppeteer_core_default.launch({
     executablePath,
@@ -86566,21 +86749,21 @@ var init_framework_advisor2 = __esm(() => {
 
 // src/core/vault-templates.ts
 import { join as join22 } from "path";
-import { existsSync as existsSync22, writeFileSync as writeFileSync5, readFileSync as readFileSync22, mkdirSync as mkdirSync9 } from "fs";
+import { existsSync as existsSync23, writeFileSync as writeFileSync6, readFileSync as readFileSync23, mkdirSync as mkdirSync10 } from "fs";
 function seedTemplates(templatesDir) {
-  mkdirSync9(templatesDir, { recursive: true });
+  mkdirSync10(templatesDir, { recursive: true });
   for (const [name, content] of Object.entries(DEFAULT_TEMPLATES)) {
     const filePath = join22(templatesDir, `${name}.md`);
-    if (!existsSync22(filePath)) {
-      writeFileSync5(filePath, content);
+    if (!existsSync23(filePath)) {
+      writeFileSync6(filePath, content);
     }
   }
 }
 function loadTemplate(templatesDir, templateName, vars) {
   const filePath = join22(templatesDir, `${templateName}.md`);
   let content;
-  if (existsSync22(filePath)) {
-    content = readFileSync22(filePath, "utf-8");
+  if (existsSync23(filePath)) {
+    content = readFileSync23(filePath, "utf-8");
   } else if (DEFAULT_TEMPLATES[templateName]) {
     content = DEFAULT_TEMPLATES[templateName];
   } else {
@@ -86734,7 +86917,7 @@ category: resources
 
 // src/core/note-linker.ts
 import { join as join23 } from "path";
-import { existsSync as existsSync23, readFileSync as readFileSync23, readdirSync as readdirSync7, statSync as statSync12 } from "fs";
+import { existsSync as existsSync24, readFileSync as readFileSync24, readdirSync as readdirSync7, statSync as statSync12 } from "fs";
 function updateMasterIndex(vaultRootPath) {
   const now = new Date().toISOString().split("T")[0];
   const sections = [
@@ -86757,7 +86940,7 @@ function updateMasterIndex(vaultRootPath) {
   ];
   for (const cat of categories) {
     const dirPath = join23(vaultRootPath, cat.dir);
-    if (!existsSync23(dirPath))
+    if (!existsSync24(dirPath))
       continue;
     const files = collectMarkdownFiles(dirPath, vaultRootPath);
     if (files.length === 0 && cat.dir !== "inbox")
@@ -86809,7 +86992,7 @@ var exports_wiki = {};
 __export(exports_wiki, {
   wiki: () => wiki
 });
-import { existsSync as existsSync24, statSync as statSync13 } from "fs";
+import { existsSync as existsSync25, statSync as statSync13 } from "fs";
 import { resolve as resolve11 } from "path";
 import { homedir as homedir4 } from "os";
 async function wiki(_cwd, args) {
@@ -86865,7 +87048,7 @@ async function wikiInit(args) {
     console.log(`[mink] initializing vault at ${targetPath}`);
     console.log("  (set a custom path with: mink wiki init /path/to/vault)");
   }
-  const isExisting = existsSync24(targetPath) && statSync13(targetPath).isDirectory();
+  const isExisting = existsSync25(targetPath) && statSync13(targetPath).isDirectory();
   setConfigValue("wiki.path", targetPath);
   ensureVaultStructure();
   seedTemplates(vaultTemplates());
@@ -87084,7 +87267,7 @@ var init_wiki = __esm(() => {
 
 // src/core/note-writer.ts
 import { join as join24 } from "path";
-import { existsSync as existsSync25, readFileSync as readFileSync24 } from "fs";
+import { existsSync as existsSync26, readFileSync as readFileSync25 } from "fs";
 function slugifyTitle(title) {
   return title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
 }
@@ -87152,8 +87335,8 @@ ${meta.body}
 function appendToDaily(date, content) {
   const dir = vaultDailyDir();
   const filePath = join24(dir, `${date}.md`);
-  if (existsSync25(filePath)) {
-    const existing = readFileSync24(filePath, "utf-8");
+  if (existsSync26(filePath)) {
+    const existing = readFileSync25(filePath, "utf-8");
     const timestamp = new Date().toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
@@ -87191,7 +87374,7 @@ ${content}
   return filePath;
 }
 function ingestFile(sourcePath, meta) {
-  const raw = readFileSync24(sourcePath, "utf-8");
+  const raw = readFileSync25(sourcePath, "utf-8");
   const now = new Date().toISOString();
   const headingMatch = raw.match(/^#\s+(.+)$/m);
   const title = headingMatch?.[1] ?? sourcePath.split("/").pop().replace(/\.md$/, "");
@@ -87245,7 +87428,7 @@ __export(exports_note, {
   note: () => note
 });
 import { resolve as resolve12 } from "path";
-import { existsSync as existsSync26, readFileSync as readFileSync25 } from "fs";
+import { existsSync as existsSync27, readFileSync as readFileSync26 } from "fs";
 async function note(cwd, args) {
   if (!isWikiEnabled()) {
     console.error("[mink] wiki feature is disabled");
@@ -87270,13 +87453,13 @@ async function note(cwd, args) {
     const date = new Date().toISOString().split("T")[0];
     const content = parsed.positional || parsed.body || "";
     const filePath = appendToDaily(date, content);
-    updateVaultIndexForFile(filePath, readFileSync25(filePath, "utf-8"));
+    updateVaultIndexForFile(filePath, readFileSync26(filePath, "utf-8"));
     console.log(`[mink] daily note: ${filePath}`);
     return;
   }
   if (parsed.file) {
     const sourcePath = resolve12(cwd, parsed.file);
-    if (!existsSync26(sourcePath)) {
+    if (!existsSync27(sourcePath)) {
       console.error(`[mink] file not found: ${sourcePath}`);
       process.exit(1);
     }
@@ -87437,11 +87620,11 @@ var exports_skill = {};
 __export(exports_skill, {
   skill: () => skill
 });
-import { join as join25, resolve as resolve13, dirname as dirname11 } from "path";
+import { join as join25, resolve as resolve13, dirname as dirname12 } from "path";
 import { homedir as homedir5 } from "os";
 import {
-  existsSync as existsSync27,
-  mkdirSync as mkdirSync10,
+  existsSync as existsSync28,
+  mkdirSync as mkdirSync11,
   copyFileSync,
   unlinkSync as unlinkSync3,
   readdirSync as readdirSync8,
@@ -87450,16 +87633,16 @@ import {
   lstatSync as lstatSync2
 } from "fs";
 function getSkillsSourceDir() {
-  return resolve13(dirname11(new URL(import.meta.url).pathname), "../../skills");
+  return resolve13(dirname12(new URL(import.meta.url).pathname), "../../skills");
 }
 function getAvailableSkills() {
   const dir = getSkillsSourceDir();
-  if (!existsSync27(dir))
+  if (!existsSync28(dir))
     return [];
-  return readdirSync8(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync27(join25(dir, d.name, "SKILL.md"))).map((d) => d.name);
+  return readdirSync8(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync28(join25(dir, d.name, "SKILL.md"))).map((d) => d.name);
 }
 function isInstalled(skillName) {
-  return existsSync27(join25(AGENTS_SKILLS_DIR, skillName, "SKILL.md"));
+  return existsSync28(join25(AGENTS_SKILLS_DIR, skillName, "SKILL.md"));
 }
 async function skill(args) {
   const sub = args[0];
@@ -87493,21 +87676,21 @@ function skillInstall(name) {
     console.error("  Expected skills at: " + sourceDir);
     return;
   }
-  mkdirSync10(AGENTS_SKILLS_DIR, { recursive: true });
+  mkdirSync11(AGENTS_SKILLS_DIR, { recursive: true });
   for (const skillName of skills) {
     const srcDir = join25(sourceDir, skillName);
     const srcFile = join25(srcDir, "SKILL.md");
     const destDir = join25(AGENTS_SKILLS_DIR, skillName);
-    if (!existsSync27(srcFile)) {
+    if (!existsSync28(srcFile)) {
       console.error(`[mink] skill not found: ${skillName}`);
       continue;
     }
-    mkdirSync10(destDir, { recursive: true });
+    mkdirSync11(destDir, { recursive: true });
     copyDirRecursive(srcDir, destDir);
-    mkdirSync10(CLAUDE_SKILLS_DIR, { recursive: true });
+    mkdirSync11(CLAUDE_SKILLS_DIR, { recursive: true });
     const symlink = join25(CLAUDE_SKILLS_DIR, skillName);
     try {
-      if (existsSync27(symlink)) {
+      if (existsSync28(symlink)) {
         if (lstatSync2(symlink).isSymbolicLink() || lstatSync2(symlink).isFile()) {
           unlinkSync3(symlink);
         } else {
@@ -87526,14 +87709,14 @@ function skillUninstall(name) {
   const skills = name ? [name] : getAvailableSkills();
   for (const skillName of skills) {
     const destDir = join25(AGENTS_SKILLS_DIR, skillName);
-    if (!existsSync27(destDir)) {
+    if (!existsSync28(destDir)) {
       console.log(`[mink] not installed: ${skillName}`);
       continue;
     }
     rmSync(destDir, { recursive: true, force: true });
     const symlink = join25(CLAUDE_SKILLS_DIR, skillName);
     try {
-      if (existsSync27(symlink))
+      if (existsSync28(symlink))
         unlinkSync3(symlink);
     } catch {}
     console.log(`[mink] uninstalled: ${skillName}`);
@@ -87570,7 +87753,7 @@ function copyDirRecursive(src, dest) {
     const srcPath = join25(src, entry.name);
     const destPath = join25(dest, entry.name);
     if (entry.isDirectory()) {
-      mkdirSync10(destPath, { recursive: true });
+      mkdirSync11(destPath, { recursive: true });
       copyDirRecursive(srcPath, destPath);
     } else {
       copyFileSync(srcPath, destPath);
@@ -87672,6 +87855,70 @@ var init_sync3 = __esm(() => {
   init_global_config();
 });
 
+// src/commands/device.ts
+var exports_device2 = {};
+__export(exports_device2, {
+  device: () => device
+});
+import { hostname as hostname2, platform as platform2 } from "os";
+function device(args) {
+  const sub = args[0] ?? "status";
+  switch (sub) {
+    case "status": {
+      const id = getOrCreateDeviceId();
+      const devices = listDevices();
+      const current = devices.find((d) => d.id === id);
+      console.log("[mink] device info:");
+      console.log(`  id:        ${id}`);
+      console.log(`  name:      ${current?.name ?? hostname2()}`);
+      console.log(`  hostname:  ${hostname2()}`);
+      console.log(`  platform:  ${platform2()}`);
+      if (current?.firstSeen) {
+        console.log(`  first seen: ${current.firstSeen}`);
+      }
+      if (current?.lastSeen) {
+        console.log(`  last seen:  ${current.lastSeen}`);
+      }
+      break;
+    }
+    case "list": {
+      const devices = listDevices();
+      const currentId = getOrCreateDeviceId();
+      if (devices.length === 0) {
+        console.log("[mink] no devices registered yet");
+        return;
+      }
+      console.log("[mink] registered devices:");
+      for (const d of devices) {
+        const marker = d.id === currentId ? " (this device)" : "";
+        console.log(`  ${d.name}${marker}`);
+        console.log(`    id:       ${d.id}`);
+        console.log(`    hostname: ${d.hostname}`);
+        console.log(`    platform: ${d.platform}`);
+        console.log(`    last seen: ${d.lastSeen}`);
+      }
+      break;
+    }
+    case "rename": {
+      const name = args.slice(1).join(" ");
+      if (!name) {
+        console.error("Usage: mink device rename <name>");
+        process.exit(1);
+      }
+      setDeviceName(name);
+      console.log(`[mink] device renamed to "${name}"`);
+      break;
+    }
+    default:
+      console.error(`[mink] unknown device subcommand: ${sub}`);
+      console.error("Usage: mink device [status|list|rename <name>]");
+      process.exit(1);
+  }
+}
+var init_device2 = __esm(() => {
+  init_device();
+});
+
 // src/commands/bug-search.ts
 var exports_bug_search = {};
 __export(exports_bug_search, {
@@ -87713,8 +87960,16 @@ init_fs_utils();
 init_action_log();
 init_vault();
 init_note_index();
-import { mkdirSync as mkdirSync3 } from "fs";
+import { mkdirSync as mkdirSync4 } from "fs";
 function sessionStart(cwd) {
+  try {
+    const { migrateConfigIfNeeded: migrateConfigIfNeeded2 } = (init_global_config(), __toCommonJS(exports_global_config));
+    migrateConfigIfNeeded2();
+  } catch {}
+  try {
+    const { updateDeviceHeartbeat: updateDeviceHeartbeat2 } = (init_device(), __toCommonJS(exports_device));
+    updateDeviceHeartbeat2();
+  } catch {}
   try {
     const { isSyncInitialized: isSyncInitialized2, syncPull: syncPull2 } = (init_sync(), __toCommonJS(exports_sync));
     if (isSyncInitialized2()) {
@@ -87722,7 +87977,7 @@ function sessionStart(cwd) {
     }
   } catch {}
   const dir = projectDir(cwd);
-  mkdirSync3(dir, { recursive: true });
+  mkdirSync4(dir, { recursive: true });
   const state = createSessionState();
   atomicWriteJson(sessionPath(cwd), state);
   try {
@@ -87751,8 +88006,8 @@ init_token_ledger();
 init_bug_memory();
 init_action_log();
 init_vault();
-import { statSync as statSync2, existsSync as existsSync5, readFileSync as readFileSync6 } from "fs";
-import { join as join6, dirname as dirname2 } from "path";
+import { statSync as statSync2, existsSync as existsSync6, readFileSync as readFileSync7 } from "fs";
+import { join as join6, dirname as dirname3 } from "path";
 function hasActivity(state) {
   return Object.keys(state.reads).length > 0 || state.writes.length > 0;
 }
@@ -87783,7 +88038,7 @@ function sessionStop(sessionFile, finalizer, onReminder = (msg) => console.error
   }
   const state = raw;
   state.stopCount++;
-  const projDir = dirname2(sessionFile);
+  const projDir = dirname3(sessionFile);
   const effectiveFinalizer = finalizer ?? createLedgerFinalizer(projDir);
   if (hasActivity(state)) {
     const summary = buildSummary(state);
@@ -87816,7 +88071,7 @@ function sessionStop(sessionFile, finalizer, onReminder = (msg) => console.error
   }
   const memoryPath = join6(projDir, "learning-memory.md");
   const cfgPath = join6(projDir, "config.json");
-  if (existsSync5(memoryPath)) {
+  if (existsSync6(memoryPath)) {
     reflect(projDir, memoryPath, cfgPath);
   }
   if (isLearningMemoryStale(memoryPath)) {
@@ -87867,8 +88122,8 @@ function writeSessionToWiki(state, projDir) {
     }
   }
   entry.push("");
-  if (existsSync5(sessionFile)) {
-    const existing = readFileSync6(sessionFile, "utf-8");
+  if (existsSync6(sessionFile)) {
+    const existing = readFileSync7(sessionFile, "utf-8");
     atomicWriteText(sessionFile, existing.trimEnd() + `
 ` + entry.join(`
 `));
@@ -88008,6 +88263,11 @@ switch (command2) {
     await sync2(process.argv.slice(3));
     break;
   }
+  case "device": {
+    const { device: device2 } = await Promise.resolve().then(() => (init_device2(), exports_device2));
+    device2(process.argv.slice(3));
+    break;
+  }
   case "bug-search": {
     const { bugSearch: bugSearch2 } = await Promise.resolve().then(() => (init_bug_search(), exports_bug_search));
     bugSearch2(cwd, process.argv.slice(3).join(" "));
@@ -88027,11 +88287,11 @@ switch (command2) {
   case "version":
   case "--version":
   case "-v": {
-    const { resolve: resolve14, dirname: dirname12 } = await import("path");
-    const cliPath = resolve14(dirname12(new URL(import.meta.url).pathname));
-    const { readFileSync: readFileSync26 } = await import("fs");
+    const { resolve: resolve14, dirname: dirname13 } = await import("path");
+    const cliPath = resolve14(dirname13(new URL(import.meta.url).pathname));
+    const { readFileSync: readFileSync27 } = await import("fs");
     try {
-      const pkg = JSON.parse(readFileSync26(resolve14(cliPath, "../package.json"), "utf-8"));
+      const pkg = JSON.parse(readFileSync27(resolve14(cliPath, "../package.json"), "utf-8"));
       console.log(`mink ${pkg.version}`);
     } catch {
       console.log("mink (unknown version)");
@@ -88060,7 +88320,10 @@ switch (command2) {
     console.log("  note search <term>      Full-text search across the vault");
     console.log("  skill install           Install /mink:note skill for Claude Code");
     console.log();
-    console.log("Sync:");
+    console.log("Devices & Sync:");
+    console.log("  device                  Show current device info");
+    console.log("  device list             List all registered devices");
+    console.log("  device rename <name>    Set a friendly name for this device");
     console.log("  sync                    Full manual sync (pull then push)");
     console.log("  sync init <remote-url>  Connect ~/.mink to a git remote for cross-device sync");
     console.log("  sync status             Show sync state (remote, last sync, pending changes)");
