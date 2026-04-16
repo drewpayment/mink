@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/drewpayment/mink/compare/v0.3.0...v0.4.0) (2026-04-16)
+
+
+### Features
+
+* per-machine config with device identity ([8906faf](https://github.com/drewpayment/mink/commit/8906fafdcf79c9b9451640f9af3bc21575779b5d))
+* per-machine config with device identity and scoped settings ([0a367bc](https://github.com/drewpayment/mink/commit/0a367bcd054a577d1266beb4a8474afe672e1581))
+
 ## [0.3.0](https://github.com/drewpayment/mink/compare/v0.2.2...v0.3.0) (2026-04-14)
 
 
