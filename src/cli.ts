@@ -89,6 +89,12 @@ switch (command) {
     break;
   }
 
+  case "channel": {
+    const { channel } = await import("./commands/channel");
+    await channel(process.argv.slice(3));
+    break;
+  }
+
   case "config": {
     const { config } = await import("./commands/config");
     await config(process.argv.slice(3));
@@ -219,6 +225,13 @@ switch (command) {
     console.log("  sync pull               Manually pull remote changes");
     console.log("  sync pause / resume     Temporarily disable/enable auto-sync");
     console.log("  sync disconnect         Remove git tracking (data preserved)");
+    console.log();
+    console.log("Channels (conversational companion):");
+    console.log("  channel setup discord --token <t>  Configure Discord bot token");
+    console.log("  channel start [platform]           Launch a Claude Code session with --channels in the vault");
+    console.log("  channel stop                       Stop the channel session");
+    console.log("  channel status                     Show channel status");
+    console.log("  channel logs                       Tail channel log");
     console.log();
     console.log("Automation & Analysis:");
     console.log("  dashboard [--port=N]    Open the real-time web dashboard");

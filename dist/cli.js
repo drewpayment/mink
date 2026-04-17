@@ -200,6 +200,8 @@ __export(exports_paths, {
   designReportPath: () => designReportPath,
   designCapturesDir: () => designCapturesDir,
   configPath: () => configPath,
+  channelPidPath: () => channelPidPath,
+  channelLogPath: () => channelLogPath,
   bugMemoryPath: () => bugMemoryPath,
   backupDirPath: () => backupDirPath,
   actionLogPath: () => actionLogPath
@@ -245,6 +247,12 @@ function schedulerLogPath() {
 }
 function schedulerManifestPath(cwd) {
   return join(projectDir(cwd), "scheduler-manifest.json");
+}
+function channelPidPath() {
+  return join(MINK_ROOT, "channel.pid");
+}
+function channelLogPath() {
+  return join(MINK_ROOT, "channel.log");
 }
 function globalConfigPath() {
   return join(MINK_ROOT, "config");
@@ -637,6 +645,34 @@ var init_config = __esm(() => {
       envVar: "MINK_SYNC_LAST_PULL",
       description: "ISO timestamp of last successful sync pull",
       scope: "local"
+    },
+    {
+      key: "channel.discord.bot-token",
+      default: "",
+      envVar: "MINK_CHANNEL_DISCORD_BOT_TOKEN",
+      description: "Discord bot token for Claude Code Channels",
+      scope: "local"
+    },
+    {
+      key: "channel.discord.enabled",
+      default: "false",
+      envVar: "MINK_CHANNEL_DISCORD_ENABLED",
+      description: "Auto-start Discord channel when daemon starts",
+      scope: "local"
+    },
+    {
+      key: "channel.default-platform",
+      default: "discord",
+      envVar: "MINK_CHANNEL_DEFAULT_PLATFORM",
+      description: "Default platform for mink channel start",
+      scope: "shared"
+    },
+    {
+      key: "channel.skip-permissions",
+      default: "true",
+      envVar: "MINK_CHANNEL_SKIP_PERMISSIONS",
+      description: "Pass --dangerously-skip-permissions so the channel can run without terminal prompts",
+      scope: "shared"
     }
   ];
   VALID_KEYS = new Set(CONFIG_KEYS.map((k) => k.key));
@@ -2095,6 +2131,8 @@ __export(exports_paths2, {
   designReportPath: () => designReportPath2,
   designCapturesDir: () => designCapturesDir2,
   configPath: () => configPath2,
+  channelPidPath: () => channelPidPath2,
+  channelLogPath: () => channelLogPath2,
   bugMemoryPath: () => bugMemoryPath2,
   backupDirPath: () => backupDirPath2,
   actionLogPath: () => actionLogPath2
@@ -2140,6 +2178,12 @@ function schedulerLogPath2() {
 }
 function schedulerManifestPath2(cwd) {
   return join7(projectDir2(cwd), "scheduler-manifest.json");
+}
+function channelPidPath2() {
+  return join7(MINK_ROOT2, "channel.pid");
+}
+function channelLogPath2() {
+  return join7(MINK_ROOT2, "channel.log");
 }
 function globalConfigPath2() {
   return join7(MINK_ROOT2, "config");
@@ -3064,13 +3108,362 @@ var init_init = __esm(() => {
   init_vault();
 });
 
+// src/core/channel-templates.ts
+import { join as join13 } from "path";
+import { existsSync as existsSync10, writeFileSync as writeFileSync5, mkdirSync as mkdirSync7 } from "fs";
+function writeCompanionClaudeMd(vaultPath, overwrite = false) {
+  mkdirSync7(vaultPath, { recursive: true });
+  const claudeMdPath = join13(vaultPath, "CLAUDE.md");
+  if (existsSync10(claudeMdPath) && !overwrite) {
+    return false;
+  }
+  writeFileSync5(claudeMdPath, COMPANION_CLAUDE_MD);
+  return true;
+}
+var COMPANION_CLAUDE_MD = `# Mink Knowledge Companion
+
+You are **Mink**, a personal knowledge companion. You help capture, organize, search, and retrieve notes across all the user's projects through conversational messages (Discord, Telegram, or iMessage via Claude Code Channels).
+
+Your home is this wiki vault — the directory you're running in. Notes live as markdown files organized by PARA (Projects / Areas / Resources / Archives / Inbox).
+
+## Your Role
+
+You are the **smart orchestrator**. The \`mink\` CLI is the dumb writer — it takes explicit flags and writes files. Your job:
+
+1. Understand what the user wants (capture, search, organize, summarize)
+2. Gather vault context when useful
+3. Call the right \`mink\` command with good flags
+4. Reply briefly — the user is likely on mobile
+
+## Conversational Style
+
+- **Brief.** One or two sentences. The user is in a chat app, not a terminal.
+- **Confirm what happened.** "Saved to \`projects/auth/blocker.md\` with tags \`compliance, blocker\`." — short, specific.
+- **Suggest, don't interrogate.** If you're unsure about a tag, pick a reasonable default and mention it. Don't ask 3 questions before saving a note.
+- **Surface related work.** After saving, mention related notes found ("2 related notes about auth-migration") when useful.
+
+## Capturing Notes
+
+When the user's message sounds like a note ("save this...", "log that...", or just describes something factual), **capture it**. Don't ask permission.
+
+### Flow
+
+1. **Read the message.** Extract: what's this about? Is it project-specific?
+2. **Gather context briefly.** Run these when needed (not every time):
+   - \`mink note list --recent 10\` — recent notes for continuity
+   - \`mink wiki status\` — vault overview
+   - Check \`.mink-index.json\` for existing tag vocabulary
+3. **Decide metadata:**
+   - **Title** — clear, descriptive (becomes the filename). Not the raw text.
+   - **Category** — one of:
+     - \`projects\` — has a deadline, milestone, or deliverable. Use \`--project <slug>\` if it maps to a known Mink project.
+     - \`areas\` — ongoing responsibility or recurring concern
+     - \`resources\` — reference material, how-to, guide
+     - \`archives\` — completed or historical
+     - \`inbox\` — genuinely unclear (user will sort later)
+   - **Tags** — 2–3 is usually right. **Prefer existing tags** from the vocabulary over inventing new ones. Lowercase, hyphenated.
+   - **Wikilinks** — wrap people, projects, and concepts in \`[[double-brackets]]\` inside the body when they match existing notes.
+4. **Call \`mink note\`** with the flags:
+   \`\`\`bash
+   mink note --title "Title" --body "Body with [[wikilinks]]" --category <cat> --tags "a,b,c"
+   # Add --project <slug> if project-linked
+   \`\`\`
+5. **Reply.** One line: where it landed, category, tags. Optionally: related notes.
+
+### Daily Notes
+
+If the user says "add to my daily" or "daily" or "today":
+\`\`\`bash
+mink note --daily "Content to append"
+\`\`\`
+
+### Meeting Notes
+
+If the user describes a meeting (attendees, topic, discussion):
+\`\`\`bash
+mink note --template meeting --title "Meeting: Topic" --body "..." --category areas --tags "meeting,..."
+\`\`\`
+
+## Searching and Retrieving
+
+When the user asks about past work — "what did I write about X?", "show me notes from last week", "find my notes on auth" — use:
+
+- \`mink note search <term>\` — full-text search (title, description, tags, path)
+- \`mink note list --recent N\` — recent notes
+- \`mink note list --category projects\` — filter by category
+- \`mink note list --tag auth\` — filter by tag
+
+**Return results briefly.** Top 3–5 matches with one-line summaries. If there are more, say so.
+
+Example reply:
+> Found 3 notes about auth-migration:
+> • \`projects/auth/compliance-blocker.md\` (today) — blocked on session token storage
+> • \`projects/auth/architecture.md\` (Apr 10) — middleware rewrite plan
+> • \`areas/daily/2026-04-12.md\` — standup update
+
+## Organization
+
+If the user says "move this to projects", "tag this with X", or "categorize my inbox":
+
+- For a single note: read it, rewrite it in the new category with \`mink note --file\` (ingestion). The CLI doesn't have a move command — you move by rewriting.
+- For inbox triage: list with \`mink note list --category inbox\`, propose categorization, execute on confirmation.
+
+## Daily Summaries
+
+If the user asks "what did I work on today?" or "give me a summary":
+
+1. Read today's daily note: \`mink note list --tag daily --recent 1\` → read the file
+2. Check recent notes: \`mink note list --recent 20\`
+3. Synthesize a short summary (3–5 bullets)
+
+## Cross-Project Awareness
+
+Notes may be linked to projects via \`source_project\` in frontmatter. To find notes for a specific project:
+\`\`\`bash
+mink note list --category projects
+mink note search <project-slug>
+\`\`\`
+
+Use wikilinks generously: \`[[project-name]]\`, \`[[person-name]]\`, \`[[concept]]\`. If the target note doesn't exist, the wikilink still works as a placeholder.
+
+## Session Kickoff
+
+At the start of a fresh conversation (first user message), it's fine to silently run:
+\`\`\`bash
+mink wiki status
+mink note list --recent 5
+\`\`\`
+
+Don't announce this. Just have the context.
+
+## What NOT to Do
+
+- Don't ask "what category should this be?" — pick one, move on.
+- Don't paste long output. Summarize.
+- Don't invent tags that exist with slight variations. Check vocabulary first.
+- Don't open files or directories unrelated to the vault. Stay focused on notes and wiki operations.
+- Don't edit source code in this vault — this is a knowledge repo, not a codebase.
+
+## CLI Reference (Cheat Sheet)
+
+\`\`\`bash
+# Capture
+mink note "quick thought"                                # inbox capture
+mink note --title T --body B --category areas --tags a,b
+mink note --daily "content"                              # daily note
+mink note --template meeting --title "..." --body "..."
+mink note --file ./external.md --category resources
+
+# Search / list
+mink note search <term>
+mink note list [--category X] [--tag Y] [--recent N]
+
+# Vault
+mink wiki status
+mink wiki rebuild-index
+\`\`\`
+`;
+var init_channel_templates = () => {};
+
+// src/core/channel-process.ts
+import { readFileSync as readFileSync11, writeFileSync as writeFileSync6, unlinkSync as unlinkSync2, mkdirSync as mkdirSync8, existsSync as existsSync11 } from "fs";
+import { dirname as dirname5, join as join14 } from "path";
+import { spawnSync } from "child_process";
+function readChannelPidFile() {
+  try {
+    const raw = readFileSync11(channelPidPath(), "utf-8");
+    const data = JSON.parse(raw);
+    if (data && typeof data.session === "string" && typeof data.platform === "string" && typeof data.startedAt === "string" && typeof data.vaultPath === "string") {
+      return data;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+function writeChannelPidFile(data) {
+  const pidPath = channelPidPath();
+  mkdirSync8(dirname5(pidPath), { recursive: true });
+  writeFileSync6(pidPath, JSON.stringify(data, null, 2));
+}
+function removeChannelPidFile() {
+  try {
+    unlinkSync2(channelPidPath());
+  } catch {}
+}
+function sessionName(platform2) {
+  return `${SESSION_PREFIX}${platform2}`;
+}
+function isScreenInstalled() {
+  const result = spawnSync("screen", ["-ls"], { stdio: "ignore" });
+  return !result.error;
+}
+function screenSessionExists(session) {
+  const result = spawnSync("screen", ["-ls", session], {
+    stdio: ["ignore", "pipe", "ignore"],
+    encoding: "utf-8"
+  });
+  const output = typeof result.stdout === "string" ? result.stdout : "";
+  return new RegExp(`\\d+\\.${session}\\b`).test(output);
+}
+function shellEscape(s) {
+  if (/^[a-zA-Z0-9_@%+=:,./\-]+$/.test(s))
+    return s;
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+async function startChannelProcess(opts) {
+  if (!isScreenInstalled()) {
+    throw new Error(`GNU screen is required but was not found on PATH.
+` + `macOS: screen is pre-installed — check your shell environment.
+` + "Linux: install with `sudo apt install screen` (or your package manager).");
+  }
+  const session = sessionName(opts.platform);
+  if (screenSessionExists(session)) {
+    writeChannelPidFile({
+      session,
+      platform: opts.platform,
+      startedAt: new Date().toISOString(),
+      vaultPath: opts.vaultPath
+    });
+    return { session, alreadyRunning: true };
+  }
+  const claudeCmd = opts.claudeCommand ?? "claude";
+  const pluginSpec = PLUGIN_SPECS[opts.platform];
+  const tokenEnvVar = TOKEN_ENV_VARS[opts.platform];
+  const claudeFlags = ["--channels", shellEscape(pluginSpec)];
+  if (opts.skipPermissions) {
+    claudeFlags.push("--dangerously-skip-permissions");
+  }
+  const parts = [];
+  parts.push(`cd ${shellEscape(opts.vaultPath)}`);
+  if (opts.token) {
+    parts.push(`export ${tokenEnvVar}=${shellEscape(opts.token)}`);
+  }
+  parts.push(`exec ${shellEscape(claudeCmd)} ${claudeFlags.join(" ")}`);
+  const innerCmd = parts.join("; ");
+  const result = spawnSync("screen", ["-T", "screen-256color", "-dmS", session, "bash", "-c", innerCmd], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
+  if (result.status !== 0) {
+    const stderr = typeof result.stderr === "string" ? result.stderr : "";
+    throw new Error(`screen failed to create session (exit ${result.status}): ${stderr || "(no output)"}`);
+  }
+  await new Promise((r) => setTimeout(r, 700));
+  if (!screenSessionExists(session)) {
+    throw new Error("channel session died immediately after starting. " + "This usually means `claude` failed to launch. Check:\n" + "  • Is `claude` on your PATH? Run `which claude`.\n" + "  • Have you installed the plugin? Run `claude` then `/plugin install discord@claude-plugins-official`.\n" + `  • Try running the command manually to see the error:
+` + `    cd ${opts.vaultPath} && claude --channels ${pluginSpec}`);
+  }
+  writeChannelPidFile({
+    session,
+    platform: opts.platform,
+    startedAt: new Date().toISOString(),
+    vaultPath: opts.vaultPath
+  });
+  return { session, alreadyRunning: false };
+}
+async function stopChannelProcess() {
+  const pidData = readChannelPidFile();
+  if (!pidData) {
+    return "not-running";
+  }
+  if (!screenSessionExists(pidData.session)) {
+    removeChannelPidFile();
+    return "not-running";
+  }
+  spawnSync("screen", ["-S", pidData.session, "-X", "quit"], { stdio: "ignore" });
+  for (let i = 0;i < 30; i++) {
+    if (!screenSessionExists(pidData.session)) {
+      removeChannelPidFile();
+      return "stopped";
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  removeChannelPidFile();
+  return "stopped";
+}
+function isChannelRunning() {
+  const pidData = readChannelPidFile();
+  if (!pidData)
+    return false;
+  if (!screenSessionExists(pidData.session)) {
+    removeChannelPidFile();
+    return false;
+  }
+  return true;
+}
+function getChannelStatus() {
+  const pidData = readChannelPidFile();
+  if (!pidData)
+    return null;
+  if (!screenSessionExists(pidData.session)) {
+    removeChannelPidFile();
+    return null;
+  }
+  const startedMs = Date.parse(pidData.startedAt);
+  const uptimeSec = Number.isFinite(startedMs) ? Math.max(0, Math.floor((Date.now() - startedMs) / 1000)) : 0;
+  return {
+    session: pidData.session,
+    platform: pidData.platform,
+    startedAt: pidData.startedAt,
+    vaultPath: pidData.vaultPath,
+    uptime: uptimeSec
+  };
+}
+function getChannelLogs() {
+  const pidData = readChannelPidFile();
+  if (!pidData)
+    return null;
+  if (!screenSessionExists(pidData.session))
+    return null;
+  const tmpPath = join14(minkRoot(), `.channel-capture-${Date.now()}-${process.pid}.txt`);
+  const result = spawnSync("screen", ["-S", pidData.session, "-X", "hardcopy", "-h", tmpPath], { stdio: "ignore" });
+  if (result.status !== 0)
+    return null;
+  for (let i = 0;i < 20; i++) {
+    if (existsSync11(tmpPath))
+      break;
+    const delayUntil = Date.now() + 50;
+    while (Date.now() < delayUntil) {}
+  }
+  try {
+    const content = readFileSync11(tmpPath, "utf-8");
+    try {
+      unlinkSync2(tmpPath);
+    } catch {}
+    return content;
+  } catch {
+    return null;
+  }
+}
+function attachChannel() {
+  const pidData = readChannelPidFile();
+  if (!pidData)
+    return "not-running";
+  if (!screenSessionExists(pidData.session)) {
+    removeChannelPidFile();
+    return "not-running";
+  }
+  spawnSync("screen", ["-r", pidData.session], { stdio: "inherit" });
+  return "attached";
+}
+var SESSION_PREFIX = "mink-channel-", PLUGIN_SPECS, TOKEN_ENV_VARS;
+var init_channel_process = __esm(() => {
+  init_paths();
+  PLUGIN_SPECS = {
+    discord: "plugin:discord@claude-plugins-official",
+    telegram: "plugin:telegram@claude-plugins-official"
+  };
+  TOKEN_ENV_VARS = {
+    discord: "DISCORD_BOT_TOKEN",
+    telegram: "TELEGRAM_BOT_TOKEN"
+  };
+});
+
 // src/core/daemon.ts
-import { readFileSync as readFileSync11, writeFileSync as writeFileSync5, unlinkSync as unlinkSync2, openSync } from "fs";
-import { mkdirSync as mkdirSync7 } from "fs";
-import { dirname as dirname5, resolve as resolve3 } from "path";
+import { readFileSync as readFileSync12, writeFileSync as writeFileSync7, unlinkSync as unlinkSync3, openSync } from "fs";
+import { mkdirSync as mkdirSync9 } from "fs";
+import { dirname as dirname6, resolve as resolve3 } from "path";
 function readPidFile() {
   try {
-    const raw = readFileSync11(schedulerPidPath(), "utf-8");
+    const raw = readFileSync12(schedulerPidPath(), "utf-8");
     const data = JSON.parse(raw);
     if (data && typeof data.pid === "number" && typeof data.startedAt === "string" && typeof data.projectCwd === "string") {
       return data;
@@ -3082,12 +3475,12 @@ function readPidFile() {
 }
 function writePidFile(data) {
   const pidPath = schedulerPidPath();
-  mkdirSync7(dirname5(pidPath), { recursive: true });
-  writeFileSync5(pidPath, JSON.stringify(data, null, 2));
+  mkdirSync9(dirname6(pidPath), { recursive: true });
+  writeFileSync7(pidPath, JSON.stringify(data, null, 2));
 }
 function removePidFile() {
   try {
-    unlinkSync2(schedulerPidPath());
+    unlinkSync3(schedulerPidPath());
   } catch {}
 }
 function isProcessAlive(pid) {
@@ -3107,10 +3500,10 @@ function startDaemon(cwd) {
   if (existing) {
     removePidFile();
   }
-  const __dir = dirname5(new URL(import.meta.url).pathname);
+  const __dir = dirname6(new URL(import.meta.url).pathname);
   const cliPath = resolve3(__dir, "../cli.ts");
   const logPath = schedulerLogPath();
-  mkdirSync7(dirname5(logPath), { recursive: true });
+  mkdirSync9(dirname6(logPath), { recursive: true });
   const logFd = openSync(logPath, "a");
   const proc = Bun.spawn(["bun", "run", cliPath, "cron", "__daemon"], {
     cwd,
@@ -3127,8 +3520,37 @@ function startDaemon(cwd) {
   });
   console.log(`[mink] scheduler started (PID: ${proc.pid})`);
   console.log(`[mink] log: ${logPath}`);
+  maybeStartChannel().catch((err) => {
+    console.error(`[mink] failed to start channel: ${err instanceof Error ? err.message : String(err)}`);
+  });
+}
+async function maybeStartChannel() {
+  const enabled = resolveConfigValue("channel.discord.enabled").value === "true";
+  if (!enabled)
+    return;
+  if (!isVaultInitialized()) {
+    console.log("[mink] channel enabled but vault not initialized — skipping channel start");
+    return;
+  }
+  const token = resolveConfigValue("channel.discord.bot-token").value;
+  if (!token) {
+    console.log("[mink] channel enabled but no Discord bot token configured — skipping channel start");
+    return;
+  }
+  if (isChannelRunning()) {
+    return;
+  }
+  const platform2 = resolveConfigValue("channel.default-platform").value || "discord";
+  const skipPermissions = resolveConfigValue("channel.skip-permissions").value === "true";
+  const vaultPath = resolveVaultPath();
+  writeCompanionClaudeMd(vaultPath, false);
+  const result = await startChannelProcess({ vaultPath, platform: platform2, token, skipPermissions });
+  if (!result.alreadyRunning) {
+    console.log(`[mink] channel started (session: ${result.session}, platform: ${platform2})`);
+  }
 }
 async function stopDaemon() {
+  await stopChannelIfRunning();
   const pidData = readPidFile();
   if (!pidData) {
     console.log("[mink] scheduler is not running (no PID file)");
@@ -3155,24 +3577,38 @@ async function stopDaemon() {
   removePidFile();
   console.log("[mink] scheduler force-stopped (SIGKILL)");
 }
+async function stopChannelIfRunning() {
+  if (!isChannelRunning())
+    return;
+  const result = await stopChannelProcess();
+  if (result === "stopped") {
+    console.log("[mink] channel stopped");
+  }
+}
 function getDaemonStatus(cwd) {
+  const channel = getChannelStatus();
   const pidData = readPidFile();
   if (!pidData) {
-    return { running: false };
+    return { running: false, channel };
   }
   if (!isProcessAlive(pidData.pid)) {
     removePidFile();
-    return { running: false };
+    return { running: false, channel };
   }
   return {
     running: true,
     pid: pidData.pid,
     startedAt: pidData.startedAt,
-    projectCwd: pidData.projectCwd
+    projectCwd: pidData.projectCwd,
+    channel
   };
 }
 var init_daemon = __esm(() => {
   init_paths();
+  init_global_config();
+  init_vault();
+  init_channel_templates();
+  init_channel_process();
 });
 
 // src/commands/status.ts
@@ -3180,9 +3616,9 @@ var exports_status = {};
 __export(exports_status, {
   status: () => status
 });
-import { existsSync as existsSync11, readFileSync as readFileSync12, statSync as statSync5 } from "fs";
+import { existsSync as existsSync13, readFileSync as readFileSync13, statSync as statSync5 } from "fs";
 function checkJsonFile(name, filePath, validator) {
-  if (!existsSync11(filePath))
+  if (!existsSync13(filePath))
     return { name, path: filePath, status: "missing" };
   const data = safeReadJson(filePath);
   if (data === null)
@@ -3192,10 +3628,10 @@ function checkJsonFile(name, filePath, validator) {
   return { name, path: filePath, status: "ok" };
 }
 function checkTextFile(name, filePath) {
-  if (!existsSync11(filePath))
+  if (!existsSync13(filePath))
     return { name, path: filePath, status: "missing" };
   try {
-    readFileSync12(filePath, "utf-8");
+    readFileSync13(filePath, "utf-8");
     return { name, path: filePath, status: "ok" };
   } catch {
     return { name, path: filePath, status: "corrupt" };
@@ -3255,8 +3691,8 @@ function status(cwd) {
   console.log();
   try {
     const memPath = learningMemoryPath(cwd);
-    if (existsSync11(memPath)) {
-      const content = readFileSync12(memPath, "utf-8");
+    if (existsSync13(memPath)) {
+      const content = readFileSync13(memPath, "utf-8");
       const mem = parseLearningMemory(content);
       const total = totalEntryCount(mem);
       const mtime = statSync5(memPath).mtime;
@@ -3310,8 +3746,8 @@ var exports_scan2 = {};
 __export(exports_scan2, {
   scan: () => scan2
 });
-import { readFileSync as readFileSync13 } from "fs";
-import { join as join13 } from "path";
+import { readFileSync as readFileSync14 } from "fs";
+import { join as join15 } from "path";
 function loadExistingIndex2(indexPath) {
   const raw = safeReadJson(indexPath);
   if (isFileIndex(raw))
@@ -3361,10 +3797,10 @@ function scan2(cwd, options) {
   newIndex.header.lifetimeHits = index.header.lifetimeHits;
   newIndex.header.lifetimeMisses = index.header.lifetimeMisses;
   for (const file of scanned) {
-    const fullPath = join13(cwd, file.relativePath);
+    const fullPath = join15(cwd, file.relativePath);
     let content;
     try {
-      content = readFileSync13(fullPath, "utf-8");
+      content = readFileSync14(fullPath, "utf-8");
     } catch {
       continue;
     }
@@ -3395,13 +3831,13 @@ var exports_reflect2 = {};
 __export(exports_reflect2, {
   reflect: () => reflect2
 });
-import { existsSync as existsSync12, readFileSync as readFileSync14 } from "fs";
+import { existsSync as existsSync14, readFileSync as readFileSync15 } from "fs";
 function reflect2(projectDir3, memoryPath, configPath3) {
-  if (!existsSync12(memoryPath)) {
+  if (!existsSync14(memoryPath)) {
     console.log("[mink] no learning memory found");
     return null;
   }
-  const markdown = readFileSync14(memoryPath, "utf-8");
+  const markdown = readFileSync15(memoryPath, "utf-8");
   const mem = parseLearningMemory(markdown);
   const config = safeReadJson(configPath3);
   const tokenBudget = config?.learningMemoryTokenBudget ?? DEFAULT_TOKEN_BUDGET2;
@@ -3682,7 +4118,7 @@ __export(exports_pre_write, {
   analyzePreWrite: () => analyzePreWrite
 });
 import { relative as relative4 } from "path";
-import { readFileSync as readFileSync15 } from "fs";
+import { readFileSync as readFileSync16 } from "fs";
 function analyzePreWrite(filePath, writeContent, doNotRepeatEntries, bugMemory) {
   const warnings = [];
   const allMatches = [];
@@ -3736,7 +4172,7 @@ async function preWrite(cwd) {
     const writeContent = extractWriteContent(input);
     let doNotRepeatEntries = [];
     try {
-      const markdown = readFileSync15(learningMemoryPath(cwd), "utf-8");
+      const markdown = readFileSync16(learningMemoryPath(cwd), "utf-8");
       const mem = parseLearningMemory(markdown);
       doNotRepeatEntries = getEntries(mem, "Do-Not-Repeat");
     } catch {}
@@ -3793,7 +4229,7 @@ __export(exports_post_write, {
   analyzePostWrite: () => analyzePostWrite
 });
 import { relative as relative5 } from "path";
-import { readFileSync as readFileSync16 } from "fs";
+import { readFileSync as readFileSync17 } from "fs";
 function analyzePostWrite(filePath, fileContent, index) {
   if (isWriteExcluded(filePath)) {
     return {
@@ -3857,7 +4293,7 @@ async function postWrite(cwd) {
     const filePath = relative5(cwd, absolutePath);
     let fileContent = null;
     try {
-      fileContent = readFileSync16(absolutePath, "utf-8");
+      fileContent = readFileSync17(absolutePath, "utf-8");
     } catch {}
     const rawState = safeReadJson(sessionPath(cwd));
     const state = isSessionState(rawState) ? rawState : createSessionState();
@@ -4277,10 +4713,10 @@ async function executeTask(taskId, projectCwd) {
       if (task.actionType === "ai-cli") {
         try {
           const { learningMemoryPath: learningMemoryPath4 } = await Promise.resolve().then(() => (init_paths(), exports_paths));
-          const { readFileSync: readFileSync17 } = await import("fs");
+          const { readFileSync: readFileSync18 } = await import("fs");
           let memoryContent;
           try {
-            memoryContent = readFileSync17(learningMemoryPath4(projectCwd), "utf-8");
+            memoryContent = readFileSync18(learningMemoryPath4(projectCwd), "utf-8");
           } catch {
             console.log("[mink] no learning memory found, skipping reflection");
             return;
@@ -4838,9 +5274,9 @@ var init_design_eval = __esm(() => {
 });
 
 // src/core/dashboard-api.ts
-import { existsSync as existsSync13, readFileSync as readFileSync17 } from "fs";
+import { existsSync as existsSync15, readFileSync as readFileSync18 } from "fs";
 function checkJsonFile2(name, filePath, validator) {
-  if (!existsSync13(filePath))
+  if (!existsSync15(filePath))
     return { name, status: "missing" };
   const data = safeReadJson(filePath);
   if (data === null)
@@ -4850,10 +5286,10 @@ function checkJsonFile2(name, filePath, validator) {
   return { name, status: "ok" };
 }
 function checkTextFile2(name, filePath) {
-  if (!existsSync13(filePath))
+  if (!existsSync15(filePath))
     return { name, status: "missing" };
   try {
-    readFileSync17(filePath, "utf-8");
+    readFileSync18(filePath, "utf-8");
     return { name, status: "ok" };
   } catch {
     return { name, status: "corrupt" };
@@ -4936,7 +5372,7 @@ function loadSchedulerPanel(cwd) {
 }
 function loadLearningMemoryPanel(cwd) {
   const memPath = learningMemoryPath(cwd);
-  if (!existsSync13(memPath)) {
+  if (!existsSync15(memPath)) {
     return {
       projectName: "unknown",
       sections: {
@@ -4948,7 +5384,7 @@ function loadLearningMemoryPanel(cwd) {
     };
   }
   try {
-    const content = readFileSync17(memPath, "utf-8");
+    const content = readFileSync18(memPath, "utf-8");
     return parseLearningMemory(content);
   } catch {
     return {
@@ -5050,10 +5486,10 @@ var init_dashboard_api = __esm(() => {
 });
 
 // src/core/project-registry.ts
-import { readdirSync as readdirSync4, existsSync as existsSync14 } from "fs";
-import { join as join14 } from "path";
+import { readdirSync as readdirSync4, existsSync as existsSync16 } from "fs";
+import { join as join16 } from "path";
 function getProjectMeta(projDir) {
-  const metaPath = join14(projDir, "project-meta.json");
+  const metaPath = join16(projDir, "project-meta.json");
   const raw = safeReadJson(metaPath);
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
@@ -5070,15 +5506,15 @@ function getProjectMeta(projDir) {
   };
 }
 function listRegisteredProjects() {
-  const projectsDir = join14(minkRoot(), "projects");
-  if (!existsSync14(projectsDir))
+  const projectsDir = join16(minkRoot(), "projects");
+  if (!existsSync16(projectsDir))
     return [];
   const entries = readdirSync4(projectsDir, { withFileTypes: true });
   const projects = [];
   for (const entry of entries) {
     if (!entry.isDirectory())
       continue;
-    const projDir = join14(projectsDir, entry.name);
+    const projDir = join16(projectsDir, entry.name);
     const meta = getProjectMeta(projDir);
     if (meta) {
       projects.push({
@@ -5242,8 +5678,8 @@ __export(exports_dashboard_server, {
   startDashboardServer: () => startDashboardServer
 });
 import { watch } from "fs";
-import { existsSync as existsSync15 } from "fs";
-import { basename as basename7, dirname as dirname6, join as join15, extname as extname2 } from "path";
+import { existsSync as existsSync17 } from "fs";
+import { basename as basename7, dirname as dirname7, join as join17, extname as extname2 } from "path";
 
 class SSEManager {
   clients = new Map;
@@ -5416,15 +5852,15 @@ async function startDashboardServer(cwd, options = {}) {
       timestamp: new Date().toISOString()
     });
   });
-  const __dir = dirname6(new URL(import.meta.url).pathname);
+  const __dir = dirname7(new URL(import.meta.url).pathname);
   let pkgRoot = __dir;
-  while (pkgRoot !== dirname6(pkgRoot)) {
-    if (existsSync15(join15(pkgRoot, "package.json")))
+  while (pkgRoot !== dirname7(pkgRoot)) {
+    if (existsSync17(join17(pkgRoot, "package.json")))
       break;
-    pkgRoot = dirname6(pkgRoot);
+    pkgRoot = dirname7(pkgRoot);
   }
-  const dashboardOutDir = join15(pkgRoot, "dashboard", "out");
-  const dashboardBuilt = existsSync15(join15(dashboardOutDir, "index.html"));
+  const dashboardOutDir = join17(pkgRoot, "dashboard", "out");
+  const dashboardBuilt = existsSync17(join17(dashboardOutDir, "index.html"));
   let clientIdCounter = 0;
   if (!dashboardBuilt) {
     console.warn("[mink] dashboard not built. Run: cd dashboard && bun run build");
@@ -5454,9 +5890,9 @@ async function startDashboardServer(cwd, options = {}) {
         } else {
           let filePath;
           if (pathname === "/") {
-            filePath = join15(dashboardOutDir, "index.html");
+            filePath = join17(dashboardOutDir, "index.html");
           } else {
-            filePath = join15(dashboardOutDir, pathname);
+            filePath = join17(dashboardOutDir, pathname);
           }
           if (!filePath.startsWith(dashboardOutDir)) {
             return jsonResponse({ error: "Forbidden" }, 403);
@@ -5469,7 +5905,7 @@ async function startDashboardServer(cwd, options = {}) {
           const htmlServed = await serveFile(filePath + ".html", "text/html; charset=utf-8");
           if (htmlServed)
             return htmlServed;
-          const indexServed = await serveFile(join15(dashboardOutDir, "index.html"), "text/html; charset=utf-8");
+          const indexServed = await serveFile(join17(dashboardOutDir, "index.html"), "text/html; charset=utf-8");
           if (indexServed)
             return indexServed;
         }
@@ -5529,7 +5965,7 @@ retry: 3000
             if (!filename || filename.includes("..") || filename.includes("/")) {
               return jsonResponse({ error: "Invalid filename" }, 400);
             }
-            const imgPath = join15(designCapturesDir(resolvedCwd), filename);
+            const imgPath = join17(designCapturesDir(resolvedCwd), filename);
             const served = await serveFile(imgPath, "image/jpeg");
             if (served) {
               served.headers.set("Cache-Control", "public, max-age=60");
@@ -5661,9 +6097,9 @@ var exports_dashboard = {};
 __export(exports_dashboard, {
   dashboard: () => dashboard
 });
-import { existsSync as existsSync16 } from "fs";
+import { existsSync as existsSync18 } from "fs";
 async function dashboard(cwd, args) {
-  if (!existsSync16(projectDir(cwd))) {
+  if (!existsSync18(projectDir(cwd))) {
     console.error("[mink] project not initialized. Run: mink init");
     process.exit(1);
   }
@@ -5685,7 +6121,7 @@ var exports_daemon = {};
 __export(exports_daemon, {
   daemon: () => daemon
 });
-import { readFileSync as readFileSync18, existsSync as existsSync17 } from "fs";
+import { readFileSync as readFileSync19, existsSync as existsSync19 } from "fs";
 async function daemon(cwd, args) {
   const subcommand = args[0];
   switch (subcommand) {
@@ -5701,12 +6137,12 @@ async function daemon(cwd, args) {
       break;
     case "logs": {
       const logPath = schedulerLogPath();
-      if (!existsSync17(logPath)) {
+      if (!existsSync19(logPath)) {
         console.log("[mink] no log file found");
         return;
       }
       try {
-        const content = readFileSync18(logPath, "utf-8");
+        const content = readFileSync19(logPath, "utf-8");
         const lines = content.split(`
 `);
         const tail = lines.slice(-50).join(`
@@ -5726,6 +6162,232 @@ async function daemon(cwd, args) {
 var init_daemon2 = __esm(() => {
   init_daemon();
   init_paths();
+});
+
+// src/commands/channel.ts
+var exports_channel = {};
+__export(exports_channel, {
+  channel: () => channel
+});
+function parsePlatform(value) {
+  if (!value)
+    return null;
+  if (SUPPORTED_PLATFORMS.includes(value)) {
+    return value;
+  }
+  return null;
+}
+function extractFlag(args, flag) {
+  const idx = args.findIndex((a) => a === flag || a.startsWith(flag + "="));
+  if (idx === -1)
+    return;
+  const arg = args[idx];
+  if (arg.includes("=")) {
+    return arg.slice(arg.indexOf("=") + 1);
+  }
+  return args[idx + 1];
+}
+async function channel(args) {
+  const subcommand = args[0];
+  const rest = args.slice(1);
+  switch (subcommand) {
+    case "setup":
+      setupChannel(rest);
+      break;
+    case "start":
+      await startChannel(rest);
+      break;
+    case "stop":
+      await stopChannel();
+      break;
+    case "status":
+      showStatus();
+      break;
+    case "logs":
+      showLogs();
+      break;
+    case "attach":
+      doAttach();
+      break;
+    default:
+      printUsage();
+      process.exit(1);
+  }
+}
+function setupChannel(args) {
+  const platform2 = parsePlatform(args[0]);
+  if (!platform2) {
+    console.error("[mink] missing or invalid platform");
+    console.error("Usage: mink channel setup <discord|telegram> --token <token>");
+    process.exit(1);
+  }
+  if (platform2 === "telegram") {
+    console.error("[mink] telegram setup is not yet supported");
+    process.exit(1);
+  }
+  const token = extractFlag(args, "--token");
+  if (!token) {
+    console.log("[mink] Discord Channel Setup");
+    console.log("");
+    console.log("In the Discord Developer Portal (https://discord.com/developers/applications):");
+    console.log("");
+    console.log("  1. New Application > give it a name");
+    console.log("  2. Bot > Reset Token > copy the token");
+    console.log("  3. Bot > scroll to Privileged Gateway Intents:");
+    console.log("     - Enable MESSAGE CONTENT INTENT (required)");
+    console.log("  4. OAuth2 > URL Generator:");
+    console.log("     - Integration Type: Guild Install (NOT User Install)");
+    console.log("     - Scopes: bot");
+    console.log("     - Bot Permissions: View Channels, Send Messages,");
+    console.log("       Send Messages in Threads, Read Message History,");
+    console.log("       Attach Files, Add Reactions");
+    console.log("  5. Open the generated URL to invite the bot to a server");
+    console.log("     (create a personal server if you just want to DM the bot)");
+    console.log("");
+    console.log("Then install the channel plugin once inside Claude Code:");
+    console.log("  claude");
+    console.log("  /plugin install discord@claude-plugins-official");
+    console.log("  (exit Claude Code)");
+    console.log("");
+    console.log("Finally, save your token:");
+    console.log("  mink channel setup discord --token <your-token>");
+    console.log("");
+    console.log("Your token is stored locally in ~/.mink/config.local");
+    console.log("and is NOT synced across machines.");
+    return;
+  }
+  if (!/^[\w.-]{30,}$/.test(token)) {
+    console.error("[mink] token format looks invalid — expected a long token string");
+    process.exit(1);
+  }
+  setConfigValue("channel.discord.bot-token", token);
+  setConfigValue("channel.discord.enabled", "true");
+  setConfigValue("channel.default-platform", "discord");
+  console.log("[mink] Discord bot token saved to config.local");
+  console.log("[mink] channel.discord.enabled = true");
+  console.log("[mink] channel.default-platform = discord");
+  console.log("");
+  console.log("Next: mink channel start");
+}
+async function startChannel(args) {
+  if (!isVaultInitialized()) {
+    console.error("[mink] wiki vault is not initialized");
+    console.error("Run: mink wiki init");
+    process.exit(1);
+  }
+  const requested = parsePlatform(args[0]);
+  const platform2 = requested ?? parsePlatform(resolveConfigValue("channel.default-platform").value) ?? "discord";
+  if (platform2 === "telegram") {
+    console.error("[mink] telegram is not yet supported");
+    process.exit(1);
+  }
+  const token = resolveConfigValue("channel.discord.bot-token").value;
+  if (!token) {
+    console.error("[mink] no Discord bot token configured");
+    console.error("Run: mink channel setup discord --token <your-token>");
+    process.exit(1);
+  }
+  const vaultPath = resolveVaultPath();
+  const wrote = writeCompanionClaudeMd(vaultPath, false);
+  if (wrote) {
+    console.log(`[mink] created companion CLAUDE.md at ${vaultPath}`);
+  }
+  const skipPermissions = resolveConfigValue("channel.skip-permissions").value === "true";
+  let result;
+  try {
+    result = await startChannelProcess({ vaultPath, platform: platform2, token, skipPermissions });
+  } catch (err) {
+    console.error("[mink] failed to start channel:");
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+  if (result.alreadyRunning) {
+    console.log(`[mink] channel is already running (screen session: ${result.session})`);
+    return;
+  }
+  console.log(`[mink] channel started`);
+  console.log(`[mink] platform:  ${platform2}`);
+  console.log(`[mink] vault:     ${vaultPath}`);
+  console.log(`[mink] session:   ${result.session} (GNU screen)`);
+  console.log("");
+  console.log("Next:");
+  console.log("  1. DM your bot on Discord — it replies with a pairing code");
+  console.log("  2. Attach to the Claude Code session: mink channel attach");
+  console.log("  3. Inside the session, run: /discord:access pair <code>");
+  console.log("  4. Then lock down access:   /discord:access policy allowlist");
+  console.log("  5. Detach with Ctrl-a d");
+  console.log("");
+  console.log("See activity:  mink channel logs");
+}
+async function stopChannel() {
+  const result = await stopChannelProcess();
+  switch (result) {
+    case "not-running":
+      console.log("[mink] channel is not running");
+      break;
+    case "stopped":
+      console.log("[mink] channel stopped");
+      break;
+  }
+}
+function showStatus() {
+  const status2 = getChannelStatus();
+  if (!status2) {
+    console.log("[mink] channel is not running");
+    return;
+  }
+  console.log(`running:   yes`);
+  console.log(`session:   ${status2.session}`);
+  console.log(`platform:  ${status2.platform}`);
+  console.log(`vault:     ${status2.vaultPath}`);
+  console.log(`started:   ${status2.startedAt}`);
+  console.log(`uptime:    ${formatUptime(status2.uptime)}`);
+  console.log("");
+  console.log("Attach:    mink channel attach");
+}
+function formatUptime(seconds) {
+  if (seconds < 60)
+    return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60)
+    return `${mins}m ${seconds % 60}s`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ${mins % 60}m`;
+}
+function showLogs() {
+  const content = getChannelLogs();
+  if (content == null) {
+    console.log("[mink] channel is not running (no logs to show)");
+    return;
+  }
+  console.log(content.replace(/\n+$/, ""));
+}
+function doAttach() {
+  const result = attachChannel();
+  if (result === "not-running") {
+    console.log("[mink] channel is not running");
+    console.log("Start it with: mink channel start");
+  }
+}
+function printUsage() {
+  console.error("Usage: mink channel <subcommand>");
+  console.error("");
+  console.error("Subcommands:");
+  console.error("  setup <platform> --token <token>   Configure a channel (discord|telegram)");
+  console.error("  start [platform]                   Launch channel session (in GNU screen)");
+  console.error("  stop                               Stop channel session");
+  console.error("  status                             Show channel status");
+  console.error("  logs                               Show recent channel output");
+  console.error("  attach                             Attach to the channel's Claude Code session");
+  console.error("                                     (detach with Ctrl-a then d)");
+}
+var SUPPORTED_PLATFORMS;
+var init_channel = __esm(() => {
+  init_global_config();
+  init_vault();
+  init_channel_templates();
+  init_channel_process();
+  SUPPORTED_PLATFORMS = ["discord", "telegram"];
 });
 
 // src/commands/config.ts
@@ -5818,8 +6480,8 @@ var init_config2 = __esm(() => {
 
 // src/commands/init.ts
 import { execSync as execSync3 } from "child_process";
-import { mkdirSync as mkdirSync8, existsSync as existsSync18 } from "fs";
-import { resolve as resolve4, dirname as dirname7, basename as basename8, join as join16 } from "path";
+import { mkdirSync as mkdirSync10, existsSync as existsSync20 } from "fs";
+import { resolve as resolve4, dirname as dirname8, basename as basename8, join as join18 } from "path";
 function detectRuntime2() {
   try {
     execSync3("bun --version", { stdio: "ignore" });
@@ -5860,7 +6522,7 @@ function isMinkHook2(entry) {
   return false;
 }
 function mergeHooksIntoSettings2(settingsPath, newHooks) {
-  mkdirSync8(dirname7(settingsPath), { recursive: true });
+  mkdirSync10(dirname8(settingsPath), { recursive: true });
   const existing = safeReadJson(settingsPath) ?? {};
   const existingHooks = existing.hooks ?? {};
   for (const [event, entries] of Object.entries(newHooks)) {
@@ -5883,7 +6545,7 @@ var exports_update = {};
 __export(exports_update, {
   update: () => update
 });
-import { resolve as resolve5, dirname as dirname8 } from "path";
+import { resolve as resolve5, dirname as dirname9 } from "path";
 function parseArgs(args) {
   let dryRun = false;
   let project = null;
@@ -5931,7 +6593,7 @@ async function update(cwd, args) {
     return;
   }
   const runtime = detectRuntime2();
-  const cliPath = resolve5(dirname8(new URL(import.meta.url).pathname), "../cli.ts");
+  const cliPath = resolve5(dirname9(new URL(import.meta.url).pathname), "../cli.ts");
   const newHooks = buildHooksConfig2(runtime, cliPath);
   for (const target of targets) {
     console.log(`[mink] updating: ${target.name} (${target.id})`);
@@ -6000,8 +6662,8 @@ var init_restore = __esm(() => {
 });
 
 // src/core/design-eval/server-detect.ts
-import { readFileSync as readFileSync19 } from "fs";
-import { join as join17 } from "path";
+import { readFileSync as readFileSync20 } from "fs";
+import { join as join19 } from "path";
 async function probePort(port) {
   try {
     const controller = new AbortController;
@@ -6023,7 +6685,7 @@ async function findRunningServer(ports = DEFAULT_PROBE_PORTS) {
 }
 function detectDevCommand(cwd) {
   try {
-    const raw = readFileSync19(join17(cwd, "package.json"), "utf-8");
+    const raw = readFileSync20(join19(cwd, "package.json"), "utf-8");
     const pkg = JSON.parse(raw);
     const scripts = pkg.scripts;
     if (!scripts || typeof scripts !== "object")
@@ -6043,10 +6705,10 @@ var init_server_detect = __esm(() => {
 });
 
 // src/core/design-eval/route-detect.ts
-import { existsSync as existsSync19, readdirSync as readdirSync5, statSync as statSync8 } from "fs";
-import { join as join18, relative as relative6, sep } from "path";
+import { existsSync as existsSync21, readdirSync as readdirSync5, statSync as statSync8 } from "fs";
+import { join as join20, relative as relative6, sep } from "path";
 function detectFramework(cwd) {
-  const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync19(join18(cwd, `${name}.${ext}`))) || existsSync19(join18(cwd, name));
+  const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync21(join20(cwd, `${name}.${ext}`))) || existsSync21(join20(cwd, name));
   if (has("next.config"))
     return "nextjs";
   if (has("svelte.config"))
@@ -6071,8 +6733,8 @@ function detectRoutes(cwd) {
 }
 function detectNextRoutes(cwd) {
   const routes = [];
-  const appDir = join18(cwd, "app");
-  if (existsSync19(appDir)) {
+  const appDir = join20(cwd, "app");
+  if (existsSync21(appDir)) {
     const pageFiles = findFiles(appDir, /^page\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
       const rel = relative6(appDir, file);
@@ -6083,8 +6745,8 @@ function detectNextRoutes(cwd) {
       routes.push(route);
     }
   }
-  const pagesDir = join18(cwd, "pages");
-  if (existsSync19(pagesDir)) {
+  const pagesDir = join20(cwd, "pages");
+  if (existsSync21(pagesDir)) {
     const pageFiles = findFiles(pagesDir, /\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
       const rel = relative6(pagesDir, file);
@@ -6103,8 +6765,8 @@ function detectNextRoutes(cwd) {
   return unique.length > 0 ? unique.sort() : ["/"];
 }
 function detectSvelteKitRoutes(cwd) {
-  const routesDir = join18(cwd, "src", "routes");
-  if (!existsSync19(routesDir))
+  const routesDir = join20(cwd, "src", "routes");
+  if (!existsSync21(routesDir))
     return ["/"];
   const routes = [];
   const pageFiles = findFiles(routesDir, /^\+page\.svelte$/);
@@ -6119,8 +6781,8 @@ function detectSvelteKitRoutes(cwd) {
   return routes.length > 0 ? routes.sort() : ["/"];
 }
 function detectNuxtRoutes(cwd) {
-  const pagesDir = join18(cwd, "pages");
-  if (!existsSync19(pagesDir))
+  const pagesDir = join20(cwd, "pages");
+  if (!existsSync21(pagesDir))
     return ["/"];
   const routes = [];
   const vueFiles = findFiles(pagesDir, /\.vue$/);
@@ -6146,7 +6808,7 @@ function findFiles(dir, pattern) {
     for (const entry of entries) {
       if (entry.startsWith(".") || entry === "node_modules")
         continue;
-      const full = join18(current, entry);
+      const full = join20(current, entry);
       try {
         const stat2 = statSync8(full);
         if (stat2.isDirectory()) {
@@ -28796,8 +29458,8 @@ var require_ChannelProxy = __commonJS((exports) => {
     #properties;
     #id = (0, uuid_js_1.uuidv4)();
     #logger;
-    constructor(channel, logger) {
-      this.#properties = channel;
+    constructor(channel2, logger) {
+      this.#properties = channel2;
       this.#logger = logger;
     }
     async init(realm, eventManager) {
@@ -31490,7 +32152,7 @@ var require_BrowsingContextImpl = __commonJS((exports) => {
         const realm = new WindowRealm_js_1.WindowRealm(this.id, this.#browsingContextStorage, this.#cdpTarget.cdpClient, this.#eventManager, id, this.#logger, origin, uniqueId, this.#realmStorage, sandbox);
         if (auxData.isDefault) {
           this.#defaultRealmDeferred.resolve(realm);
-          Promise.all(this.#cdpTarget.getChannels().map((channel) => channel.startListenerFromWindow(realm, this.#eventManager)));
+          Promise.all(this.#cdpTarget.getChannels().map((channel2) => channel2.startListenerFromWindow(realm, this.#eventManager)));
         }
       });
       this.#cdpTarget.cdpClient.on("Runtime.executionContextDestroyed", (params) => {
@@ -38072,7 +38734,7 @@ var init_ExposedFunction = __esm(() => {
     }
     async#initialize() {
       const connection = this.#connection;
-      const channel = {
+      const channel2 = {
         type: "channel",
         value: {
           channel: this.#channel,
@@ -38099,11 +38761,11 @@ var init_ExposedFunction = __esm(() => {
         try {
           const [script] = await Promise.all([
             frame.browsingContext.addPreloadScript(functionDeclaration, {
-              arguments: [channel],
+              arguments: [channel2],
               sandbox: realm.sandbox
             }),
             realm.realm.callFunction(functionDeclaration, false, {
-              arguments: [channel]
+              arguments: [channel2]
             })
           ]);
           this.#scripts.push([frame, script]);
@@ -54850,7 +55512,7 @@ var require_util2 = __commonJS((exports) => {
     return path;
   }
   exports.normalize = normalize;
-  function join19(aRoot, aPath) {
+  function join21(aRoot, aPath) {
     if (aRoot === "") {
       aRoot = ".";
     }
@@ -54882,7 +55544,7 @@ var require_util2 = __commonJS((exports) => {
     }
     return joined;
   }
-  exports.join = join19;
+  exports.join = join21;
   exports.isAbsolute = function(aPath) {
     return aPath.charAt(0) === "/" || urlRegexp.test(aPath);
   };
@@ -55055,7 +55717,7 @@ var require_util2 = __commonJS((exports) => {
           parsed.path = parsed.path.substring(0, index + 1);
         }
       }
-      sourceURL = join19(urlGenerate(parsed), sourceURL);
+      sourceURL = join21(urlGenerate(parsed), sourceURL);
     }
     return normalize(sourceURL);
   }
@@ -56787,7 +57449,7 @@ var require_escodegen = __commonJS((exports) => {
     function noEmptySpace() {
       return space ? space : " ";
     }
-    function join19(left, right) {
+    function join21(left, right) {
       var leftSource, rightSource, leftCharCode, rightCharCode;
       leftSource = toSourceNodeWhenNeeded(left).toString();
       if (leftSource.length === 0) {
@@ -57128,8 +57790,8 @@ var require_escodegen = __commonJS((exports) => {
         } else {
           result.push(that.generateExpression(stmt.left, Precedence.Call, E_TTT));
         }
-        result = join19(result, operator);
-        result = [join19(result, that.generateExpression(stmt.right, Precedence.Assignment, E_TTT)), ")"];
+        result = join21(result, operator);
+        result = [join21(result, that.generateExpression(stmt.right, Precedence.Assignment, E_TTT)), ")"];
       });
       result.push(this.maybeBlock(stmt.body, flags));
       return result;
@@ -57267,11 +57929,11 @@ var require_escodegen = __commonJS((exports) => {
         var result, fragment;
         result = ["class"];
         if (stmt.id) {
-          result = join19(result, this.generateExpression(stmt.id, Precedence.Sequence, E_TTT));
+          result = join21(result, this.generateExpression(stmt.id, Precedence.Sequence, E_TTT));
         }
         if (stmt.superClass) {
-          fragment = join19("extends", this.generateExpression(stmt.superClass, Precedence.Unary, E_TTT));
-          result = join19(result, fragment);
+          fragment = join21("extends", this.generateExpression(stmt.superClass, Precedence.Unary, E_TTT));
+          result = join21(result, fragment);
         }
         result.push(space);
         result.push(this.generateStatement(stmt.body, S_TFFT));
@@ -57284,9 +57946,9 @@ var require_escodegen = __commonJS((exports) => {
         return escapeDirective(stmt.directive) + this.semicolon(flags);
       },
       DoWhileStatement: function(stmt, flags) {
-        var result = join19("do", this.maybeBlock(stmt.body, S_TFFF));
+        var result = join21("do", this.maybeBlock(stmt.body, S_TFFF));
         result = this.maybeBlockSuffix(stmt.body, result);
-        return join19(result, [
+        return join21(result, [
           "while" + space + "(",
           this.generateExpression(stmt.test, Precedence.Sequence, E_TTT),
           ")" + this.semicolon(flags)
@@ -57322,11 +57984,11 @@ var require_escodegen = __commonJS((exports) => {
       ExportDefaultDeclaration: function(stmt, flags) {
         var result = ["export"], bodyFlags;
         bodyFlags = flags & F_SEMICOLON_OPT ? S_TFFT : S_TFFF;
-        result = join19(result, "default");
+        result = join21(result, "default");
         if (isStatement(stmt.declaration)) {
-          result = join19(result, this.generateStatement(stmt.declaration, bodyFlags));
+          result = join21(result, this.generateStatement(stmt.declaration, bodyFlags));
         } else {
-          result = join19(result, this.generateExpression(stmt.declaration, Precedence.Assignment, E_TTT) + this.semicolon(flags));
+          result = join21(result, this.generateExpression(stmt.declaration, Precedence.Assignment, E_TTT) + this.semicolon(flags));
         }
         return result;
       },
@@ -57334,15 +57996,15 @@ var require_escodegen = __commonJS((exports) => {
         var result = ["export"], bodyFlags, that = this;
         bodyFlags = flags & F_SEMICOLON_OPT ? S_TFFT : S_TFFF;
         if (stmt.declaration) {
-          return join19(result, this.generateStatement(stmt.declaration, bodyFlags));
+          return join21(result, this.generateStatement(stmt.declaration, bodyFlags));
         }
         if (stmt.specifiers) {
           if (stmt.specifiers.length === 0) {
-            result = join19(result, "{" + space + "}");
+            result = join21(result, "{" + space + "}");
           } else if (stmt.specifiers[0].type === Syntax.ExportBatchSpecifier) {
-            result = join19(result, this.generateExpression(stmt.specifiers[0], Precedence.Sequence, E_TTT));
+            result = join21(result, this.generateExpression(stmt.specifiers[0], Precedence.Sequence, E_TTT));
           } else {
-            result = join19(result, "{");
+            result = join21(result, "{");
             withIndent(function(indent2) {
               var i, iz;
               result.push(newline);
@@ -57360,7 +58022,7 @@ var require_escodegen = __commonJS((exports) => {
             result.push(base + "}");
           }
           if (stmt.source) {
-            result = join19(result, [
+            result = join21(result, [
               "from" + space,
               this.generateExpression(stmt.source, Precedence.Sequence, E_TTT),
               this.semicolon(flags)
@@ -57444,7 +58106,7 @@ var require_escodegen = __commonJS((exports) => {
         ];
         cursor = 0;
         if (stmt.specifiers[cursor].type === Syntax.ImportDefaultSpecifier) {
-          result = join19(result, [
+          result = join21(result, [
             this.generateExpression(stmt.specifiers[cursor], Precedence.Sequence, E_TTT)
           ]);
           ++cursor;
@@ -57454,7 +58116,7 @@ var require_escodegen = __commonJS((exports) => {
             result.push(",");
           }
           if (stmt.specifiers[cursor].type === Syntax.ImportNamespaceSpecifier) {
-            result = join19(result, [
+            result = join21(result, [
               space,
               this.generateExpression(stmt.specifiers[cursor], Precedence.Sequence, E_TTT)
             ]);
@@ -57483,7 +58145,7 @@ var require_escodegen = __commonJS((exports) => {
             }
           }
         }
-        result = join19(result, [
+        result = join21(result, [
           "from" + space,
           this.generateExpression(stmt.source, Precedence.Sequence, E_TTT),
           this.semicolon(flags)
@@ -57537,7 +58199,7 @@ var require_escodegen = __commonJS((exports) => {
         return result;
       },
       ThrowStatement: function(stmt, flags) {
-        return [join19("throw", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
+        return [join21("throw", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
       },
       TryStatement: function(stmt, flags) {
         var result, i, iz, guardedHandlers;
@@ -57545,7 +58207,7 @@ var require_escodegen = __commonJS((exports) => {
         result = this.maybeBlockSuffix(stmt.block, result);
         if (stmt.handlers) {
           for (i = 0, iz = stmt.handlers.length;i < iz; ++i) {
-            result = join19(result, this.generateStatement(stmt.handlers[i], S_TFFF));
+            result = join21(result, this.generateStatement(stmt.handlers[i], S_TFFF));
             if (stmt.finalizer || i + 1 !== iz) {
               result = this.maybeBlockSuffix(stmt.handlers[i].body, result);
             }
@@ -57553,7 +58215,7 @@ var require_escodegen = __commonJS((exports) => {
         } else {
           guardedHandlers = stmt.guardedHandlers || [];
           for (i = 0, iz = guardedHandlers.length;i < iz; ++i) {
-            result = join19(result, this.generateStatement(guardedHandlers[i], S_TFFF));
+            result = join21(result, this.generateStatement(guardedHandlers[i], S_TFFF));
             if (stmt.finalizer || i + 1 !== iz) {
               result = this.maybeBlockSuffix(guardedHandlers[i].body, result);
             }
@@ -57561,13 +58223,13 @@ var require_escodegen = __commonJS((exports) => {
           if (stmt.handler) {
             if (Array.isArray(stmt.handler)) {
               for (i = 0, iz = stmt.handler.length;i < iz; ++i) {
-                result = join19(result, this.generateStatement(stmt.handler[i], S_TFFF));
+                result = join21(result, this.generateStatement(stmt.handler[i], S_TFFF));
                 if (stmt.finalizer || i + 1 !== iz) {
                   result = this.maybeBlockSuffix(stmt.handler[i].body, result);
                 }
               }
             } else {
-              result = join19(result, this.generateStatement(stmt.handler, S_TFFF));
+              result = join21(result, this.generateStatement(stmt.handler, S_TFFF));
               if (stmt.finalizer) {
                 result = this.maybeBlockSuffix(stmt.handler.body, result);
               }
@@ -57575,7 +58237,7 @@ var require_escodegen = __commonJS((exports) => {
           }
         }
         if (stmt.finalizer) {
-          result = join19(result, ["finally", this.maybeBlock(stmt.finalizer, S_TFFF)]);
+          result = join21(result, ["finally", this.maybeBlock(stmt.finalizer, S_TFFF)]);
         }
         return result;
       },
@@ -57609,7 +58271,7 @@ var require_escodegen = __commonJS((exports) => {
         withIndent(function() {
           if (stmt.test) {
             result = [
-              join19("case", that.generateExpression(stmt.test, Precedence.Sequence, E_TTT)),
+              join21("case", that.generateExpression(stmt.test, Precedence.Sequence, E_TTT)),
               ":"
             ];
           } else {
@@ -57657,9 +58319,9 @@ var require_escodegen = __commonJS((exports) => {
           result.push(this.maybeBlock(stmt.consequent, S_TFFF));
           result = this.maybeBlockSuffix(stmt.consequent, result);
           if (stmt.alternate.type === Syntax.IfStatement) {
-            result = join19(result, ["else ", this.generateStatement(stmt.alternate, bodyFlags)]);
+            result = join21(result, ["else ", this.generateStatement(stmt.alternate, bodyFlags)]);
           } else {
-            result = join19(result, join19("else", this.maybeBlock(stmt.alternate, bodyFlags)));
+            result = join21(result, join21("else", this.maybeBlock(stmt.alternate, bodyFlags)));
           }
         } else {
           result.push(this.maybeBlock(stmt.consequent, bodyFlags));
@@ -57761,7 +58423,7 @@ var require_escodegen = __commonJS((exports) => {
       },
       ReturnStatement: function(stmt, flags) {
         if (stmt.argument) {
-          return [join19("return", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
+          return [join21("return", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
         }
         return ["return" + this.semicolon(flags)];
       },
@@ -57843,14 +58505,14 @@ var require_escodegen = __commonJS((exports) => {
         if (leftSource.charCodeAt(leftSource.length - 1) === 47 && esutils.code.isIdentifierPartES5(expr.operator.charCodeAt(0))) {
           result = [fragment, noEmptySpace(), expr.operator];
         } else {
-          result = join19(fragment, expr.operator);
+          result = join21(fragment, expr.operator);
         }
         fragment = this.generateExpression(expr.right, rightPrecedence, flags);
         if (expr.operator === "/" && fragment.toString().charAt(0) === "/" || expr.operator.slice(-1) === "<" && fragment.toString().slice(0, 3) === "!--") {
           result.push(noEmptySpace());
           result.push(fragment);
         } else {
-          result = join19(result, fragment);
+          result = join21(result, fragment);
         }
         if (expr.operator === "in" && !(flags & F_ALLOW_IN)) {
           return ["(", result, ")"];
@@ -57890,7 +58552,7 @@ var require_escodegen = __commonJS((exports) => {
         var result, length, i, iz, itemFlags;
         length = expr["arguments"].length;
         itemFlags = flags & F_ALLOW_UNPARATH_NEW && !parentheses && length === 0 ? E_TFT : E_TFF;
-        result = join19("new", this.generateExpression(expr.callee, Precedence.New, itemFlags));
+        result = join21("new", this.generateExpression(expr.callee, Precedence.New, itemFlags));
         if (!(flags & F_ALLOW_UNPARATH_NEW) || parentheses || length > 0) {
           result.push("(");
           for (i = 0, iz = length;i < iz; ++i) {
@@ -57937,11 +58599,11 @@ var require_escodegen = __commonJS((exports) => {
         var result, fragment, rightCharCode, leftSource, leftCharCode;
         fragment = this.generateExpression(expr.argument, Precedence.Unary, E_TTT);
         if (space === "") {
-          result = join19(expr.operator, fragment);
+          result = join21(expr.operator, fragment);
         } else {
           result = [expr.operator];
           if (expr.operator.length > 2) {
-            result = join19(result, fragment);
+            result = join21(result, fragment);
           } else {
             leftSource = toSourceNodeWhenNeeded(result).toString();
             leftCharCode = leftSource.charCodeAt(leftSource.length - 1);
@@ -57964,12 +58626,12 @@ var require_escodegen = __commonJS((exports) => {
           result = "yield";
         }
         if (expr.argument) {
-          result = join19(result, this.generateExpression(expr.argument, Precedence.Yield, E_TTT));
+          result = join21(result, this.generateExpression(expr.argument, Precedence.Yield, E_TTT));
         }
         return parenthesize(result, Precedence.Yield, precedence);
       },
       AwaitExpression: function(expr, precedence, flags) {
-        var result = join19(expr.all ? "await*" : "await", this.generateExpression(expr.argument, Precedence.Await, E_TTT));
+        var result = join21(expr.all ? "await*" : "await", this.generateExpression(expr.argument, Precedence.Await, E_TTT));
         return parenthesize(result, Precedence.Await, precedence);
       },
       UpdateExpression: function(expr, precedence, flags) {
@@ -58041,11 +58703,11 @@ var require_escodegen = __commonJS((exports) => {
         var result, fragment;
         result = ["class"];
         if (expr.id) {
-          result = join19(result, this.generateExpression(expr.id, Precedence.Sequence, E_TTT));
+          result = join21(result, this.generateExpression(expr.id, Precedence.Sequence, E_TTT));
         }
         if (expr.superClass) {
-          fragment = join19("extends", this.generateExpression(expr.superClass, Precedence.Unary, E_TTT));
-          result = join19(result, fragment);
+          fragment = join21("extends", this.generateExpression(expr.superClass, Precedence.Unary, E_TTT));
+          result = join21(result, fragment);
         }
         result.push(space);
         result.push(this.generateStatement(expr.body, S_TFFT));
@@ -58060,7 +58722,7 @@ var require_escodegen = __commonJS((exports) => {
         }
         if (expr.kind === "get" || expr.kind === "set") {
           fragment = [
-            join19(expr.kind, this.generatePropertyKey(expr.key, expr.computed)),
+            join21(expr.kind, this.generatePropertyKey(expr.key, expr.computed)),
             this.generateFunctionBody(expr.value)
           ];
         } else {
@@ -58070,7 +58732,7 @@ var require_escodegen = __commonJS((exports) => {
             this.generateFunctionBody(expr.value)
           ];
         }
-        return join19(result, fragment);
+        return join21(result, fragment);
       },
       Property: function(expr, precedence, flags) {
         if (expr.kind === "get" || expr.kind === "set") {
@@ -58264,7 +58926,7 @@ var require_escodegen = __commonJS((exports) => {
             for (i = 0, iz = expr.blocks.length;i < iz; ++i) {
               fragment = that.generateExpression(expr.blocks[i], Precedence.Sequence, E_TTT);
               if (i > 0 || extra.moz.comprehensionExpressionStartsWithAssignment) {
-                result = join19(result, fragment);
+                result = join21(result, fragment);
               } else {
                 result.push(fragment);
               }
@@ -58272,13 +58934,13 @@ var require_escodegen = __commonJS((exports) => {
           });
         }
         if (expr.filter) {
-          result = join19(result, "if" + space);
+          result = join21(result, "if" + space);
           fragment = this.generateExpression(expr.filter, Precedence.Sequence, E_TTT);
-          result = join19(result, ["(", fragment, ")"]);
+          result = join21(result, ["(", fragment, ")"]);
         }
         if (!extra.moz.comprehensionExpressionStartsWithAssignment) {
           fragment = this.generateExpression(expr.body, Precedence.Assignment, E_TTT);
-          result = join19(result, fragment);
+          result = join21(result, fragment);
         }
         result.push(expr.type === Syntax.GeneratorExpression ? ")" : "]");
         return result;
@@ -58294,8 +58956,8 @@ var require_escodegen = __commonJS((exports) => {
         } else {
           fragment = this.generateExpression(expr.left, Precedence.Call, E_TTT);
         }
-        fragment = join19(fragment, expr.of ? "of" : "in");
-        fragment = join19(fragment, this.generateExpression(expr.right, Precedence.Sequence, E_TTT));
+        fragment = join21(fragment, expr.of ? "of" : "in");
+        fragment = join21(fragment, this.generateExpression(expr.right, Precedence.Sequence, E_TTT));
         return ["for" + space + "(", fragment, ")"];
       },
       SpreadElement: function(expr, precedence, flags) {
@@ -72037,13 +72699,13 @@ function relativeExecutablePath(platform2, _buildId) {
       return path.join("chrome-" + folder(platform2), "chrome.exe");
   }
 }
-async function getLastKnownGoodReleaseForChannel(channel) {
+async function getLastKnownGoodReleaseForChannel(channel2) {
   const data = await getJSON(new URL(`${baseVersionUrl}/last-known-good-versions.json`));
-  for (const channel2 of Object.keys(data.channels)) {
-    data.channels[channel2.toLowerCase()] = data.channels[channel2];
-    delete data.channels[channel2];
+  for (const channel3 of Object.keys(data.channels)) {
+    data.channels[channel3.toLowerCase()] = data.channels[channel3];
+    delete data.channels[channel3];
   }
-  return data.channels[channel];
+  return data.channels[channel2];
 }
 async function getLastKnownGoodReleaseForMilestone(milestone) {
   const data = await getJSON(new URL(`${baseVersionUrl}/latest-versions-per-milestone.json`));
@@ -72053,24 +72715,24 @@ async function getLastKnownGoodReleaseForBuild(buildPrefix) {
   const data = await getJSON(new URL(`${baseVersionUrl}/latest-patch-versions-per-build.json`));
   return data.builds[buildPrefix];
 }
-async function resolveBuildId(channel) {
-  if (Object.values(ChromeReleaseChannel).includes(channel)) {
-    return (await getLastKnownGoodReleaseForChannel(channel)).version;
+async function resolveBuildId(channel2) {
+  if (Object.values(ChromeReleaseChannel).includes(channel2)) {
+    return (await getLastKnownGoodReleaseForChannel(channel2)).version;
   }
-  if (channel.match(/^\d+$/)) {
-    return (await getLastKnownGoodReleaseForMilestone(channel))?.version;
+  if (channel2.match(/^\d+$/)) {
+    return (await getLastKnownGoodReleaseForMilestone(channel2))?.version;
   }
-  if (channel.match(/^\d+\.\d+\.\d+$/)) {
-    return (await getLastKnownGoodReleaseForBuild(channel))?.version;
+  if (channel2.match(/^\d+\.\d+\.\d+$/)) {
+    return (await getLastKnownGoodReleaseForBuild(channel2))?.version;
   }
   return;
 }
-function getChromeWindowsLocation(channel, locationsPrefixes) {
+function getChromeWindowsLocation(channel2, locationsPrefixes) {
   if (locationsPrefixes.size === 0) {
     throw new Error("Non of the common Windows Env variables were set");
   }
   let suffix;
-  switch (channel) {
+  switch (channel2) {
     case ChromeReleaseChannel.STABLE:
       suffix = "Google\\Chrome\\Application\\chrome.exe";
       break;
@@ -72100,7 +72762,7 @@ function getWslVariable(variable) {
   } catch {}
   return;
 }
-function getWslLocation(channel) {
+function getWslLocation(channel2) {
   const wslVersion = execSync4("wslinfo --version", {
     stdio: ["ignore", "pipe", "ignore"],
     encoding: "utf-8"
@@ -72115,14 +72777,14 @@ function getWslLocation(channel) {
       wslPrefixes.add(wslPrefix);
     }
   }
-  const windowsPath = getChromeWindowsLocation(channel, wslPrefixes);
+  const windowsPath = getChromeWindowsLocation(channel2, wslPrefixes);
   return windowsPath.map((path2) => {
     return execSync4(`wslpath "${path2}"`).toString().trim();
   });
 }
-function getChromeLinuxOrWslLocation(channel) {
+function getChromeLinuxOrWslLocation(channel2) {
   const locations = [];
-  switch (channel) {
+  switch (channel2) {
     case ChromeReleaseChannel.STABLE:
       locations.push("/opt/google/chrome/chrome");
       break;
@@ -72137,14 +72799,14 @@ function getChromeLinuxOrWslLocation(channel) {
       break;
   }
   try {
-    const wslPath = getWslLocation(channel);
+    const wslPath = getWslLocation(channel2);
     if (wslPath) {
       locations.push(...wslPath);
     }
   } catch {}
   return locations;
 }
-function resolveSystemExecutablePaths(platform2, channel) {
+function resolveSystemExecutablePaths(platform2, channel2) {
   switch (platform2) {
     case BrowserPlatform.WIN64:
     case BrowserPlatform.WIN32:
@@ -72157,10 +72819,10 @@ function resolveSystemExecutablePaths(platform2, channel) {
       prefixLocation.add("C:\\Program Files (x86)");
       prefixLocation.add("D:\\Program Files");
       prefixLocation.add("D:\\Program Files (x86)");
-      return getChromeWindowsLocation(channel, prefixLocation);
+      return getChromeWindowsLocation(channel2, prefixLocation);
     case BrowserPlatform.MAC_ARM:
     case BrowserPlatform.MAC:
-      switch (channel) {
+      switch (channel2) {
         case ChromeReleaseChannel.STABLE:
           return [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -72180,14 +72842,14 @@ function resolveSystemExecutablePaths(platform2, channel) {
       }
     case BrowserPlatform.LINUX_ARM:
     case BrowserPlatform.LINUX:
-      return getChromeLinuxOrWslLocation(channel);
+      return getChromeLinuxOrWslLocation(channel2);
   }
 }
-function resolveDefaultUserDataDir(platform2, channel) {
+function resolveDefaultUserDataDir(platform2, channel2) {
   switch (platform2) {
     case BrowserPlatform.WIN64:
     case BrowserPlatform.WIN32:
-      switch (channel) {
+      switch (channel2) {
         case ChromeReleaseChannel.STABLE:
           return path.join(getLocalAppDataWin(), "Google", "Chrome", "User Data");
         case ChromeReleaseChannel.BETA:
@@ -72199,7 +72861,7 @@ function resolveDefaultUserDataDir(platform2, channel) {
       }
     case BrowserPlatform.MAC_ARM:
     case BrowserPlatform.MAC:
-      switch (channel) {
+      switch (channel2) {
         case ChromeReleaseChannel.STABLE:
           return path.join(getBaseUserDataDirPathMac(), "Chrome");
         case ChromeReleaseChannel.BETA:
@@ -72211,7 +72873,7 @@ function resolveDefaultUserDataDir(platform2, channel) {
       }
     case BrowserPlatform.LINUX_ARM:
     case BrowserPlatform.LINUX:
-      switch (channel) {
+      switch (channel2) {
         case ChromeReleaseChannel.STABLE:
           return path.join(getConfigHomeLinux(), "google-chrome");
         case ChromeReleaseChannel.BETA:
@@ -72464,8 +73126,8 @@ function parseBuildId(buildId) {
   return [FirefoxChannel.NIGHTLY, buildId];
 }
 function resolveDownloadUrl5(platform2, buildId, baseUrl) {
-  const [channel] = parseBuildId(buildId);
-  switch (channel) {
+  const [channel2] = parseBuildId(buildId);
+  switch (channel2) {
     case FirefoxChannel.NIGHTLY:
       baseUrl ??= "https://archive.mozilla.org/pub/firefox/nightly/latest-mozilla-central";
       break;
@@ -72481,8 +73143,8 @@ function resolveDownloadUrl5(platform2, buildId, baseUrl) {
   return `${baseUrl}/${resolveDownloadPath5(platform2, buildId).join("/")}`;
 }
 function resolveDownloadPath5(platform2, buildId) {
-  const [channel, resolvedBuildId] = parseBuildId(buildId);
-  switch (channel) {
+  const [channel2, resolvedBuildId] = parseBuildId(buildId);
+  switch (channel2) {
     case FirefoxChannel.NIGHTLY:
       return [archiveNightly(platform2, resolvedBuildId)];
     case FirefoxChannel.DEVEDITION:
@@ -72498,8 +73160,8 @@ function resolveDownloadPath5(platform2, buildId) {
   }
 }
 function relativeExecutablePath5(platform2, buildId) {
-  const [channel] = parseBuildId(buildId);
-  switch (channel) {
+  const [channel2] = parseBuildId(buildId);
+  switch (channel2) {
     case FirefoxChannel.NIGHTLY:
       switch (platform2) {
         case BrowserPlatform.MAC_ARM:
@@ -72529,7 +73191,7 @@ function relativeExecutablePath5(platform2, buildId) {
       }
   }
 }
-async function resolveBuildId3(channel = FirefoxChannel.NIGHTLY) {
+async function resolveBuildId3(channel2 = FirefoxChannel.NIGHTLY) {
   const channelToVersionKey = {
     [FirefoxChannel.ESR]: "FIREFOX_ESR",
     [FirefoxChannel.STABLE]: "LATEST_FIREFOX_VERSION",
@@ -72538,11 +73200,11 @@ async function resolveBuildId3(channel = FirefoxChannel.NIGHTLY) {
     [FirefoxChannel.NIGHTLY]: "FIREFOX_NIGHTLY"
   };
   const versions = await getJSON(new URL(`${baseVersionUrl2}/firefox_versions.json`));
-  const version = versions[channelToVersionKey[channel]];
+  const version = versions[channelToVersionKey[channel2]];
   if (!version) {
-    throw new Error(`Channel ${channel} is not found.`);
+    throw new Error(`Channel ${channel2} is not found.`);
   }
-  return channel + "_" + version;
+  return channel2 + "_" + version;
 }
 async function createProfile(options) {
   if (!fs.existsSync(options.path)) {
@@ -72807,7 +73469,7 @@ async function createProfile2(browser, opts) {
       throw new Error(`Profile creation is not support for ${browser} yet`);
   }
 }
-function resolveDefaultUserDataDir2(browser, platform2, channel) {
+function resolveDefaultUserDataDir2(browser, platform2, channel2) {
   switch (browser) {
     case Browser6.CHROMEDRIVER:
     case Browser6.CHROMEHEADLESSSHELL:
@@ -72815,10 +73477,10 @@ function resolveDefaultUserDataDir2(browser, platform2, channel) {
     case Browser6.CHROMIUM:
       throw new Error(`Default user dir detection is not supported for ${browser} yet.`);
     case Browser6.CHROME:
-      return resolveDefaultUserDataDir(platform2, channel);
+      return resolveDefaultUserDataDir(platform2, channel2);
   }
 }
-function resolveSystemExecutablePaths2(browser, platform2, channel) {
+function resolveSystemExecutablePaths2(browser, platform2, channel2) {
   switch (browser) {
     case Browser6.CHROMEDRIVER:
     case Browser6.CHROMEHEADLESSSHELL:
@@ -72826,7 +73488,7 @@ function resolveSystemExecutablePaths2(browser, platform2, channel) {
     case Browser6.CHROMIUM:
       throw new Error(`System browser detection is not supported for ${browser} yet.`);
     case Browser6.CHROME:
-      return resolveSystemExecutablePaths(platform2, channel);
+      return resolveSystemExecutablePaths(platform2, channel2);
   }
 }
 function getVersionComparator(browser) {
@@ -78262,7 +78924,7 @@ var require_tar_fs = __commonJS((exports) => {
 });
 
 // node_modules/@puppeteer/browsers/lib/esm/fileUtil.js
-import { spawnSync, spawn } from "node:child_process";
+import { spawnSync as spawnSync2, spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readdir } from "node:fs/promises";
 import * as path7 from "node:path";
@@ -78280,7 +78942,7 @@ async function unpackArchive(archivePath, folderPath) {
     await mkdir(folderPath);
     await installDMG(archivePath, folderPath);
   } else if (archivePath.endsWith(".exe")) {
-    const result = spawnSync(archivePath, [`/ExtractDir=${folderPath}`], {
+    const result = spawnSync2(archivePath, [`/ExtractDir=${folderPath}`], {
       env: {
         __compat_layer: "RunAsInvoker"
       }
@@ -78354,7 +79016,7 @@ async function extractTar(tarPath, folderPath, decompressUtilityName) {
   });
 }
 async function installDMG(dmgPath, folderPath) {
-  const { stdout } = spawnSync(`hdiutil`, [
+  const { stdout } = spawnSync2(`hdiutil`, [
     "attach",
     "-nobrowse",
     "-noautoopen",
@@ -78374,9 +79036,9 @@ async function installDMG(dmgPath, folderPath) {
       throw new Error(`Cannot find app in ${mountPath}`);
     }
     const mountedPath = path7.join(mountPath, appName);
-    spawnSync("cp", ["-R", mountedPath, folderPath]);
+    spawnSync2("cp", ["-R", mountedPath, folderPath]);
   } finally {
-    spawnSync("hdiutil", ["detach", mountPath, "-quiet"]);
+    spawnSync2("hdiutil", ["detach", mountPath, "-quiet"]);
   }
 }
 var import_debug4, debugFileUtil, internalConstantsForTesting;
@@ -78391,8 +79053,8 @@ var init_fileUtil = __esm(() => {
 
 // node_modules/@puppeteer/browsers/lib/esm/install.js
 import assert2 from "node:assert";
-import { spawnSync as spawnSync2 } from "node:child_process";
-import { existsSync as existsSync20, readFileSync as readFileSync20 } from "node:fs";
+import { spawnSync as spawnSync3 } from "node:child_process";
+import { existsSync as existsSync22, readFileSync as readFileSync21 } from "node:fs";
 import { mkdir as mkdir2, unlink } from "node:fs/promises";
 import os5 from "node:os";
 import path8 from "node:path";
@@ -78445,7 +79107,7 @@ async function installWithProviders(options) {
         continue;
       }
       debugInstall(`Successfully got URL from ${provider.getName()}: ${url}`);
-      if (!existsSync20(browserRoot)) {
+      if (!existsSync22(browserRoot)) {
         await mkdir2(browserRoot, { recursive: true });
       }
       return await installUrl(url, options, provider);
@@ -78478,21 +79140,21 @@ async function installDeps(installedBrowser) {
     return;
   }
   const depsPath = path8.join(path8.dirname(installedBrowser.executablePath), "deb.deps");
-  if (!existsSync20(depsPath)) {
+  if (!existsSync22(depsPath)) {
     debugInstall(`deb.deps file was not found at ${depsPath}`);
     return;
   }
-  const data = readFileSync20(depsPath, "utf-8").split(`
+  const data = readFileSync21(depsPath, "utf-8").split(`
 `).join(",");
   if (process.getuid?.() !== 0) {
     throw new Error("Installing system dependencies requires root privileges");
   }
-  let result = spawnSync2("apt-get", ["-v"]);
+  let result = spawnSync3("apt-get", ["-v"]);
   if (result.status !== 0) {
     throw new Error("Failed to install system dependencies: apt-get does not seem to be available");
   }
   debugInstall(`Trying to install dependencies: ${data}`);
-  result = spawnSync2("apt-get", [
+  result = spawnSync3("apt-get", [
     "satisfy",
     "-y",
     data,
@@ -78520,11 +79182,11 @@ async function installUrl(url, options, provider) {
   const cache = new Cache(options.cacheDir);
   const browserRoot = cache.browserRoot(options.browser);
   const archivePath = path8.join(browserRoot, `${options.buildId}-${fileName}`);
-  if (!existsSync20(browserRoot)) {
+  if (!existsSync22(browserRoot)) {
     await mkdir2(browserRoot, { recursive: true });
   }
   if (!options.unpack) {
-    if (existsSync20(archivePath)) {
+    if (existsSync22(archivePath)) {
       return archivePath;
     }
     debugInstall(`Downloading binary from ${url}`);
@@ -78545,8 +79207,8 @@ async function installUrl(url, options, provider) {
     cache.writeExecutablePath(options.browser, options.platform, options.buildId, relativeExecutablePath6);
   }
   try {
-    if (existsSync20(outputPath)) {
-      if (!existsSync20(installedBrowser.executablePath)) {
+    if (existsSync22(outputPath)) {
+      if (!existsSync22(installedBrowser.executablePath)) {
         throw new Error(`The browser folder (${outputPath}) exists but the executable (${installedBrowser.executablePath}) is missing`);
       }
       await runSetup(installedBrowser);
@@ -78555,7 +79217,7 @@ async function installUrl(url, options, provider) {
       }
       return installedBrowser;
     }
-    if (!existsSync20(archivePath)) {
+    if (!existsSync22(archivePath)) {
       debugInstall(`Downloading binary from ${url}`);
       try {
         debugTime("download");
@@ -78584,7 +79246,7 @@ async function installUrl(url, options, provider) {
     }
     return installedBrowser;
   } finally {
-    if (existsSync20(archivePath)) {
+    if (existsSync22(archivePath)) {
       await unlink(archivePath);
     }
   }
@@ -78595,10 +79257,10 @@ async function runSetup(installedBrowser) {
       debugTime("permissions");
       const browserDir = path8.dirname(installedBrowser.executablePath);
       const setupExePath = path8.join(browserDir, "setup.exe");
-      if (!existsSync20(setupExePath)) {
+      if (!existsSync22(setupExePath)) {
         return;
       }
-      spawnSync2(path8.join(browserDir, "setup.exe"), [`--configure-browser-in-directory=` + browserDir], {
+      spawnSync3(path8.join(browserDir, "setup.exe"), [`--configure-browser-in-directory=` + browserDir], {
         shell: true
       });
     } finally {
@@ -78976,19 +79638,19 @@ var init_cliui = __esm(() => {
 });
 
 // node_modules/escalade/sync/index.mjs
-import { dirname as dirname9, resolve as resolve7 } from "path";
+import { dirname as dirname10, resolve as resolve7 } from "path";
 import { readdirSync as readdirSync6, statSync as statSync9 } from "fs";
 function sync_default(start, callback) {
   let dir = resolve7(".", start);
   let tmp, stats = statSync9(dir);
   if (!stats.isDirectory()) {
-    dir = dirname9(dir);
+    dir = dirname10(dir);
   }
   while (true) {
     tmp = callback(dir, readdirSync6(dir));
     if (tmp)
       return resolve7(dir, tmp);
-    dir = dirname9(tmp = dir);
+    dir = dirname10(tmp = dir);
     if (tmp === dir)
       break;
   }
@@ -80008,14 +80670,14 @@ var init_yerror = __esm(() => {
 });
 
 // node_modules/y18n/build/lib/platform-shims/node.js
-import { readFileSync as readFileSync21, statSync as statSync10, writeFile } from "fs";
+import { readFileSync as readFileSync22, statSync as statSync10, writeFile } from "fs";
 import { format as format2 } from "util";
 import { resolve as resolve9 } from "path";
 var node_default;
 var init_node = __esm(() => {
   node_default = {
     fs: {
-      readFileSync: readFileSync21,
+      readFileSync: readFileSync22,
       writeFile
     },
     format: format2,
@@ -80200,9 +80862,9 @@ var init_y18n = __esm(() => {
 // node_modules/yargs/lib/platform-shims/esm.mjs
 import { notStrictEqual, strictEqual } from "assert";
 import { inspect } from "util";
-import { readFileSync as readFileSync22 } from "fs";
+import { readFileSync as readFileSync23 } from "fs";
 import { fileURLToPath } from "url";
-import { basename as basename10, dirname as dirname10, extname as extname3, relative as relative7, resolve as resolve10 } from "path";
+import { basename as basename10, dirname as dirname11, extname as extname3, relative as relative7, resolve as resolve10 } from "path";
 var REQUIRE_ERROR = "require is not supported by ESM", REQUIRE_DIRECTORY_ERROR = "loading a directory of commands is not supported yet for ESM", __dirname2, mainFilename, esm_default;
 var init_esm = __esm(() => {
   init_cliui();
@@ -80235,7 +80897,7 @@ var init_esm = __esm(() => {
     Parser: lib_default,
     path: {
       basename: basename10,
-      dirname: dirname10,
+      dirname: dirname11,
       extname: extname3,
       relative: relative7,
       resolve: resolve10
@@ -80249,7 +80911,7 @@ var init_esm = __esm(() => {
       nextTick: process.nextTick,
       stdColumns: typeof process.stdout.columns !== "undefined" ? process.stdout.columns : null
     },
-    readFileSync: readFileSync22,
+    readFileSync: readFileSync23,
     require: () => {
       throw new YError(REQUIRE_ERROR);
     },
@@ -83894,8 +84556,8 @@ var exports_LaunchOptions = {};
 __export(exports_LaunchOptions, {
   convertPuppeteerChannelToBrowsersChannel: () => convertPuppeteerChannelToBrowsersChannel
 });
-function convertPuppeteerChannelToBrowsersChannel(channel) {
-  switch (channel) {
+function convertPuppeteerChannelToBrowsersChannel(channel2) {
+  switch (channel2) {
     case "chrome":
       return ChromeReleaseChannel.STABLE;
     case "chrome-dev":
@@ -83922,8 +84584,8 @@ async function _connectToBrowser(options) {
   }
 }
 async function getConnectionTransport(options) {
-  const { browserWSEndpoint, browserURL, channel, transport, headers = {} } = options;
-  assert(Number(!!browserWSEndpoint) + Number(!!browserURL) + Number(!!transport) + Number(!!channel) === 1, "Exactly one of browserWSEndpoint, browserURL, transport or channel must be passed to puppeteer.connect");
+  const { browserWSEndpoint, browserURL, channel: channel2, transport, headers = {} } = options;
+  assert(Number(!!browserWSEndpoint) + Number(!!browserURL) + Number(!!transport) + Number(!!channel2) === 1, "Exactly one of browserWSEndpoint, browserURL, transport or channel must be passed to puppeteer.connect");
   if (transport) {
     return { connectionTransport: transport, endpointUrl: "" };
   } else if (browserWSEndpoint) {
@@ -83948,9 +84610,9 @@ async function getConnectionTransport(options) {
       throw new Error("Could not detect required browser platform");
     }
     const { convertPuppeteerChannelToBrowsersChannel: convertPuppeteerChannelToBrowsersChannel2 } = await Promise.resolve().then(() => (init_LaunchOptions(), exports_LaunchOptions));
-    const { join: join20 } = await import("node:path");
+    const { join: join22 } = await import("node:path");
     const userDataDir = resolveDefaultUserDataDir3(Browser7.CHROME, platform2, convertPuppeteerChannelToBrowsersChannel2(options.channel));
-    const portPath = join20(userDataDir, "DevToolsActivePort");
+    const portPath = join22(userDataDir, "DevToolsActivePort");
     try {
       const fileContent = await environment.value.fs.promises.readFile(portPath, "ascii");
       const [rawPort, rawPath] = fileContent.split(`
@@ -84174,9 +84836,9 @@ var init_PipeTransport = __esm(() => {
 });
 
 // node_modules/puppeteer-core/lib/esm/puppeteer/node/BrowserLauncher.js
-import { existsSync as existsSync21 } from "node:fs";
+import { existsSync as existsSync23 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join20 } from "node:path";
+import { join as join22 } from "node:path";
 
 class BrowserLauncher {
   #browser;
@@ -84201,7 +84863,7 @@ class BrowserLauncher {
       ...options,
       protocol
     });
-    if (!existsSync21(launchArgs.executablePath)) {
+    if (!existsSync23(launchArgs.executablePath)) {
       throw new Error(`Browser was not found at the configured executablePath (${launchArgs.executablePath})`);
     }
     const usePipe = launchArgs.args.includes("--remote-debugging-pipe");
@@ -84276,7 +84938,7 @@ class BrowserLauncher {
       browserCloseCallback();
       const logs = browserProcess.getRecentLogs().join(`
 `);
-      if (logs.includes("Failed to create a ProcessSingleton for your profile directory") || process.platform === "win32" && existsSync21(join20(launchArgs.userDataDir, "lockfile"))) {
+      if (logs.includes("Failed to create a ProcessSingleton for your profile directory") || process.platform === "win32" && existsSync23(join22(launchArgs.userDataDir, "lockfile"))) {
         throw new Error(`The browser is already running for ${launchArgs.userDataDir}. Use a different \`userDataDir\` or stop the running browser first.`);
       }
       if (logs.includes("Missing X server") && options.headless === false) {
@@ -84366,12 +85028,12 @@ class BrowserLauncher {
     });
   }
   getProfilePath() {
-    return join20(this.puppeteer.configuration.temporaryDirectory ?? tmpdir(), `puppeteer_dev_${this.browser}_profile-`);
+    return join22(this.puppeteer.configuration.temporaryDirectory ?? tmpdir(), `puppeteer_dev_${this.browser}_profile-`);
   }
   resolveExecutablePath(headless, validatePath = true) {
     let executablePath = this.puppeteer.configuration.executablePath;
     if (executablePath) {
-      if (validatePath && !existsSync21(executablePath)) {
+      if (validatePath && !existsSync23(executablePath)) {
         throw new Error(`Tried to find the browser at the configured path (${executablePath}), but no executable was found.`);
       }
       return executablePath;
@@ -84394,7 +85056,7 @@ class BrowserLauncher {
       browser: browserType,
       buildId: this.puppeteer.browserVersion
     });
-    if (validatePath && !existsSync21(executablePath)) {
+    if (validatePath && !existsSync23(executablePath)) {
       const configVersion = this.puppeteer.configuration?.[this.browser]?.version;
       if (configVersion) {
         throw new Error(`Tried to find the browser at the configured path (${executablePath}) for version ${configVersion}, but no executable was found.`);
@@ -84494,7 +85156,7 @@ var init_ChromeLauncher = __esm(() => {
       return super.launch(options);
     }
     async computeLaunchArguments(options = {}) {
-      const { ignoreDefaultArgs = false, args = [], pipe: pipe2 = false, debuggingPort, channel, executablePath } = options;
+      const { ignoreDefaultArgs = false, args = [], pipe: pipe2 = false, debuggingPort, channel: channel2, executablePath } = options;
       const chromeArguments = [];
       if (!ignoreDefaultArgs) {
         chromeArguments.push(...this.defaultArgs(options));
@@ -84528,8 +85190,8 @@ var init_ChromeLauncher = __esm(() => {
       assert(typeof userDataDir === "string", "`--user-data-dir` is malformed");
       let chromeExecutable = executablePath;
       if (!chromeExecutable) {
-        assert(channel || !this.puppeteer._isPuppeteerCore, `An \`executablePath\` or \`channel\` must be specified for \`puppeteer-core\``);
-        chromeExecutable = channel ? this.executablePath(channel) : this.resolveExecutablePath(options.headless ?? true);
+        assert(channel2 || !this.puppeteer._isPuppeteerCore, `An \`executablePath\` or \`channel\` must be specified for \`puppeteer-core\``);
+        chromeExecutable = channel2 ? this.executablePath(channel2) : this.resolveExecutablePath(options.headless ?? true);
       }
       return {
         executablePath: chromeExecutable,
@@ -84633,11 +85295,11 @@ var init_ChromeLauncher = __esm(() => {
       chromeArguments.push(...args);
       return chromeArguments;
     }
-    executablePath(channel, validatePath = true) {
-      if (channel) {
+    executablePath(channel2, validatePath = true) {
+      if (channel2) {
         return computeSystemExecutablePath({
           browser: Browser6.CHROME,
-          channel: convertPuppeteerChannelToBrowsersChannel(channel)
+          channel: convertPuppeteerChannelToBrowsersChannel(channel2)
         });
       } else {
         return this.resolveExecutablePath(undefined, validatePath);
@@ -84929,10 +85591,10 @@ var init_PuppeteerNode = __esm(() => {
 });
 
 // node_modules/puppeteer-core/lib/esm/puppeteer/node/ScreenRecorder.js
-import { spawn as spawn2, spawnSync as spawnSync3 } from "node:child_process";
+import { spawn as spawn2, spawnSync as spawnSync4 } from "node:child_process";
 import fs5 from "node:fs";
 import os8 from "node:os";
-import { dirname as dirname11 } from "node:path";
+import { dirname as dirname12 } from "node:path";
 import { PassThrough } from "node:stream";
 var import_debug6, __runInitializers22 = function(thisArg, initializers, value) {
   var useValue = arguments.length > 2;
@@ -85033,7 +85695,7 @@ var init_ScreenRecorder = __esm(() => {
         colors ??= 256;
         overwrite ??= true;
         this.#fps = fps;
-        const { error } = spawnSync3(ffmpegPath);
+        const { error } = spawnSync4(ffmpegPath);
         if (error) {
           throw error;
         }
@@ -85056,7 +85718,7 @@ var init_ScreenRecorder = __esm(() => {
           filters.push(formatArgs.splice(vf, 2).at(-1) ?? "");
         }
         if (path11) {
-          fs5.mkdirSync(dirname11(path11), { recursive: overwrite });
+          fs5.mkdirSync(dirname12(path11), { recursive: overwrite });
         }
         this.#process = spawn2(ffmpegPath, [
           ["-loglevel", "error"],
@@ -85209,17 +85871,17 @@ var init_puppeteer_core = __esm(() => {
 });
 
 // src/core/design-eval/capture.ts
-import { mkdirSync as mkdirSync9, statSync as statSync11, existsSync as existsSync22 } from "fs";
-import { join as join21 } from "path";
+import { mkdirSync as mkdirSync11, statSync as statSync11, existsSync as existsSync24 } from "fs";
+import { join as join23 } from "path";
 function findBrowser() {
   const platform2 = process.platform;
   const paths = CHROME_PATHS[platform2] ?? [];
   for (const p of paths) {
-    if (existsSync22(p))
+    if (existsSync24(p))
       return p;
   }
-  const minkBrowsers = join21(minkRoot(), "browsers");
-  if (existsSync22(minkBrowsers)) {
+  const minkBrowsers = join23(minkRoot(), "browsers");
+  if (existsSync24(minkBrowsers)) {
     const found = findChromeInDir(minkBrowsers);
     if (found)
       return found;
@@ -85240,7 +85902,7 @@ function findChromeInDir(dir) {
   try {
     const entries = readdirSync7(dir);
     for (const entry of entries) {
-      const full = join21(dir, entry);
+      const full = join23(dir, entry);
       try {
         const stat2 = statSync12(full);
         if (stat2.isDirectory()) {
@@ -85288,7 +85950,7 @@ async function captureRoute(page, route, baseUrl, viewport, options) {
     const y = section * viewport.height;
     const clipHeight = Math.min(viewport.height, pageHeight - y);
     const fileName = `${prefix}-${viewport.name}-${section}.jpg`;
-    const filePath = join21(options.outputDir, fileName);
+    const filePath = join23(options.outputDir, fileName);
     await page.screenshot({
       path: filePath,
       type: "jpeg",
@@ -85320,7 +85982,7 @@ async function captureRoute(page, route, baseUrl, viewport, options) {
   return results;
 }
 async function captureAllRoutes(routes, baseUrl, viewports, options, outputDir) {
-  mkdirSync9(outputDir, { recursive: true });
+  mkdirSync11(outputDir, { recursive: true });
   const executablePath = findBrowser();
   const browser = await puppeteer_core_default.launch({
     executablePath,
@@ -86748,22 +87410,22 @@ var init_framework_advisor2 = __esm(() => {
 });
 
 // src/core/vault-templates.ts
-import { join as join22 } from "path";
-import { existsSync as existsSync23, writeFileSync as writeFileSync6, readFileSync as readFileSync23, mkdirSync as mkdirSync10 } from "fs";
+import { join as join24 } from "path";
+import { existsSync as existsSync25, writeFileSync as writeFileSync8, readFileSync as readFileSync24, mkdirSync as mkdirSync12 } from "fs";
 function seedTemplates(templatesDir) {
-  mkdirSync10(templatesDir, { recursive: true });
+  mkdirSync12(templatesDir, { recursive: true });
   for (const [name, content] of Object.entries(DEFAULT_TEMPLATES)) {
-    const filePath = join22(templatesDir, `${name}.md`);
-    if (!existsSync23(filePath)) {
-      writeFileSync6(filePath, content);
+    const filePath = join24(templatesDir, `${name}.md`);
+    if (!existsSync25(filePath)) {
+      writeFileSync8(filePath, content);
     }
   }
 }
 function loadTemplate(templatesDir, templateName, vars) {
-  const filePath = join22(templatesDir, `${templateName}.md`);
+  const filePath = join24(templatesDir, `${templateName}.md`);
   let content;
-  if (existsSync23(filePath)) {
-    content = readFileSync23(filePath, "utf-8");
+  if (existsSync25(filePath)) {
+    content = readFileSync24(filePath, "utf-8");
   } else if (DEFAULT_TEMPLATES[templateName]) {
     content = DEFAULT_TEMPLATES[templateName];
   } else {
@@ -86916,8 +87578,8 @@ category: resources
 });
 
 // src/core/note-linker.ts
-import { join as join23 } from "path";
-import { existsSync as existsSync24, readFileSync as readFileSync24, readdirSync as readdirSync7, statSync as statSync12 } from "fs";
+import { join as join25 } from "path";
+import { existsSync as existsSync26, readFileSync as readFileSync25, readdirSync as readdirSync7, statSync as statSync12 } from "fs";
 function updateMasterIndex(vaultRootPath) {
   const now = new Date().toISOString().split("T")[0];
   const sections = [
@@ -86939,8 +87601,8 @@ function updateMasterIndex(vaultRootPath) {
     { name: "Patterns", dir: "patterns", emoji: "" }
   ];
   for (const cat of categories) {
-    const dirPath = join23(vaultRootPath, cat.dir);
-    if (!existsSync24(dirPath))
+    const dirPath = join25(vaultRootPath, cat.dir);
+    if (!existsSync26(dirPath))
       continue;
     const files = collectMarkdownFiles(dirPath, vaultRootPath);
     if (files.length === 0 && cat.dir !== "inbox")
@@ -86969,7 +87631,7 @@ function collectMarkdownFiles(dirPath, rootPath) {
   try {
     const entries = readdirSync7(dirPath, { withFileTypes: true });
     for (const entry of entries) {
-      const fullPath = join23(dirPath, entry.name);
+      const fullPath = join25(dirPath, entry.name);
       if (entry.isDirectory()) {
         files.push(...collectMarkdownFiles(fullPath, rootPath));
       } else if (entry.name.endsWith(".md") && !entry.name.startsWith("_")) {
@@ -86992,7 +87654,7 @@ var exports_wiki = {};
 __export(exports_wiki, {
   wiki: () => wiki
 });
-import { existsSync as existsSync25, statSync as statSync13 } from "fs";
+import { existsSync as existsSync27, statSync as statSync13 } from "fs";
 import { resolve as resolve11 } from "path";
 import { homedir as homedir4 } from "os";
 async function wiki(_cwd, args) {
@@ -87048,7 +87710,7 @@ async function wikiInit(args) {
     console.log(`[mink] initializing vault at ${targetPath}`);
     console.log("  (set a custom path with: mink wiki init /path/to/vault)");
   }
-  const isExisting = existsSync25(targetPath) && statSync13(targetPath).isDirectory();
+  const isExisting = existsSync27(targetPath) && statSync13(targetPath).isDirectory();
   setConfigValue("wiki.path", targetPath);
   ensureVaultStructure();
   seedTemplates(vaultTemplates());
@@ -87266,8 +87928,8 @@ var init_wiki = __esm(() => {
 });
 
 // src/core/note-writer.ts
-import { join as join24 } from "path";
-import { existsSync as existsSync26, readFileSync as readFileSync25 } from "fs";
+import { join as join26 } from "path";
+import { existsSync as existsSync28, readFileSync as readFileSync26 } from "fs";
 function slugifyTitle(title) {
   return title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
 }
@@ -87300,7 +87962,7 @@ function createNote(meta) {
   const now = meta.created || new Date().toISOString();
   const slug = slugifyTitle(meta.title);
   const dir = categoryToDir(meta.category, meta.projectSlug);
-  const filePath = join24(dir, `${slug}.md`);
+  const filePath = join26(dir, `${slug}.md`);
   let content;
   if (meta.template) {
     const rendered = loadTemplate(vaultTemplates(), meta.template, {
@@ -87334,9 +87996,9 @@ ${meta.body}
 }
 function appendToDaily(date, content) {
   const dir = vaultDailyDir();
-  const filePath = join24(dir, `${date}.md`);
-  if (existsSync26(filePath)) {
-    const existing = readFileSync25(filePath, "utf-8");
+  const filePath = join26(dir, `${date}.md`);
+  if (existsSync28(filePath)) {
+    const existing = readFileSync26(filePath, "utf-8");
     const timestamp = new Date().toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
@@ -87374,7 +88036,7 @@ ${content}
   return filePath;
 }
 function ingestFile(sourcePath, meta) {
-  const raw = readFileSync25(sourcePath, "utf-8");
+  const raw = readFileSync26(sourcePath, "utf-8");
   const now = new Date().toISOString();
   const headingMatch = raw.match(/^#\s+(.+)$/m);
   const title = headingMatch?.[1] ?? sourcePath.split("/").pop().replace(/\.md$/, "");
@@ -87412,7 +88074,7 @@ ${raw}`;
   }
   const slug = slugifyTitle(title);
   const dir = categoryToDir(meta.category, meta.projectSlug);
-  const filePath = join24(dir, `${slug}.md`);
+  const filePath = join26(dir, `${slug}.md`);
   atomicWriteText(filePath, content);
   return { filePath, content };
 }
@@ -87428,7 +88090,7 @@ __export(exports_note, {
   note: () => note
 });
 import { resolve as resolve12 } from "path";
-import { existsSync as existsSync27, readFileSync as readFileSync26 } from "fs";
+import { existsSync as existsSync29, readFileSync as readFileSync27 } from "fs";
 async function note(cwd, args) {
   if (!isWikiEnabled()) {
     console.error("[mink] wiki feature is disabled");
@@ -87453,13 +88115,13 @@ async function note(cwd, args) {
     const date = new Date().toISOString().split("T")[0];
     const content = parsed.positional || parsed.body || "";
     const filePath = appendToDaily(date, content);
-    updateVaultIndexForFile(filePath, readFileSync26(filePath, "utf-8"));
+    updateVaultIndexForFile(filePath, readFileSync27(filePath, "utf-8"));
     console.log(`[mink] daily note: ${filePath}`);
     return;
   }
   if (parsed.file) {
     const sourcePath = resolve12(cwd, parsed.file);
-    if (!existsSync27(sourcePath)) {
+    if (!existsSync29(sourcePath)) {
       console.error(`[mink] file not found: ${sourcePath}`);
       process.exit(1);
     }
@@ -87620,29 +88282,29 @@ var exports_skill = {};
 __export(exports_skill, {
   skill: () => skill
 });
-import { join as join25, resolve as resolve13, dirname as dirname12 } from "path";
+import { join as join27, resolve as resolve13, dirname as dirname13 } from "path";
 import { homedir as homedir5 } from "os";
 import {
-  existsSync as existsSync28,
-  mkdirSync as mkdirSync11,
+  existsSync as existsSync30,
+  mkdirSync as mkdirSync13,
   copyFileSync,
-  unlinkSync as unlinkSync3,
+  unlinkSync as unlinkSync4,
   readdirSync as readdirSync8,
   rmSync,
   symlinkSync as symlinkSync2,
   lstatSync as lstatSync2
 } from "fs";
 function getSkillsSourceDir() {
-  return resolve13(dirname12(new URL(import.meta.url).pathname), "../../skills");
+  return resolve13(dirname13(new URL(import.meta.url).pathname), "../../skills");
 }
 function getAvailableSkills() {
   const dir = getSkillsSourceDir();
-  if (!existsSync28(dir))
+  if (!existsSync30(dir))
     return [];
-  return readdirSync8(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync28(join25(dir, d.name, "SKILL.md"))).map((d) => d.name);
+  return readdirSync8(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync30(join27(dir, d.name, "SKILL.md"))).map((d) => d.name);
 }
 function isInstalled(skillName) {
-  return existsSync28(join25(AGENTS_SKILLS_DIR, skillName, "SKILL.md"));
+  return existsSync30(join27(AGENTS_SKILLS_DIR, skillName, "SKILL.md"));
 }
 async function skill(args) {
   const sub = args[0];
@@ -87676,28 +88338,28 @@ function skillInstall(name) {
     console.error("  Expected skills at: " + sourceDir);
     return;
   }
-  mkdirSync11(AGENTS_SKILLS_DIR, { recursive: true });
+  mkdirSync13(AGENTS_SKILLS_DIR, { recursive: true });
   for (const skillName of skills) {
-    const srcDir = join25(sourceDir, skillName);
-    const srcFile = join25(srcDir, "SKILL.md");
-    const destDir = join25(AGENTS_SKILLS_DIR, skillName);
-    if (!existsSync28(srcFile)) {
+    const srcDir = join27(sourceDir, skillName);
+    const srcFile = join27(srcDir, "SKILL.md");
+    const destDir = join27(AGENTS_SKILLS_DIR, skillName);
+    if (!existsSync30(srcFile)) {
       console.error(`[mink] skill not found: ${skillName}`);
       continue;
     }
-    mkdirSync11(destDir, { recursive: true });
+    mkdirSync13(destDir, { recursive: true });
     copyDirRecursive(srcDir, destDir);
-    mkdirSync11(CLAUDE_SKILLS_DIR, { recursive: true });
-    const symlink = join25(CLAUDE_SKILLS_DIR, skillName);
+    mkdirSync13(CLAUDE_SKILLS_DIR, { recursive: true });
+    const symlink = join27(CLAUDE_SKILLS_DIR, skillName);
     try {
-      if (existsSync28(symlink)) {
+      if (existsSync30(symlink)) {
         if (lstatSync2(symlink).isSymbolicLink() || lstatSync2(symlink).isFile()) {
-          unlinkSync3(symlink);
+          unlinkSync4(symlink);
         } else {
           rmSync(symlink, { recursive: true, force: true });
         }
       }
-      const relativeTarget = join25("..", "..", ".agents", "skills", skillName);
+      const relativeTarget = join27("..", "..", ".agents", "skills", skillName);
       symlinkSync2(relativeTarget, symlink);
     } catch {}
     console.log(`[mink] installed: ${skillName} -> ${destDir}`);
@@ -87708,16 +88370,16 @@ function skillInstall(name) {
 function skillUninstall(name) {
   const skills = name ? [name] : getAvailableSkills();
   for (const skillName of skills) {
-    const destDir = join25(AGENTS_SKILLS_DIR, skillName);
-    if (!existsSync28(destDir)) {
+    const destDir = join27(AGENTS_SKILLS_DIR, skillName);
+    if (!existsSync30(destDir)) {
       console.log(`[mink] not installed: ${skillName}`);
       continue;
     }
     rmSync(destDir, { recursive: true, force: true });
-    const symlink = join25(CLAUDE_SKILLS_DIR, skillName);
+    const symlink = join27(CLAUDE_SKILLS_DIR, skillName);
     try {
-      if (existsSync28(symlink))
-        unlinkSync3(symlink);
+      if (existsSync30(symlink))
+        unlinkSync4(symlink);
     } catch {}
     console.log(`[mink] uninstalled: ${skillName}`);
   }
@@ -87731,7 +88393,7 @@ function skillList() {
   if (installed.length > 0) {
     console.log("  Installed:");
     for (const s of installed) {
-      console.log(`    ${s}  (${join25(AGENTS_SKILLS_DIR, s)})`);
+      console.log(`    ${s}  (${join27(AGENTS_SKILLS_DIR, s)})`);
     }
   }
   if (notInstalled.length > 0) {
@@ -87750,10 +88412,10 @@ function skillList() {
 function copyDirRecursive(src, dest) {
   const entries = readdirSync8(src, { withFileTypes: true });
   for (const entry of entries) {
-    const srcPath = join25(src, entry.name);
-    const destPath = join25(dest, entry.name);
+    const srcPath = join27(src, entry.name);
+    const destPath = join27(dest, entry.name);
     if (entry.isDirectory()) {
-      mkdirSync11(destPath, { recursive: true });
+      mkdirSync13(destPath, { recursive: true });
       copyDirRecursive(srcPath, destPath);
     } else {
       copyFileSync(srcPath, destPath);
@@ -87762,8 +88424,8 @@ function copyDirRecursive(src, dest) {
 }
 var AGENTS_SKILLS_DIR, CLAUDE_SKILLS_DIR;
 var init_skill = __esm(() => {
-  AGENTS_SKILLS_DIR = join25(homedir5(), ".agents", "skills");
-  CLAUDE_SKILLS_DIR = join25(homedir5(), ".claude", "skills");
+  AGENTS_SKILLS_DIR = join27(homedir5(), ".agents", "skills");
+  CLAUDE_SKILLS_DIR = join27(homedir5(), ".claude", "skills");
 });
 
 // src/commands/sync.ts
@@ -88218,6 +88880,11 @@ switch (command2) {
     await daemon2(cwd, process.argv.slice(3));
     break;
   }
+  case "channel": {
+    const { channel: channel2 } = await Promise.resolve().then(() => (init_channel(), exports_channel));
+    await channel2(process.argv.slice(3));
+    break;
+  }
   case "config": {
     const { config: config3 } = await Promise.resolve().then(() => (init_config2(), exports_config));
     await config3(process.argv.slice(3));
@@ -88287,11 +88954,11 @@ switch (command2) {
   case "version":
   case "--version":
   case "-v": {
-    const { resolve: resolve14, dirname: dirname13 } = await import("path");
-    const cliPath = resolve14(dirname13(new URL(import.meta.url).pathname));
-    const { readFileSync: readFileSync27 } = await import("fs");
+    const { resolve: resolve14, dirname: dirname14 } = await import("path");
+    const cliPath = resolve14(dirname14(new URL(import.meta.url).pathname));
+    const { readFileSync: readFileSync28 } = await import("fs");
     try {
-      const pkg = JSON.parse(readFileSync27(resolve14(cliPath, "../package.json"), "utf-8"));
+      const pkg = JSON.parse(readFileSync28(resolve14(cliPath, "../package.json"), "utf-8"));
       console.log(`mink ${pkg.version}`);
     } catch {
       console.log("mink (unknown version)");
@@ -88331,6 +88998,13 @@ switch (command2) {
     console.log("  sync pull               Manually pull remote changes");
     console.log("  sync pause / resume     Temporarily disable/enable auto-sync");
     console.log("  sync disconnect         Remove git tracking (data preserved)");
+    console.log();
+    console.log("Channels (conversational companion):");
+    console.log("  channel setup discord --token <t>  Configure Discord bot token");
+    console.log("  channel start [platform]           Launch a Claude Code session with --channels in the vault");
+    console.log("  channel stop                       Stop the channel session");
+    console.log("  channel status                     Show channel status");
+    console.log("  channel logs                       Tail channel log");
     console.log();
     console.log("Automation & Analysis:");
     console.log("  dashboard [--port=N]    Open the real-time web dashboard");

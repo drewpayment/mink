@@ -3,6 +3,16 @@ import { mkdirSync } from "fs";
 import { dirname, resolve } from "path";
 import { schedulerPidPath, schedulerLogPath } from "./paths";
 import type { PidFileData } from "../types/scheduler";
+import { resolveConfigValue } from "./global-config";
+import { resolveVaultPath, isVaultInitialized } from "./vault";
+import { writeCompanionClaudeMd } from "./channel-templates";
+import {
+  startChannelProcess,
+  stopChannelProcess,
+  getChannelStatus,
+  isChannelRunning,
+} from "./channel-process";
+import type { ChannelPlatform, ChannelStatus } from "../types/channel";
 
 // ── PID File Operations ─────────────────────────────────────────────────────
 
@@ -91,9 +101,49 @@ export function startDaemon(cwd: string): void {
 
   console.log(`[mink] scheduler started (PID: ${proc.pid})`);
   console.log(`[mink] log: ${logPath}`);
+
+  // Fire and forget — channel startup has its own verification loop.
+  maybeStartChannel().catch((err) => {
+    console.error(`[mink] failed to start channel: ${err instanceof Error ? err.message : String(err)}`);
+  });
+}
+
+async function maybeStartChannel(): Promise<void> {
+  const enabled = resolveConfigValue("channel.discord.enabled").value === "true";
+  if (!enabled) return;
+
+  if (!isVaultInitialized()) {
+    console.log("[mink] channel enabled but vault not initialized — skipping channel start");
+    return;
+  }
+
+  const token = resolveConfigValue("channel.discord.bot-token").value;
+  if (!token) {
+    console.log("[mink] channel enabled but no Discord bot token configured — skipping channel start");
+    return;
+  }
+
+  if (isChannelRunning()) {
+    return;
+  }
+
+  const platform =
+    (resolveConfigValue("channel.default-platform").value as ChannelPlatform) ||
+    "discord";
+  const skipPermissions =
+    resolveConfigValue("channel.skip-permissions").value === "true";
+  const vaultPath = resolveVaultPath();
+  writeCompanionClaudeMd(vaultPath, false);
+
+  const result = await startChannelProcess({ vaultPath, platform, token, skipPermissions });
+  if (!result.alreadyRunning) {
+    console.log(`[mink] channel started (session: ${result.session}, platform: ${platform})`);
+  }
 }
 
 export async function stopDaemon(): Promise<void> {
+  await stopChannelIfRunning();
+
   const pidData = readPidFile();
   if (!pidData) {
     console.log("[mink] scheduler is not running (no PID file)");
@@ -130,24 +180,35 @@ export async function stopDaemon(): Promise<void> {
   console.log("[mink] scheduler force-stopped (SIGKILL)");
 }
 
+async function stopChannelIfRunning(): Promise<void> {
+  if (!isChannelRunning()) return;
+  const result = await stopChannelProcess();
+  if (result === "stopped") {
+    console.log("[mink] channel stopped");
+  }
+}
+
 export function getDaemonStatus(cwd: string): {
   running: boolean;
   pid?: number;
   startedAt?: string;
   projectCwd?: string;
+  channel: ChannelStatus | null;
 } {
+  const channel = getChannelStatus();
   const pidData = readPidFile();
   if (!pidData) {
-    return { running: false };
+    return { running: false, channel };
   }
   if (!isProcessAlive(pidData.pid)) {
     removePidFile();
-    return { running: false };
+    return { running: false, channel };
   }
   return {
     running: true,
     pid: pidData.pid,
     startedAt: pidData.startedAt,
     projectCwd: pidData.projectCwd,
+    channel,
   };
 }

@@ -9,6 +9,10 @@ export interface GlobalConfig {
   "sync.remote-url"?: string;
   "sync.last-push"?: string;
   "sync.last-pull"?: string;
+  "channel.discord.bot-token"?: string;
+  "channel.discord.enabled"?: string;
+  "channel.default-platform"?: string;
+  "channel.skip-permissions"?: string;
 }
 
 export type ConfigKey = keyof GlobalConfig & string;
@@ -105,6 +109,34 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     envVar: "MINK_SYNC_LAST_PULL",
     description: "ISO timestamp of last successful sync pull",
     scope: "local",
+  },
+  {
+    key: "channel.discord.bot-token",
+    default: "",
+    envVar: "MINK_CHANNEL_DISCORD_BOT_TOKEN",
+    description: "Discord bot token for Claude Code Channels",
+    scope: "local",
+  },
+  {
+    key: "channel.discord.enabled",
+    default: "false",
+    envVar: "MINK_CHANNEL_DISCORD_ENABLED",
+    description: "Auto-start Discord channel when daemon starts",
+    scope: "local",
+  },
+  {
+    key: "channel.default-platform",
+    default: "discord",
+    envVar: "MINK_CHANNEL_DEFAULT_PLATFORM",
+    description: "Default platform for mink channel start",
+    scope: "shared",
+  },
+  {
+    key: "channel.skip-permissions",
+    default: "true",
+    envVar: "MINK_CHANNEL_SKIP_PERMISSIONS",
+    description: "Pass --dangerously-skip-permissions so the channel can run without terminal prompts",
+    scope: "shared",
   },
 ];
 

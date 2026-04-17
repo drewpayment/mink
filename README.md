@@ -21,6 +21,7 @@ Mink intercepts these lifecycle events and maintains structured state so the ass
 - **Advise on frameworks** with a decision tree and migration guides
 - **Build a cross-project wiki** that accumulates knowledge across all your projects
 - **Capture notes from anywhere** with an AI-powered Claude Code skill that categorizes, tags, and links notes automatically
+- **Chat with Mink from Discord** — DM your bot to capture, search, and summarize your wiki from anywhere via Claude Code Channels
 - **Sync across machines** with git-backed `~/.mink` syncing — auto-pull on session start, auto-push on session stop
 
 ## How It Works
@@ -72,6 +73,12 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 - **Vault Index** — Token-efficient file index for the vault, with search and tag aggregation
 - **External Linking** — Symlink external notes directories into the vault for a unified Obsidian experience
 - **Templates** — 6 built-in templates (quick-capture, daily, meeting, project, area, person)
+
+### Discord Companion
+- **Conversational interface** — DM your bot on Discord to capture notes, search the vault, and get daily summaries
+- **Always-on** — runs Claude Code inside a detached GNU screen session that survives terminal closes
+- **CLAUDE.md-driven persona** — the bot's behavior is configured by a markdown file in the vault, not code
+- **Unattended mode** — optional `--dangerously-skip-permissions` bypasses terminal prompts so the bot works entirely from Discord
 
 ### Advanced
 - **Design Evaluation** — Automated multi-viewport screenshot capture with server and route detection (uses Puppeteer)
@@ -271,6 +278,154 @@ mink wiki unlink notes
 ```
 
 Open `~/.mink/wiki/` as your Obsidian vault and you'll see Mink's generated content (projects, patterns, inbox) alongside your own notes — with `[[wikilinks]]` working across both.
+
+## Discord Companion
+
+DM your bot on Discord to capture notes, search the vault, and get summaries — with the Claude Code session running on your own machine against your own wiki.
+
+This uses [Claude Code Channels](https://code.claude.com/docs/en/channels) to push Discord messages into a running Claude Code session. The session launches inside a detached GNU screen with a preloaded `CLAUDE.md` that makes Claude behave as a knowledge companion. Nothing is hosted; the bot is just you talking to Claude on your laptop.
+
+### Prerequisites
+
+- [Claude Code](https://claude.ai/code) v2.1.80+ signed in with a `claude.ai` account (Console/API-key auth is not supported by Channels)
+- [Bun](https://bun.sh/) (required by the Discord channel plugin)
+- `screen` (pre-installed on macOS; `sudo apt install screen` on Linux)
+- An initialized vault: `mink wiki init`
+
+### Step-by-step setup
+
+**1. Create a Discord bot**
+
+In the [Discord Developer Portal](https://discord.com/developers/applications):
+
+1. Click **New Application** and give it a name
+2. Open the **Bot** page → click **Reset Token** → copy the token somewhere safe
+3. On the same page, scroll to **Privileged Gateway Intents** and enable **Message Content Intent** (required — without this the bot receives empty messages)
+
+**2. Invite the bot to a server**
+
+Still in the Developer Portal:
+
+1. Go to **OAuth2 → URL Generator**
+2. Set **Integration Type** to **Guild Install** (not *User Install* — `bot` scope is only valid for Guild Install)
+3. Check scope: **bot**
+4. Check bot permissions: **View Channels**, **Send Messages**, **Send Messages in Threads**, **Read Message History**, **Attach Files**, **Add Reactions**
+5. Open the generated URL in your browser and invite the bot to a server
+
+> To DM the bot privately, create a personal server first (Discord → `+` icon → **Create My Own** → *For me and my friends*). Guild-Install bots can receive DMs from any user who shares a server with them.
+
+**3. Install the Discord channel plugin in Claude Code (one time)**
+
+```bash
+claude
+```
+
+Inside Claude Code:
+
+```
+/plugin install discord@claude-plugins-official
+```
+
+Wait for the confirmation, then exit Claude Code.
+
+**4. Save the bot token in mink**
+
+```bash
+mink channel setup discord --token YOUR_BOT_TOKEN
+```
+
+Running `mink channel setup discord` without `--token` prints the full instructions above for reference. The token is stored in `~/.mink/config.local` (machine-scoped — it won't sync to other machines).
+
+**5. Start the channel**
+
+```bash
+mink channel start
+```
+
+This:
+
+- Writes `~/.mink/wiki/CLAUDE.md` (the companion personality) if it doesn't already exist
+- Launches Claude Code with `--channels plugin:discord@claude-plugins-official --dangerously-skip-permissions` inside a detached GNU screen session named `mink-channel-discord`
+
+**6. Pair your Discord account**
+
+1. DM your bot on Discord (any message)
+2. The bot replies with a pairing code
+3. Attach to the session so you can type into Claude Code:
+   ```bash
+   mink channel attach
+   ```
+4. Inside the attached session, run:
+   ```
+   /discord:access pair YOUR_PAIRING_CODE
+   /discord:access policy allowlist
+   ```
+5. Detach with **Ctrl-a** then **d** (don't exit — detach keeps the session running)
+
+You're done. DM your bot from anywhere.
+
+### Daily use
+
+```bash
+mink channel status     # running? uptime? session name?
+mink channel logs       # recent Claude Code output (via screen hardcopy)
+mink channel attach     # jump into the live session; detach with Ctrl-a d
+mink channel stop       # end the session
+mink channel start      # start it again (e.g. after a reboot)
+```
+
+### Example conversations
+
+From Discord:
+
+- **Capture** — "Save a note — the auth migration is blocked on new compliance requirements from legal."
+- **Daily** — "Add to my daily: shipped the config refactor, PR #42 is up."
+- **Meeting** — "Meeting with Sarah about Q3 roadmap — discussed prioritizing the mobile SDK, 6-week timeline."
+- **Search** — "What did I write about the auth migration?"
+- **Summary** — "What did I work on this week?"
+
+The companion `CLAUDE.md` tells Claude to categorize, tag with existing vocabulary, add `[[wikilinks]]`, and reply briefly.
+
+### Customizing the bot's personality
+
+The bot's behavior lives in `~/.mink/wiki/CLAUDE.md` — pure markdown, no code. Edit it to adjust tone, add behavioral rules, or include project-specific context. Changes take effect on the next `mink channel start`.
+
+Mink never overwrites an existing `CLAUDE.md`. To refresh from the built-in template after a mink upgrade:
+
+```bash
+rm ~/.mink/wiki/CLAUDE.md
+mink channel start
+```
+
+### Configuration
+
+| Setting | Default | Scope | Description |
+|---------|---------|-------|-------------|
+| `channel.discord.bot-token` | — | local | Discord bot token (saved by `mink channel setup`) |
+| `channel.discord.enabled` | `false` | local | Auto-start the channel when `mink daemon start` runs |
+| `channel.default-platform` | `discord` | shared | Platform when `mink channel start` is run without an argument |
+| `channel.skip-permissions` | `true` | shared | Pass `--dangerously-skip-permissions` so the bot runs unattended |
+
+Change any value with `mink config <key> <value>`.
+
+### Security model
+
+- **Sender allowlist** — After pairing and running `/discord:access policy allowlist`, only your Discord account can push messages to the bot. Everyone else is silently dropped.
+- **Local execution** — The Claude Code session runs entirely on your own machine. Nothing is hosted.
+- **Skip-permissions trade-off** — With `channel.skip-permissions` on (default), Claude does not prompt before tool calls. Combined with the sender allowlist this is fine for personal use; turn it off with `mink config channel.skip-permissions false` if you want each tool call approved via `mink channel attach`.
+- **Scope** — The companion `CLAUDE.md` tells Claude to stay focused on vault/mink operations and not edit source code.
+
+### Troubleshooting
+
+- **"channel session died immediately after starting"** — Usually `claude` isn't on your PATH, or the Discord plugin isn't installed. Run `which claude` and verify step 3 (`/plugin install discord@claude-plugins-official`) was completed. To see the underlying error, run the command manually:
+  ```bash
+  cd ~/.mink/wiki && claude --channels plugin:discord@claude-plugins-official
+  ```
+- **Bot doesn't respond to DMs** — Make sure you share a server with it (Guild-Install bots can only DM users who share a server) and that **Message Content Intent** is enabled in the Developer Portal.
+- **`Input must be provided either through stdin...`** in logs — The Claude Code session has no TTY. The `mink channel` commands spawn through GNU screen to avoid this; if you see it, check that `screen` is on PATH.
+- **Permission prompts stall the bot** — Ensure `mink config channel.skip-permissions` is `true` (the default). Apply after a restart: `mink channel stop && mink channel start`.
+- **Token rotated or invalid** — Re-run `mink channel setup discord --token NEW_TOKEN`, then restart the channel.
+- **Colors look washed out when you `mink channel attach`** — mink starts screen with `-T screen-256color` so Claude Code renders at 256-color depth. If you still see muted output, verify your terminfo database has the entry: `infocmp screen-256color`. If truecolor escape codes look garbled (common on very old GNU screen versions like macOS's bundled 4.00.03), restart the channel with `COLORTERM` unset so Claude falls back to 256-color mode: `mink channel stop && env -u COLORTERM mink channel start`.
 
 ## Sync
 
