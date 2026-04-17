@@ -57,6 +57,14 @@ export function schedulerManifestPath(cwd: string): string {
   return join(projectDir(cwd), "scheduler-manifest.json");
 }
 
+export function channelPidPath(): string {
+  return join(MINK_ROOT, "channel.pid");
+}
+
+export function channelLogPath(): string {
+  return join(MINK_ROOT, "channel.log");
+}
+
 export function globalConfigPath(): string {
   return join(MINK_ROOT, "config");
 }
