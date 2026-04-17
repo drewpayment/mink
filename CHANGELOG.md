@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/drewpayment/mink/compare/v0.4.0...v0.5.0) (2026-04-17)
+
+
+### Features
+
+* add discord channel companion via claude code channels ([659ba26](https://github.com/drewpayment/mink/commit/659ba268e6bb35b94f6df2976c843c33204232a0))
+* Discord channel companion via Claude Code Channels ([c64f3a4](https://github.com/drewpayment/mink/commit/c64f3a4d6012f3a7ac03e7ba30357535b27f374b))
+
+
+### Bug Fixes
+
+* **channel:** advertise screen-256color to avoid washed-out colors ([48e20a0](https://github.com/drewpayment/mink/commit/48e20a0d325f77cb04459d88b588e469a88b3a8a))
+
 ## [0.4.0](https://github.com/drewpayment/mink/compare/v0.3.0...v0.4.0) (2026-04-16)
 
 
