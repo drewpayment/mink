@@ -131,7 +131,9 @@ export async function startChannelProcess(opts: StartChannelOptions): Promise<St
 
   const result = spawnSync(
     "screen",
-    ["-dmS", session, "bash", "-c", innerCmd],
+    // -T screen-256color: advertise 256-color terminal to inner programs.
+    // Default screen TERM is `screen` (8 colors) and makes Claude Code render washed-out.
+    ["-T", "screen-256color", "-dmS", session, "bash", "-c", innerCmd],
     { stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }
   );
 

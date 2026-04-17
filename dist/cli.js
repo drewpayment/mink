@@ -3341,7 +3341,7 @@ async function startChannelProcess(opts) {
   }
   parts.push(`exec ${shellEscape(claudeCmd)} ${claudeFlags.join(" ")}`);
   const innerCmd = parts.join("; ");
-  const result = spawnSync("screen", ["-dmS", session, "bash", "-c", innerCmd], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
+  const result = spawnSync("screen", ["-T", "screen-256color", "-dmS", session, "bash", "-c", innerCmd], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" });
   if (result.status !== 0) {
     const stderr = typeof result.stderr === "string" ? result.stderr : "";
     throw new Error(`screen failed to create session (exit ${result.status}): ${stderr || "(no output)"}`);

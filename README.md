@@ -425,6 +425,7 @@ Change any value with `mink config <key> <value>`.
 - **`Input must be provided either through stdin...`** in logs — The Claude Code session has no TTY. The `mink channel` commands spawn through GNU screen to avoid this; if you see it, check that `screen` is on PATH.
 - **Permission prompts stall the bot** — Ensure `mink config channel.skip-permissions` is `true` (the default). Apply after a restart: `mink channel stop && mink channel start`.
 - **Token rotated or invalid** — Re-run `mink channel setup discord --token NEW_TOKEN`, then restart the channel.
+- **Colors look washed out when you `mink channel attach`** — mink starts screen with `-T screen-256color` so Claude Code renders at 256-color depth. If you still see muted output, verify your terminfo database has the entry: `infocmp screen-256color`. If truecolor escape codes look garbled (common on very old GNU screen versions like macOS's bundled 4.00.03), restart the channel with `COLORTERM` unset so Claude falls back to 256-color mode: `mink channel stop && env -u COLORTERM mink channel start`.
 
 ## Sync
 
