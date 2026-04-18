@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/drewpayment/mink/compare/v0.5.0...v0.5.1) (2026-04-18)
+
+
+### Bug Fixes
+
+* ship built dashboard assets in npm tarball ([9984873](https://github.com/drewpayment/mink/commit/998487309679c17375684f9729bd786996659804))
+* ship built dashboard assets in npm tarball ([0996eab](https://github.com/drewpayment/mink/commit/0996eabb326989b98eb1e60cc6f277ef7099b397))
+
 ## [0.5.0](https://github.com/drewpayment/mink/compare/v0.4.0...v0.5.0) (2026-04-17)
 
 

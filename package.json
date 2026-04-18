@@ -1,6 +1,6 @@
 {
   "name": "@drewpayment/mink",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "A hidden presence that moves alongside the developer — token efficiency and cross-project wiki for AI coding assistants",
   "type": "module",
   "bin": {
