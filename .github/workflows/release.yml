@@ -39,6 +39,12 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Build dashboard
+        run: |
+          cd dashboard
+          bun install --frozen-lockfile
+          bun run build
+
       - name: Test
         run: bun test
 
@@ -66,6 +72,12 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      - name: Build dashboard
+        run: |
+          cd dashboard
+          bun install --frozen-lockfile
+          bun run build
 
       - name: Test
         run: bun test
