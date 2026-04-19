@@ -24,6 +24,27 @@ Mink intercepts these lifecycle events and maintains structured state so the ass
 - **Chat with Mink from Discord** — DM your bot to capture, search, and summarize your wiki from anywhere via Claude Code Channels
 - **Sync across machines** with git-backed `~/.mink` syncing — auto-pull on session start, auto-push on session stop
 
+## Dashboard Preview
+
+Launch `mink dashboard` and hit `http://localhost:4040` for a real-time command center — live sessions, token savings, scheduler, vault browser, daemon controls, and a streaming activity rail powered by the same hooks Mink uses internally.
+
+![Sessions overview — tokens, reads/writes, 7-day usage chart, session history, and live activity rail](docs/images/sessions-overview.png)
+
+<table>
+  <tr>
+    <td><img src="docs/images/tokens.png" alt="Token ledger with daily usage chart and per-session breakdown" /></td>
+    <td><img src="docs/images/vault.png" alt="Vault browser — tree, notes table, and note preview with backlinks" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/scheduler.png" alt="Scheduler — cron-backed tasks with success rate and dead-letter queue" /></td>
+    <td><img src="docs/images/daemon.png" alt="Daemon panel — status, uptime, heartbeat, and hook wiring table" /></td>
+  </tr>
+</table>
+
+When the daemon isn't running yet, the dashboard greets you with a guided onboarding panel instead of empty stats:
+
+![Onboarding — welcome back screen shown when the daemon is offline](docs/images/onboarding.png)
+
 ## How It Works
 
 Mink registers as a set of [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) that fire on key lifecycle events. Each hook is a lightweight CLI call that reads and updates JSON state files stored in `~/.mink/`.
