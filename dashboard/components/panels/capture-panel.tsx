@@ -10,6 +10,8 @@ import { createNote, appendDaily, ingestFile } from "@/lib/api-client";
 type Mode = "quick" | "structured" | "daily" | "file";
 type Status = "idle" | "saving" | "saved" | "error";
 
+const EMPTY_TAGS: ReadonlyArray<[string, number]> = [];
+
 function randomKey() {
   return (
     typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -20,7 +22,7 @@ function randomKey() {
 
 export function CapturePanel() {
   const [mode, setMode] = useState<Mode>("quick");
-  const tags = useDashboardStore((s) => s.wiki?.tags ?? []);
+  const tags = useDashboardStore((s) => s.wiki?.tags ?? EMPTY_TAGS);
 
   // Per-mode form state.
   const [quickBody, setQuickBody] = useState("");
