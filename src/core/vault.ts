@@ -11,10 +11,10 @@ const DEFAULT_VAULT_PATH = join(homedir(), ".mink", "wiki");
 export function resolveVaultPath(): string {
   const resolved = resolveConfigValue("wiki.path");
   const raw = resolved.value;
-  if (raw.startsWith("~/")) {
-    return join(homedir(), raw.slice(2));
-  }
-  return raw;
+  // Normalize via path.resolve so downstream `slice(root.length + 1)` callers
+  // aren't fooled by a trailing slash (e.g. the default "~/.mink/wiki/").
+  const expanded = raw.startsWith("~/") ? join(homedir(), raw.slice(2)) : raw;
+  return resolve(expanded);
 }
 
 export function vaultRoot(): string {

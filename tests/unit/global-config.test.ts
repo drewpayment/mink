@@ -78,7 +78,7 @@ describe("loadGlobalConfig", () => {
     // We can't easily redirect that, so we test resolveConfigValue defaults
     const result = resolveConfigValue("wiki.path");
     expect(result.source).toBe("default");
-    expect(result.value).toBe("~/.mink/wiki/");
+    expect(result.value).toBe("~/.mink/wiki");
   });
 });
 
@@ -122,7 +122,7 @@ describe("resolveConfigValue", () => {
     }
 
     const result = resolveConfigValue("wiki.path");
-    expect(result.value).toBe("~/.mink/wiki/");
+    expect(result.value).toBe("~/.mink/wiki");
     expect(result.source).toBe("default");
   });
 
@@ -153,7 +153,7 @@ describe("resolveConfigValue", () => {
     const all = resolveAllConfig();
     const byKey = Object.fromEntries(all.map((a) => [a.key, a]));
 
-    expect(byKey["wiki.path"].value).toBe("~/.mink/wiki/");
+    expect(byKey["wiki.path"].value).toBe("~/.mink/wiki");
     expect(byKey["wiki.enabled"].value).toBe("true");
     expect(byKey["wiki.sync-mode"].value).toBe("immediate");
     expect(byKey["wiki.git-backup"].value).toBe("false");

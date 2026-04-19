@@ -80,7 +80,7 @@ describe("config integration", () => {
     setConfigValue("wiki.path", "/custom/wiki");
     resetConfigKey("wiki.path");
     const result = resolveConfigValue("wiki.path");
-    expect(result.value).toBe("~/.mink/wiki/");
+    expect(result.value).toBe("~/.mink/wiki");
     expect(result.source).toBe("default");
   });
 

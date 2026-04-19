@@ -43,7 +43,7 @@ export interface DeviceRegistry {
 export const CONFIG_KEYS: ConfigKeyMeta[] = [
   {
     key: "wiki.path",
-    default: "~/.mink/wiki/",
+    default: "~/.mink/wiki",
     envVar: "MINK_WIKI_PATH",
     description: "Wiki vault location",
     scope: "local",

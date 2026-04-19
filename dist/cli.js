@@ -578,7 +578,7 @@ var init_config = __esm(() => {
   CONFIG_KEYS = [
     {
       key: "wiki.path",
-      default: "~/.mink/wiki/",
+      default: "~/.mink/wiki",
       envVar: "MINK_WIKI_PATH",
       description: "Wiki vault location",
       scope: "local"
@@ -809,10 +809,8 @@ import { existsSync, mkdirSync as mkdirSync2, symlinkSync, unlinkSync, lstatSync
 function resolveVaultPath() {
   const resolved = resolveConfigValue("wiki.path");
   const raw = resolved.value;
-  if (raw.startsWith("~/")) {
-    return join2(homedir2(), raw.slice(2));
-  }
-  return raw;
+  const expanded = raw.startsWith("~/") ? join2(homedir2(), raw.slice(2)) : raw;
+  return resolve(expanded);
 }
 function vaultProjects(slug) {
   const base = join2(resolveVaultPath(), "projects");
@@ -3468,6 +3466,146 @@ var init_channel_process = __esm(() => {
   };
 });
 
+// src/core/runtime.ts
+import { readFile as readFile2, stat } from "fs/promises";
+import { spawn as nodeSpawn } from "child_process";
+function runtimeFile(path) {
+  if (isBun) {
+    const f = Bun.file(path);
+    return {
+      exists: () => f.exists(),
+      bytes: () => f.arrayBuffer().then((ab) => new Uint8Array(ab))
+    };
+  }
+  return {
+    async exists() {
+      try {
+        await stat(path);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async bytes() {
+      return readFile2(path);
+    }
+  };
+}
+function runtimeSpawn(cmd, opts = {}) {
+  if (isBun) {
+    const proc2 = Bun.spawn(cmd, {
+      cwd: opts.cwd,
+      env: opts.env,
+      stdout: opts.stdout ?? "ignore",
+      stderr: opts.stderr ?? "ignore",
+      stdin: opts.stdin ?? "ignore"
+    });
+    return { pid: proc2.pid, unref: () => proc2.unref() };
+  }
+  const [bin, ...args] = cmd;
+  const proc = nodeSpawn(bin, args, {
+    cwd: opts.cwd,
+    env: opts.env,
+    stdio: [
+      opts.stdin ?? "ignore",
+      opts.stdout ?? "ignore",
+      opts.stderr ?? "ignore"
+    ],
+    detached: true
+  });
+  proc.unref();
+  return { pid: proc.pid ?? -1, unref: () => {} };
+}
+async function runtimeServe(opts) {
+  if (isBun) {
+    const server = Bun.serve({
+      port: opts.port,
+      hostname: opts.hostname,
+      idleTimeout: opts.idleTimeout ?? 0,
+      fetch: opts.fetch
+    });
+    return {
+      port: server.port,
+      stop: (close) => server.stop(close)
+    };
+  }
+  const { createServer } = await import("node:http");
+  const { Readable } = await import("node:stream");
+  return new Promise((resolve3) => {
+    const httpServer = createServer(async (req, res) => {
+      const url = `http://${opts.hostname}:${opts.port}${req.url ?? "/"}`;
+      const headers = new Headers;
+      for (const [key, val] of Object.entries(req.headers)) {
+        if (val)
+          headers.set(key, Array.isArray(val) ? val.join(", ") : val);
+      }
+      let body = null;
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        const chunks = [];
+        for await (const chunk of req) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        body = Buffer.concat(chunks);
+      }
+      const request = new Request(url, {
+        method: req.method,
+        headers,
+        body,
+        duplex: body ? "half" : undefined
+      });
+      try {
+        const response = await opts.fetch(request);
+        res.writeHead(response.status, Object.fromEntries(response.headers));
+        if (!response.body) {
+          res.end();
+          return;
+        }
+        const reader = response.body.getReader();
+        const nodeStream = new Readable({
+          async read() {
+            try {
+              const { done, value } = await reader.read();
+              if (done) {
+                this.push(null);
+              } else {
+                this.push(Buffer.from(value));
+              }
+            } catch {
+              this.push(null);
+            }
+          }
+        });
+        res.on("close", () => {
+          reader.cancel().catch(() => {});
+          nodeStream.destroy();
+        });
+        nodeStream.pipe(res);
+      } catch (err) {
+        if (!res.headersSent) {
+          res.writeHead(500);
+          res.end(String(err));
+        }
+      }
+    });
+    httpServer.listen(opts.port, opts.hostname, () => {
+      const addr = httpServer.address();
+      const boundPort = typeof addr === "object" && addr ? addr.port : opts.port;
+      resolve3({
+        port: boundPort,
+        stop: (close) => {
+          if (close)
+            httpServer.closeAllConnections();
+          httpServer.close();
+        }
+      });
+    });
+  });
+}
+var isBun;
+var init_runtime = __esm(() => {
+  isBun = typeof globalThis.Bun !== "undefined";
+});
+
 // src/core/daemon.ts
 import { readFileSync as readFileSync12, writeFileSync as writeFileSync7, unlinkSync as unlinkSync3, openSync } from "fs";
 import { mkdirSync as mkdirSync9 } from "fs";
@@ -3512,11 +3650,11 @@ function startDaemon(cwd) {
     removePidFile();
   }
   const __dir = dirname6(new URL(import.meta.url).pathname);
-  const cliPath = resolve3(__dir, "../cli.ts");
+  const cliPath = process.argv[1] ?? resolve3(__dir, "../cli.ts");
   const logPath = schedulerLogPath();
   mkdirSync9(dirname6(logPath), { recursive: true });
   const logFd = openSync(logPath, "a");
-  const proc = Bun.spawn(["bun", "run", cliPath, "cron", "__daemon"], {
+  const proc = runtimeSpawn(["bun", "run", cliPath, "cron", "__daemon"], {
     cwd,
     stdout: logFd,
     stderr: logFd,
@@ -3620,6 +3758,7 @@ var init_daemon = __esm(() => {
   init_vault();
   init_channel_templates();
   init_channel_process();
+  init_runtime();
 });
 
 // src/commands/status.ts
@@ -5330,10 +5469,10 @@ function collectMarkdownFiles(dirPath, rootPath) {
       if (entry.isDirectory()) {
         files.push(...collectMarkdownFiles(fullPath, rootPath));
       } else if (entry.name.endsWith(".md") && !entry.name.startsWith("_")) {
-        const stat = statSync8(fullPath);
+        const stat2 = statSync8(fullPath);
         const title = entry.name.replace(/\.md$/, "");
         const relativePath = fullPath.slice(rootPath.length + 1);
-        files.push({ title, relativePath, mtime: stat.mtimeMs });
+        files.push({ title, relativePath, mtime: stat2.mtimeMs });
       }
     }
   } catch {}
@@ -6580,146 +6719,6 @@ function listRegisteredProjects() {
 var init_project_registry = __esm(() => {
   init_paths();
   init_fs_utils();
-});
-
-// src/core/runtime.ts
-import { readFile as readFile2, stat } from "fs/promises";
-import { spawn as nodeSpawn } from "child_process";
-function runtimeFile(path) {
-  if (isBun) {
-    const f = Bun.file(path);
-    return {
-      exists: () => f.exists(),
-      bytes: () => f.arrayBuffer().then((ab) => new Uint8Array(ab))
-    };
-  }
-  return {
-    async exists() {
-      try {
-        await stat(path);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    async bytes() {
-      return readFile2(path);
-    }
-  };
-}
-function runtimeSpawn(cmd, opts = {}) {
-  if (isBun) {
-    const proc2 = Bun.spawn(cmd, {
-      cwd: opts.cwd,
-      env: opts.env,
-      stdout: opts.stdout ?? "ignore",
-      stderr: opts.stderr ?? "ignore",
-      stdin: opts.stdin ?? "ignore"
-    });
-    return { unref: () => proc2.unref() };
-  }
-  const [bin, ...args] = cmd;
-  const proc = nodeSpawn(bin, args, {
-    cwd: opts.cwd,
-    env: opts.env,
-    stdio: [
-      opts.stdin ?? "ignore",
-      opts.stdout ?? "ignore",
-      opts.stderr ?? "ignore"
-    ],
-    detached: true
-  });
-  proc.unref();
-  return { unref: () => {} };
-}
-async function runtimeServe(opts) {
-  if (isBun) {
-    const server = Bun.serve({
-      port: opts.port,
-      hostname: opts.hostname,
-      idleTimeout: opts.idleTimeout ?? 0,
-      fetch: opts.fetch
-    });
-    return {
-      port: server.port,
-      stop: (close) => server.stop(close)
-    };
-  }
-  const { createServer } = await import("node:http");
-  const { Readable } = await import("node:stream");
-  return new Promise((resolve5) => {
-    const httpServer = createServer(async (req, res) => {
-      const url = `http://${opts.hostname}:${opts.port}${req.url ?? "/"}`;
-      const headers = new Headers;
-      for (const [key, val] of Object.entries(req.headers)) {
-        if (val)
-          headers.set(key, Array.isArray(val) ? val.join(", ") : val);
-      }
-      let body = null;
-      if (req.method !== "GET" && req.method !== "HEAD") {
-        const chunks = [];
-        for await (const chunk of req) {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        }
-        body = Buffer.concat(chunks);
-      }
-      const request = new Request(url, {
-        method: req.method,
-        headers,
-        body,
-        duplex: body ? "half" : undefined
-      });
-      try {
-        const response = await opts.fetch(request);
-        res.writeHead(response.status, Object.fromEntries(response.headers));
-        if (!response.body) {
-          res.end();
-          return;
-        }
-        const reader = response.body.getReader();
-        const nodeStream = new Readable({
-          async read() {
-            try {
-              const { done, value } = await reader.read();
-              if (done) {
-                this.push(null);
-              } else {
-                this.push(Buffer.from(value));
-              }
-            } catch {
-              this.push(null);
-            }
-          }
-        });
-        res.on("close", () => {
-          reader.cancel().catch(() => {});
-          nodeStream.destroy();
-        });
-        nodeStream.pipe(res);
-      } catch (err) {
-        if (!res.headersSent) {
-          res.writeHead(500);
-          res.end(String(err));
-        }
-      }
-    });
-    httpServer.listen(opts.port, opts.hostname, () => {
-      const addr = httpServer.address();
-      const boundPort = typeof addr === "object" && addr ? addr.port : opts.port;
-      resolve5({
-        port: boundPort,
-        stop: (close) => {
-          if (close)
-            httpServer.closeAllConnections();
-          httpServer.close();
-        }
-      });
-    });
-  });
-}
-var isBun;
-var init_runtime = __esm(() => {
-  isBun = typeof globalThis.Bun !== "undefined";
 });
 
 // src/core/dashboard-server.ts
@@ -72414,7 +72413,7 @@ var require_ffi_WASM_RELEASE_SYNC = __commonJS((exports) => {
 
 // node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js
 var require_emscripten_module_WASM_RELEASE_SYNC = __commonJS((exports, module) => {
-  var __dirname = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
+  var __dirname = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
   var QuickJSRaw = (() => {
     var _scriptDir = typeof document !== "undefined" && document.currentScript ? document.currentScript.src : undefined;
     if (typeof __filename !== "undefined")
