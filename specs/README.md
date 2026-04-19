@@ -26,6 +26,14 @@ Mink is a hidden presence that moves alongside the developer. It has two mission
 | 14 | [Framework Advisor](./14-framework-advisor.md) | Optional |
 | 15 | [Cross-Project Wiki](./15-cross-project-wiki.md) | Wiki |
 | 16 | [Test Plan](./16-test-plan.md) | Quality |
+| 17 | [Companion Channels](./17-companion-channels.md) | Wiki |
+| 18 | [Configuration Surface](./18-configuration-surface.md) | Core |
+
+## Active Delivery Plans
+
+Transient, implementation-oriented plans — delete once delivered.
+
+- [PLAN.md](./PLAN.md) — Wiring PR #39's preview panels (wiki, capture, sync, discord, daemon, config) to real backends.
 
 ## Conventions
 
