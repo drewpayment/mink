@@ -5346,6 +5346,331 @@ var init_note_linker = __esm(() => {
   WIKILINK_RE = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 });
 
+// src/core/vault-templates.ts
+import { join as join17 } from "path";
+import { existsSync as existsSync16, writeFileSync as writeFileSync8, readFileSync as readFileSync19, mkdirSync as mkdirSync10 } from "fs";
+function seedTemplates(templatesDir) {
+  mkdirSync10(templatesDir, { recursive: true });
+  for (const [name, content] of Object.entries(DEFAULT_TEMPLATES)) {
+    const filePath = join17(templatesDir, `${name}.md`);
+    if (!existsSync16(filePath)) {
+      writeFileSync8(filePath, content);
+    }
+  }
+}
+function loadTemplate(templatesDir, templateName, vars) {
+  const filePath = join17(templatesDir, `${templateName}.md`);
+  let content;
+  if (existsSync16(filePath)) {
+    content = readFileSync19(filePath, "utf-8");
+  } else if (DEFAULT_TEMPLATES[templateName]) {
+    content = DEFAULT_TEMPLATES[templateName];
+  } else {
+    return null;
+  }
+  return fillTemplate(content, vars);
+}
+function fillTemplate(template, vars) {
+  let result = template;
+  for (const [key, value] of Object.entries(vars)) {
+    result = result.replaceAll(`{{${key}}}`, value);
+  }
+  return result;
+}
+var DEFAULT_TEMPLATES;
+var init_vault_templates = __esm(() => {
+  DEFAULT_TEMPLATES = {
+    "quick-capture": `---
+created: "{{created}}"
+updated: "{{updated}}"
+tags: []
+category: inbox
+---
+
+# {{title}}
+
+{{body}}
+`,
+    "daily-note": `---
+created: "{{created}}"
+updated: "{{updated}}"
+tags: [daily]
+category: areas
+---
+
+# {{date}}
+
+## Focus
+
+-
+
+## Notes
+
+-
+
+## Tasks
+
+- [ ]
+
+## Reflections
+
+`,
+    meeting: `---
+created: "{{created}}"
+updated: "{{updated}}"
+tags: [meeting]
+category: areas
+---
+
+# {{title}}
+
+**Date**: {{date}}
+**Attendees**:
+
+## Agenda
+
+-
+
+## Discussion
+
+-
+
+## Decisions
+
+-
+
+## Action Items
+
+- [ ]
+`,
+    project: `---
+created: "{{created}}"
+updated: "{{updated}}"
+tags: [project]
+category: projects
+status: active
+---
+
+# {{title}}
+
+## Overview
+
+{{body}}
+
+## Goals
+
+-
+
+## Key Decisions
+
+-
+
+## Links
+
+-
+`,
+    area: `---
+created: "{{created}}"
+updated: "{{updated}}"
+tags: [area]
+category: areas
+---
+
+# {{title}}
+
+## Purpose
+
+{{body}}
+
+## Standards
+
+-
+
+## Key Resources
+
+-
+`,
+    person: `---
+created: "{{created}}"
+updated: "{{updated}}"
+tags: [person]
+category: resources
+---
+
+# {{title}}
+
+## Role
+
+## Context
+
+## 1:1 Notes
+
+-
+
+## Key Projects
+
+-
+`
+  };
+});
+
+// src/core/note-writer.ts
+import { join as join18 } from "path";
+import { existsSync as existsSync17, readFileSync as readFileSync20 } from "fs";
+function slugifyTitle(title) {
+  return title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
+}
+function generateFrontmatter(meta) {
+  const lines = ["---"];
+  lines.push(`created: "${meta.created}"`);
+  lines.push(`updated: "${meta.updated}"`);
+  if (meta.tags.length > 0) {
+    lines.push(`tags: [${meta.tags.join(", ")}]`);
+  } else {
+    lines.push("tags: []");
+  }
+  lines.push(`category: ${meta.category}`);
+  if (meta.sourceProject) {
+    lines.push(`source_project: ${meta.sourceProject}`);
+  }
+  if (meta.aliases && meta.aliases.length > 0) {
+    lines.push(`aliases: [${meta.aliases.join(", ")}]`);
+  }
+  if (meta.extra) {
+    for (const [key, value] of Object.entries(meta.extra)) {
+      lines.push(`${key}: ${JSON.stringify(value)}`);
+    }
+  }
+  lines.push("---");
+  return lines.join(`
+`);
+}
+function createNote(meta) {
+  const now = meta.created || new Date().toISOString();
+  const slug = slugifyTitle(meta.title);
+  const dir = categoryToDir(meta.category, meta.projectSlug);
+  const filePath = join18(dir, `${slug}.md`);
+  let content;
+  if (meta.template) {
+    const rendered = loadTemplate(vaultTemplates(), meta.template, {
+      title: meta.title,
+      body: meta.body,
+      created: now,
+      updated: now,
+      date: now.split("T")[0]
+    });
+    content = rendered ?? buildNoteContent(meta, now);
+  } else {
+    content = buildNoteContent(meta, now);
+  }
+  atomicWriteText(filePath, content);
+  return { filePath, content };
+}
+function buildNoteContent(meta, now) {
+  const frontmatter = generateFrontmatter({
+    created: now,
+    updated: now,
+    tags: meta.tags,
+    category: meta.category,
+    sourceProject: meta.sourceProject
+  });
+  return `${frontmatter}
+
+# ${meta.title}
+
+${meta.body}
+`;
+}
+function appendToDaily(date, content) {
+  const dir = vaultDailyDir();
+  const filePath = join18(dir, `${date}.md`);
+  if (existsSync17(filePath)) {
+    const existing = readFileSync20(filePath, "utf-8");
+    const timestamp = new Date().toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    });
+    const updated = `${existing.trimEnd()}
+
+## ${timestamp}
+
+${content}
+`;
+    atomicWriteText(filePath, updated);
+  } else {
+    const now = new Date().toISOString();
+    const rendered = loadTemplate(vaultTemplates(), "daily-note", {
+      title: date,
+      date,
+      body: content,
+      created: now,
+      updated: now
+    });
+    const noteContent = rendered ?? `---
+created: "${now}"
+updated: "${now}"
+tags: [daily]
+category: areas
+---
+
+# ${date}
+
+${content}
+`;
+    atomicWriteText(filePath, noteContent);
+  }
+  return filePath;
+}
+function ingestFile(sourcePath, meta) {
+  const raw = readFileSync20(sourcePath, "utf-8");
+  const now = new Date().toISOString();
+  const headingMatch = raw.match(/^#\s+(.+)$/m);
+  const title = headingMatch?.[1] ?? sourcePath.split("/").pop().replace(/\.md$/, "");
+  const hasFrontmatter = raw.startsWith("---");
+  let content;
+  if (hasFrontmatter) {
+    const endIdx = raw.indexOf("---", 3);
+    if (endIdx !== -1) {
+      const existingFm = raw.slice(0, endIdx + 3);
+      const body = raw.slice(endIdx + 3).trim();
+      if (!existingFm.includes("category:")) {
+        const updatedFm = existingFm.replace(/---$/, `category: ${meta.category}
+---`);
+        content = `${updatedFm}
+
+${body}
+`;
+      } else {
+        content = raw;
+      }
+    } else {
+      content = raw;
+    }
+  } else {
+    const frontmatter = generateFrontmatter({
+      created: now,
+      updated: now,
+      tags: meta.tags ?? [],
+      category: meta.category,
+      sourceProject: meta.sourceProject
+    });
+    content = `${frontmatter}
+
+${raw}`;
+  }
+  const slug = slugifyTitle(title);
+  const dir = categoryToDir(meta.category, meta.projectSlug);
+  const filePath = join18(dir, `${slug}.md`);
+  atomicWriteText(filePath, content);
+  return { filePath, content };
+}
+var init_note_writer = __esm(() => {
+  init_fs_utils();
+  init_vault();
+  init_vault_templates();
+});
+
 // src/types/design-eval.ts
 function isDesignEvalReport(v) {
   return typeof v === "object" && v !== null && "capturedAt" in v && "captures" in v && Array.isArray(v.captures);
@@ -5368,9 +5693,9 @@ var init_design_eval = __esm(() => {
 });
 
 // src/core/dashboard-api.ts
-import { existsSync as existsSync16, readFileSync as readFileSync19 } from "fs";
-import { readdirSync as readdirSync5, readFileSync as readFileSyncFS } from "fs";
-import { join as join17, resolve as resolve4, normalize, sep } from "path";
+import { existsSync as existsSync18, readFileSync as readFileSync21 } from "fs";
+import { readdirSync as readdirSync5, readFileSync as readFileSyncFS, existsSync as fsExistsSync } from "fs";
+import { join as join19, resolve as resolve4, normalize, sep } from "path";
 import { execSync as execSync3 } from "child_process";
 function isSecretKey(key) {
   return SECRET_KEY_PATTERNS.some((re) => re.test(key));
@@ -5383,7 +5708,7 @@ function maskSecret(value, showLast = 4) {
   return "••••" + value.slice(-showLast);
 }
 function checkJsonFile2(name, filePath, validator) {
-  if (!existsSync16(filePath))
+  if (!existsSync18(filePath))
     return { name, status: "missing" };
   const data = safeReadJson(filePath);
   if (data === null)
@@ -5393,10 +5718,10 @@ function checkJsonFile2(name, filePath, validator) {
   return { name, status: "ok" };
 }
 function checkTextFile2(name, filePath) {
-  if (!existsSync16(filePath))
+  if (!existsSync18(filePath))
     return { name, status: "missing" };
   try {
-    readFileSync19(filePath, "utf-8");
+    readFileSync21(filePath, "utf-8");
     return { name, status: "ok" };
   } catch {
     return { name, status: "corrupt" };
@@ -5479,7 +5804,7 @@ function loadSchedulerPanel(cwd) {
 }
 function loadLearningMemoryPanel(cwd) {
   const memPath = learningMemoryPath(cwd);
-  if (!existsSync16(memPath)) {
+  if (!existsSync18(memPath)) {
     return {
       projectName: "unknown",
       sections: {
@@ -5491,7 +5816,7 @@ function loadLearningMemoryPanel(cwd) {
     };
   }
   try {
-    const content = readFileSync19(memPath, "utf-8");
+    const content = readFileSync21(memPath, "utf-8");
     return parseLearningMemory(content);
   } catch {
     return {
@@ -5677,7 +6002,7 @@ function countMarkdownIn(dir) {
     for (const entry of readdirSync5(dir, { withFileTypes: true })) {
       if (WIKI_TREE_EXCLUDES.has(entry.name) || entry.name.startsWith("."))
         continue;
-      const fullPath = join17(dir, entry.name);
+      const fullPath = join19(dir, entry.name);
       if (entry.isDirectory()) {
         count += countMarkdownIn(fullPath);
       } else if (entry.name.endsWith(".md") && !entry.name.startsWith("_")) {
@@ -5706,7 +6031,7 @@ function buildVaultTree(root) {
     for (const entry of entries) {
       if (!entry.isDir)
         continue;
-      const fullPath = join17(dir, entry.name);
+      const fullPath = join19(dir, entry.name);
       const relPath = fullPath.slice(root.length + 1);
       const count = countMarkdownIn(fullPath);
       nodes.push({ name: entry.name, path: relPath, count, depth });
@@ -6027,6 +6352,126 @@ async function triggerSyncDisconnect() {
     };
   }
 }
+function isValidCategory(cat) {
+  return typeof cat === "string" && VALID_CATEGORIES.includes(cat);
+}
+function firstNonEmptyLine(s) {
+  for (const line of s.split(`
+`)) {
+    const trimmed = line.trim().replace(/^#+\s*/, "");
+    if (trimmed)
+      return trimmed;
+  }
+  return "";
+}
+function deriveQuickTitle(body) {
+  const first = firstNonEmptyLine(body);
+  if (!first)
+    return `quick-capture-${new Date().toISOString().slice(0, 10)}`;
+  return first.slice(0, 80);
+}
+function checkDedup(key) {
+  if (!key)
+    return null;
+  const now = Date.now();
+  for (const [k, v] of dedupCache) {
+    if (v.expiresAt < now)
+      dedupCache.delete(k);
+  }
+  const hit = dedupCache.get(key);
+  return hit && hit.expiresAt >= now ? { filePath: hit.filePath } : null;
+}
+function recordDedup(key, filePath) {
+  if (!key)
+    return;
+  dedupCache.set(key, { filePath, expiresAt: Date.now() + DEDUP_TTL_MS });
+}
+async function triggerCreateNote(req) {
+  try {
+    if (!isVaultInitialized()) {
+      return { success: false, error: "Vault is not initialized. Run `mink wiki init` first." };
+    }
+    if (typeof req.body !== "string" || !req.body.trim()) {
+      return { success: false, error: "Body is required" };
+    }
+    const existing = checkDedup(req.dedupKey);
+    if (existing)
+      return { success: true, filePath: existing.filePath };
+    const category = isValidCategory(req.category) ? req.category : "inbox";
+    const title = req.title?.trim() || "" || deriveQuickTitle(req.body);
+    const tags = (req.tags ?? []).map((t) => t.trim()).filter(Boolean);
+    const now = new Date().toISOString();
+    const result = createNote({
+      title,
+      category,
+      tags,
+      created: now,
+      updated: now,
+      body: req.body
+    });
+    updateVaultIndexForFile(result.filePath, result.content);
+    recordDedup(req.dedupKey, result.filePath);
+    return { success: true, filePath: result.filePath };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+async function triggerAppendDaily(content, dedupKey) {
+  try {
+    if (!isVaultInitialized()) {
+      return { success: false, error: "Vault is not initialized." };
+    }
+    if (typeof content !== "string" || !content.trim()) {
+      return { success: false, error: "Content is required" };
+    }
+    const existing = checkDedup(dedupKey);
+    if (existing)
+      return { success: true, filePath: existing.filePath };
+    const today = new Date().toISOString().slice(0, 10);
+    const filePath = appendToDaily(today, content);
+    const updated = readFileSyncFS(filePath, "utf-8");
+    updateVaultIndexForFile(filePath, updated);
+    recordDedup(dedupKey, filePath);
+    return { success: true, filePath };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+async function triggerIngestFile(sourcePath, category, tags, dedupKey) {
+  try {
+    if (!isVaultInitialized()) {
+      return { success: false, error: "Vault is not initialized." };
+    }
+    if (!sourcePath) {
+      return { success: false, error: "sourcePath is required" };
+    }
+    if (!isValidCategory(category)) {
+      return { success: false, error: `Invalid category: ${category}` };
+    }
+    const expanded = sourcePath.startsWith("~/") ? join19(process.env.HOME ?? "", sourcePath.slice(2)) : sourcePath;
+    if (!fsExistsSync(expanded)) {
+      return { success: false, error: `Source file not found: ${sourcePath}` };
+    }
+    const existing = checkDedup(dedupKey);
+    if (existing)
+      return { success: true, filePath: existing.filePath };
+    const result = ingestFile(expanded, { category, tags });
+    updateVaultIndexForFile(result.filePath, result.content);
+    recordDedup(dedupKey, result.filePath);
+    return { success: true, filePath: result.filePath };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
 async function triggerConfigReset(key, all) {
   try {
     if (all) {
@@ -6048,7 +6493,7 @@ async function triggerConfigReset(key, all) {
     };
   }
 }
-var SECRET_KEY_PATTERNS, BOOLEAN_VALUES, GROUP_LABELS, CHANNEL_LOG_LIMIT = 120, TIMESTAMP_PREFIX, WIKI_TREE_MAX_DEPTH = 2, WIKI_TREE_EXCLUDES, DEFAULT_RECENT_LIMIT = 25;
+var SECRET_KEY_PATTERNS, BOOLEAN_VALUES, GROUP_LABELS, CHANNEL_LOG_LIMIT = 120, TIMESTAMP_PREFIX, WIKI_TREE_MAX_DEPTH = 2, WIKI_TREE_EXCLUDES, DEFAULT_RECENT_LIMIT = 25, VALID_CATEGORIES, DEDUP_TTL_MS = 600000, dedupCache;
 var init_dashboard_api = __esm(() => {
   init_paths();
   init_fs_utils();
@@ -6066,6 +6511,7 @@ var init_dashboard_api = __esm(() => {
   init_vault();
   init_note_index();
   init_note_linker();
+  init_note_writer();
   init_paths();
   init_config();
   init_design_eval();
@@ -6085,13 +6531,15 @@ var init_dashboard_api = __esm(() => {
     ".mink-index.json",
     "node_modules"
   ]);
+  VALID_CATEGORIES = ["inbox", "projects", "areas", "resources", "archives"];
+  dedupCache = new Map;
 });
 
 // src/core/project-registry.ts
-import { readdirSync as readdirSync6, existsSync as existsSync17 } from "fs";
-import { join as join18 } from "path";
+import { readdirSync as readdirSync6, existsSync as existsSync19 } from "fs";
+import { join as join20 } from "path";
 function getProjectMeta(projDir) {
-  const metaPath = join18(projDir, "project-meta.json");
+  const metaPath = join20(projDir, "project-meta.json");
   const raw = safeReadJson(metaPath);
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
@@ -6108,15 +6556,15 @@ function getProjectMeta(projDir) {
   };
 }
 function listRegisteredProjects() {
-  const projectsDir = join18(minkRoot(), "projects");
-  if (!existsSync17(projectsDir))
+  const projectsDir = join20(minkRoot(), "projects");
+  if (!existsSync19(projectsDir))
     return [];
   const entries = readdirSync6(projectsDir, { withFileTypes: true });
   const projects = [];
   for (const entry of entries) {
     if (!entry.isDirectory())
       continue;
-    const projDir = join18(projectsDir, entry.name);
+    const projDir = join20(projectsDir, entry.name);
     const meta = getProjectMeta(projDir);
     if (meta) {
       projects.push({
@@ -6280,8 +6728,8 @@ __export(exports_dashboard_server, {
   startDashboardServer: () => startDashboardServer
 });
 import { watch } from "fs";
-import { existsSync as existsSync18 } from "fs";
-import { basename as basename7, dirname as dirname7, join as join19, extname as extname2 } from "path";
+import { existsSync as existsSync20 } from "fs";
+import { basename as basename7, dirname as dirname7, join as join21, extname as extname2 } from "path";
 
 class SSEManager {
   clients = new Map;
@@ -6457,12 +6905,12 @@ async function startDashboardServer(cwd, options = {}) {
   const __dir = dirname7(new URL(import.meta.url).pathname);
   let pkgRoot = __dir;
   while (pkgRoot !== dirname7(pkgRoot)) {
-    if (existsSync18(join19(pkgRoot, "package.json")))
+    if (existsSync20(join21(pkgRoot, "package.json")))
       break;
     pkgRoot = dirname7(pkgRoot);
   }
-  const dashboardOutDir = join19(pkgRoot, "dashboard", "out");
-  const dashboardBuilt = existsSync18(join19(dashboardOutDir, "index.html"));
+  const dashboardOutDir = join21(pkgRoot, "dashboard", "out");
+  const dashboardBuilt = existsSync20(join21(dashboardOutDir, "index.html"));
   let clientIdCounter = 0;
   if (!dashboardBuilt) {
     console.warn("[mink] dashboard not built. Run: cd dashboard && bun run build");
@@ -6492,9 +6940,9 @@ async function startDashboardServer(cwd, options = {}) {
         } else {
           let filePath;
           if (pathname === "/") {
-            filePath = join19(dashboardOutDir, "index.html");
+            filePath = join21(dashboardOutDir, "index.html");
           } else {
-            filePath = join19(dashboardOutDir, pathname);
+            filePath = join21(dashboardOutDir, pathname);
           }
           if (!filePath.startsWith(dashboardOutDir)) {
             return jsonResponse({ error: "Forbidden" }, 403);
@@ -6507,7 +6955,7 @@ async function startDashboardServer(cwd, options = {}) {
           const htmlServed = await serveFile(filePath + ".html", "text/html; charset=utf-8");
           if (htmlServed)
             return htmlServed;
-          const indexServed = await serveFile(join19(dashboardOutDir, "index.html"), "text/html; charset=utf-8");
+          const indexServed = await serveFile(join21(dashboardOutDir, "index.html"), "text/html; charset=utf-8");
           if (indexServed)
             return indexServed;
         }
@@ -6616,7 +7064,7 @@ retry: 3000
             if (!filename || filename.includes("..") || filename.includes("/")) {
               return jsonResponse({ error: "Invalid filename" }, 400);
             }
-            const imgPath = join19(designCapturesDir(resolvedCwd), filename);
+            const imgPath = join21(designCapturesDir(resolvedCwd), filename);
             const served = await serveFile(imgPath, "image/jpeg");
             if (served) {
               served.headers.set("Cache-Control", "public, max-age=60");
@@ -6682,6 +7130,39 @@ retry: 3000
               });
             }
             return jsonResponse(result, result.success ? 200 : 500);
+          } catch (err) {
+            return jsonResponse({ success: false, error: err instanceof Error ? err.message : String(err) }, 500);
+          }
+        }
+        if (pathname === "/api/wiki/notes" || pathname === "/api/wiki/daily" || pathname === "/api/wiki/ingest") {
+          const dedupKey = req.headers.get("X-Mink-Dedup-Key") ?? undefined;
+          try {
+            const body = await req.json();
+            let action;
+            if (pathname === "/api/wiki/notes") {
+              const mode = body.mode === "structured" ? "structured" : "quick";
+              action = triggerCreateNote({
+                mode,
+                title: typeof body.title === "string" ? body.title : undefined,
+                category: typeof body.category === "string" ? body.category : undefined,
+                body: typeof body.body === "string" ? body.body : "",
+                tags: Array.isArray(body.tags) ? body.tags : undefined,
+                dedupKey
+              });
+            } else if (pathname === "/api/wiki/daily") {
+              action = triggerAppendDaily(typeof body.content === "string" ? body.content : "", dedupKey);
+            } else {
+              action = triggerIngestFile(typeof body.sourcePath === "string" ? body.sourcePath : "", typeof body.category === "string" ? body.category : "inbox", Array.isArray(body.tags) ? body.tags : undefined, dedupKey);
+            }
+            return action.then((result) => {
+              if (result.success) {
+                sseManager.broadcast({
+                  fileId: "vault-index",
+                  timestamp: new Date().toISOString()
+                });
+              }
+              return jsonResponse(result, result.success ? 200 : 500);
+            });
           } catch (err) {
             return jsonResponse({ success: false, error: err instanceof Error ? err.message : String(err) }, 500);
           }
@@ -6817,9 +7298,9 @@ var exports_dashboard = {};
 __export(exports_dashboard, {
   dashboard: () => dashboard
 });
-import { existsSync as existsSync19 } from "fs";
+import { existsSync as existsSync21 } from "fs";
 async function dashboard(cwd, args) {
-  if (!existsSync19(projectDir(cwd))) {
+  if (!existsSync21(projectDir(cwd))) {
     console.error("[mink] project not initialized. Run: mink init");
     process.exit(1);
   }
@@ -6841,7 +7322,7 @@ var exports_daemon = {};
 __export(exports_daemon, {
   daemon: () => daemon
 });
-import { readFileSync as readFileSync20, existsSync as existsSync20 } from "fs";
+import { readFileSync as readFileSync22, existsSync as existsSync22 } from "fs";
 async function daemon(cwd, args) {
   const subcommand = args[0];
   switch (subcommand) {
@@ -6857,12 +7338,12 @@ async function daemon(cwd, args) {
       break;
     case "logs": {
       const logPath = schedulerLogPath();
-      if (!existsSync20(logPath)) {
+      if (!existsSync22(logPath)) {
         console.log("[mink] no log file found");
         return;
       }
       try {
-        const content = readFileSync20(logPath, "utf-8");
+        const content = readFileSync22(logPath, "utf-8");
         const lines = content.split(`
 `);
         const tail = lines.slice(-50).join(`
@@ -7200,8 +7681,8 @@ var init_config2 = __esm(() => {
 
 // src/commands/init.ts
 import { execSync as execSync4 } from "child_process";
-import { mkdirSync as mkdirSync10, existsSync as existsSync21 } from "fs";
-import { resolve as resolve5, dirname as dirname8, basename as basename8, join as join20 } from "path";
+import { mkdirSync as mkdirSync11, existsSync as existsSync23 } from "fs";
+import { resolve as resolve5, dirname as dirname8, basename as basename8, join as join22 } from "path";
 function detectRuntime2() {
   try {
     execSync4("bun --version", { stdio: "ignore" });
@@ -7242,7 +7723,7 @@ function isMinkHook2(entry) {
   return false;
 }
 function mergeHooksIntoSettings2(settingsPath, newHooks) {
-  mkdirSync10(dirname8(settingsPath), { recursive: true });
+  mkdirSync11(dirname8(settingsPath), { recursive: true });
   const existing = safeReadJson(settingsPath) ?? {};
   const existingHooks = existing.hooks ?? {};
   for (const [event, entries] of Object.entries(newHooks)) {
@@ -7382,8 +7863,8 @@ var init_restore = __esm(() => {
 });
 
 // src/core/design-eval/server-detect.ts
-import { readFileSync as readFileSync21 } from "fs";
-import { join as join21 } from "path";
+import { readFileSync as readFileSync23 } from "fs";
+import { join as join23 } from "path";
 async function probePort(port) {
   try {
     const controller = new AbortController;
@@ -7405,7 +7886,7 @@ async function findRunningServer(ports = DEFAULT_PROBE_PORTS) {
 }
 function detectDevCommand(cwd) {
   try {
-    const raw = readFileSync21(join21(cwd, "package.json"), "utf-8");
+    const raw = readFileSync23(join23(cwd, "package.json"), "utf-8");
     const pkg = JSON.parse(raw);
     const scripts = pkg.scripts;
     if (!scripts || typeof scripts !== "object")
@@ -7425,10 +7906,10 @@ var init_server_detect = __esm(() => {
 });
 
 // src/core/design-eval/route-detect.ts
-import { existsSync as existsSync22, readdirSync as readdirSync7, statSync as statSync9 } from "fs";
-import { join as join22, relative as relative6, sep as sep2 } from "path";
+import { existsSync as existsSync24, readdirSync as readdirSync7, statSync as statSync9 } from "fs";
+import { join as join24, relative as relative6, sep as sep2 } from "path";
 function detectFramework(cwd) {
-  const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync22(join22(cwd, `${name}.${ext}`))) || existsSync22(join22(cwd, name));
+  const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync24(join24(cwd, `${name}.${ext}`))) || existsSync24(join24(cwd, name));
   if (has("next.config"))
     return "nextjs";
   if (has("svelte.config"))
@@ -7453,8 +7934,8 @@ function detectRoutes(cwd) {
 }
 function detectNextRoutes(cwd) {
   const routes = [];
-  const appDir = join22(cwd, "app");
-  if (existsSync22(appDir)) {
+  const appDir = join24(cwd, "app");
+  if (existsSync24(appDir)) {
     const pageFiles = findFiles(appDir, /^page\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
       const rel = relative6(appDir, file);
@@ -7465,8 +7946,8 @@ function detectNextRoutes(cwd) {
       routes.push(route);
     }
   }
-  const pagesDir = join22(cwd, "pages");
-  if (existsSync22(pagesDir)) {
+  const pagesDir = join24(cwd, "pages");
+  if (existsSync24(pagesDir)) {
     const pageFiles = findFiles(pagesDir, /\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
       const rel = relative6(pagesDir, file);
@@ -7485,8 +7966,8 @@ function detectNextRoutes(cwd) {
   return unique.length > 0 ? unique.sort() : ["/"];
 }
 function detectSvelteKitRoutes(cwd) {
-  const routesDir = join22(cwd, "src", "routes");
-  if (!existsSync22(routesDir))
+  const routesDir = join24(cwd, "src", "routes");
+  if (!existsSync24(routesDir))
     return ["/"];
   const routes = [];
   const pageFiles = findFiles(routesDir, /^\+page\.svelte$/);
@@ -7501,8 +7982,8 @@ function detectSvelteKitRoutes(cwd) {
   return routes.length > 0 ? routes.sort() : ["/"];
 }
 function detectNuxtRoutes(cwd) {
-  const pagesDir = join22(cwd, "pages");
-  if (!existsSync22(pagesDir))
+  const pagesDir = join24(cwd, "pages");
+  if (!existsSync24(pagesDir))
     return ["/"];
   const routes = [];
   const vueFiles = findFiles(pagesDir, /\.vue$/);
@@ -7528,7 +8009,7 @@ function findFiles(dir, pattern) {
     for (const entry of entries) {
       if (entry.startsWith(".") || entry === "node_modules")
         continue;
-      const full = join22(current, entry);
+      const full = join24(current, entry);
       try {
         const stat2 = statSync9(full);
         if (stat2.isDirectory()) {
@@ -56232,7 +56713,7 @@ var require_util2 = __commonJS((exports) => {
     return path;
   }
   exports.normalize = normalize2;
-  function join23(aRoot, aPath) {
+  function join25(aRoot, aPath) {
     if (aRoot === "") {
       aRoot = ".";
     }
@@ -56264,7 +56745,7 @@ var require_util2 = __commonJS((exports) => {
     }
     return joined;
   }
-  exports.join = join23;
+  exports.join = join25;
   exports.isAbsolute = function(aPath) {
     return aPath.charAt(0) === "/" || urlRegexp.test(aPath);
   };
@@ -56437,7 +56918,7 @@ var require_util2 = __commonJS((exports) => {
           parsed.path = parsed.path.substring(0, index + 1);
         }
       }
-      sourceURL = join23(urlGenerate(parsed), sourceURL);
+      sourceURL = join25(urlGenerate(parsed), sourceURL);
     }
     return normalize2(sourceURL);
   }
@@ -58169,7 +58650,7 @@ var require_escodegen = __commonJS((exports) => {
     function noEmptySpace() {
       return space ? space : " ";
     }
-    function join23(left, right) {
+    function join25(left, right) {
       var leftSource, rightSource, leftCharCode, rightCharCode;
       leftSource = toSourceNodeWhenNeeded(left).toString();
       if (leftSource.length === 0) {
@@ -58510,8 +58991,8 @@ var require_escodegen = __commonJS((exports) => {
         } else {
           result.push(that.generateExpression(stmt.left, Precedence.Call, E_TTT));
         }
-        result = join23(result, operator);
-        result = [join23(result, that.generateExpression(stmt.right, Precedence.Assignment, E_TTT)), ")"];
+        result = join25(result, operator);
+        result = [join25(result, that.generateExpression(stmt.right, Precedence.Assignment, E_TTT)), ")"];
       });
       result.push(this.maybeBlock(stmt.body, flags));
       return result;
@@ -58649,11 +59130,11 @@ var require_escodegen = __commonJS((exports) => {
         var result, fragment;
         result = ["class"];
         if (stmt.id) {
-          result = join23(result, this.generateExpression(stmt.id, Precedence.Sequence, E_TTT));
+          result = join25(result, this.generateExpression(stmt.id, Precedence.Sequence, E_TTT));
         }
         if (stmt.superClass) {
-          fragment = join23("extends", this.generateExpression(stmt.superClass, Precedence.Unary, E_TTT));
-          result = join23(result, fragment);
+          fragment = join25("extends", this.generateExpression(stmt.superClass, Precedence.Unary, E_TTT));
+          result = join25(result, fragment);
         }
         result.push(space);
         result.push(this.generateStatement(stmt.body, S_TFFT));
@@ -58666,9 +59147,9 @@ var require_escodegen = __commonJS((exports) => {
         return escapeDirective(stmt.directive) + this.semicolon(flags);
       },
       DoWhileStatement: function(stmt, flags) {
-        var result = join23("do", this.maybeBlock(stmt.body, S_TFFF));
+        var result = join25("do", this.maybeBlock(stmt.body, S_TFFF));
         result = this.maybeBlockSuffix(stmt.body, result);
-        return join23(result, [
+        return join25(result, [
           "while" + space + "(",
           this.generateExpression(stmt.test, Precedence.Sequence, E_TTT),
           ")" + this.semicolon(flags)
@@ -58704,11 +59185,11 @@ var require_escodegen = __commonJS((exports) => {
       ExportDefaultDeclaration: function(stmt, flags) {
         var result = ["export"], bodyFlags;
         bodyFlags = flags & F_SEMICOLON_OPT ? S_TFFT : S_TFFF;
-        result = join23(result, "default");
+        result = join25(result, "default");
         if (isStatement(stmt.declaration)) {
-          result = join23(result, this.generateStatement(stmt.declaration, bodyFlags));
+          result = join25(result, this.generateStatement(stmt.declaration, bodyFlags));
         } else {
-          result = join23(result, this.generateExpression(stmt.declaration, Precedence.Assignment, E_TTT) + this.semicolon(flags));
+          result = join25(result, this.generateExpression(stmt.declaration, Precedence.Assignment, E_TTT) + this.semicolon(flags));
         }
         return result;
       },
@@ -58716,15 +59197,15 @@ var require_escodegen = __commonJS((exports) => {
         var result = ["export"], bodyFlags, that = this;
         bodyFlags = flags & F_SEMICOLON_OPT ? S_TFFT : S_TFFF;
         if (stmt.declaration) {
-          return join23(result, this.generateStatement(stmt.declaration, bodyFlags));
+          return join25(result, this.generateStatement(stmt.declaration, bodyFlags));
         }
         if (stmt.specifiers) {
           if (stmt.specifiers.length === 0) {
-            result = join23(result, "{" + space + "}");
+            result = join25(result, "{" + space + "}");
           } else if (stmt.specifiers[0].type === Syntax.ExportBatchSpecifier) {
-            result = join23(result, this.generateExpression(stmt.specifiers[0], Precedence.Sequence, E_TTT));
+            result = join25(result, this.generateExpression(stmt.specifiers[0], Precedence.Sequence, E_TTT));
           } else {
-            result = join23(result, "{");
+            result = join25(result, "{");
             withIndent(function(indent2) {
               var i, iz;
               result.push(newline);
@@ -58742,7 +59223,7 @@ var require_escodegen = __commonJS((exports) => {
             result.push(base + "}");
           }
           if (stmt.source) {
-            result = join23(result, [
+            result = join25(result, [
               "from" + space,
               this.generateExpression(stmt.source, Precedence.Sequence, E_TTT),
               this.semicolon(flags)
@@ -58826,7 +59307,7 @@ var require_escodegen = __commonJS((exports) => {
         ];
         cursor = 0;
         if (stmt.specifiers[cursor].type === Syntax.ImportDefaultSpecifier) {
-          result = join23(result, [
+          result = join25(result, [
             this.generateExpression(stmt.specifiers[cursor], Precedence.Sequence, E_TTT)
           ]);
           ++cursor;
@@ -58836,7 +59317,7 @@ var require_escodegen = __commonJS((exports) => {
             result.push(",");
           }
           if (stmt.specifiers[cursor].type === Syntax.ImportNamespaceSpecifier) {
-            result = join23(result, [
+            result = join25(result, [
               space,
               this.generateExpression(stmt.specifiers[cursor], Precedence.Sequence, E_TTT)
             ]);
@@ -58865,7 +59346,7 @@ var require_escodegen = __commonJS((exports) => {
             }
           }
         }
-        result = join23(result, [
+        result = join25(result, [
           "from" + space,
           this.generateExpression(stmt.source, Precedence.Sequence, E_TTT),
           this.semicolon(flags)
@@ -58919,7 +59400,7 @@ var require_escodegen = __commonJS((exports) => {
         return result;
       },
       ThrowStatement: function(stmt, flags) {
-        return [join23("throw", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
+        return [join25("throw", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
       },
       TryStatement: function(stmt, flags) {
         var result, i, iz, guardedHandlers;
@@ -58927,7 +59408,7 @@ var require_escodegen = __commonJS((exports) => {
         result = this.maybeBlockSuffix(stmt.block, result);
         if (stmt.handlers) {
           for (i = 0, iz = stmt.handlers.length;i < iz; ++i) {
-            result = join23(result, this.generateStatement(stmt.handlers[i], S_TFFF));
+            result = join25(result, this.generateStatement(stmt.handlers[i], S_TFFF));
             if (stmt.finalizer || i + 1 !== iz) {
               result = this.maybeBlockSuffix(stmt.handlers[i].body, result);
             }
@@ -58935,7 +59416,7 @@ var require_escodegen = __commonJS((exports) => {
         } else {
           guardedHandlers = stmt.guardedHandlers || [];
           for (i = 0, iz = guardedHandlers.length;i < iz; ++i) {
-            result = join23(result, this.generateStatement(guardedHandlers[i], S_TFFF));
+            result = join25(result, this.generateStatement(guardedHandlers[i], S_TFFF));
             if (stmt.finalizer || i + 1 !== iz) {
               result = this.maybeBlockSuffix(guardedHandlers[i].body, result);
             }
@@ -58943,13 +59424,13 @@ var require_escodegen = __commonJS((exports) => {
           if (stmt.handler) {
             if (Array.isArray(stmt.handler)) {
               for (i = 0, iz = stmt.handler.length;i < iz; ++i) {
-                result = join23(result, this.generateStatement(stmt.handler[i], S_TFFF));
+                result = join25(result, this.generateStatement(stmt.handler[i], S_TFFF));
                 if (stmt.finalizer || i + 1 !== iz) {
                   result = this.maybeBlockSuffix(stmt.handler[i].body, result);
                 }
               }
             } else {
-              result = join23(result, this.generateStatement(stmt.handler, S_TFFF));
+              result = join25(result, this.generateStatement(stmt.handler, S_TFFF));
               if (stmt.finalizer) {
                 result = this.maybeBlockSuffix(stmt.handler.body, result);
               }
@@ -58957,7 +59438,7 @@ var require_escodegen = __commonJS((exports) => {
           }
         }
         if (stmt.finalizer) {
-          result = join23(result, ["finally", this.maybeBlock(stmt.finalizer, S_TFFF)]);
+          result = join25(result, ["finally", this.maybeBlock(stmt.finalizer, S_TFFF)]);
         }
         return result;
       },
@@ -58991,7 +59472,7 @@ var require_escodegen = __commonJS((exports) => {
         withIndent(function() {
           if (stmt.test) {
             result = [
-              join23("case", that.generateExpression(stmt.test, Precedence.Sequence, E_TTT)),
+              join25("case", that.generateExpression(stmt.test, Precedence.Sequence, E_TTT)),
               ":"
             ];
           } else {
@@ -59039,9 +59520,9 @@ var require_escodegen = __commonJS((exports) => {
           result.push(this.maybeBlock(stmt.consequent, S_TFFF));
           result = this.maybeBlockSuffix(stmt.consequent, result);
           if (stmt.alternate.type === Syntax.IfStatement) {
-            result = join23(result, ["else ", this.generateStatement(stmt.alternate, bodyFlags)]);
+            result = join25(result, ["else ", this.generateStatement(stmt.alternate, bodyFlags)]);
           } else {
-            result = join23(result, join23("else", this.maybeBlock(stmt.alternate, bodyFlags)));
+            result = join25(result, join25("else", this.maybeBlock(stmt.alternate, bodyFlags)));
           }
         } else {
           result.push(this.maybeBlock(stmt.consequent, bodyFlags));
@@ -59143,7 +59624,7 @@ var require_escodegen = __commonJS((exports) => {
       },
       ReturnStatement: function(stmt, flags) {
         if (stmt.argument) {
-          return [join23("return", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
+          return [join25("return", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
         }
         return ["return" + this.semicolon(flags)];
       },
@@ -59225,14 +59706,14 @@ var require_escodegen = __commonJS((exports) => {
         if (leftSource.charCodeAt(leftSource.length - 1) === 47 && esutils.code.isIdentifierPartES5(expr.operator.charCodeAt(0))) {
           result = [fragment, noEmptySpace(), expr.operator];
         } else {
-          result = join23(fragment, expr.operator);
+          result = join25(fragment, expr.operator);
         }
         fragment = this.generateExpression(expr.right, rightPrecedence, flags);
         if (expr.operator === "/" && fragment.toString().charAt(0) === "/" || expr.operator.slice(-1) === "<" && fragment.toString().slice(0, 3) === "!--") {
           result.push(noEmptySpace());
           result.push(fragment);
         } else {
-          result = join23(result, fragment);
+          result = join25(result, fragment);
         }
         if (expr.operator === "in" && !(flags & F_ALLOW_IN)) {
           return ["(", result, ")"];
@@ -59272,7 +59753,7 @@ var require_escodegen = __commonJS((exports) => {
         var result, length, i, iz, itemFlags;
         length = expr["arguments"].length;
         itemFlags = flags & F_ALLOW_UNPARATH_NEW && !parentheses && length === 0 ? E_TFT : E_TFF;
-        result = join23("new", this.generateExpression(expr.callee, Precedence.New, itemFlags));
+        result = join25("new", this.generateExpression(expr.callee, Precedence.New, itemFlags));
         if (!(flags & F_ALLOW_UNPARATH_NEW) || parentheses || length > 0) {
           result.push("(");
           for (i = 0, iz = length;i < iz; ++i) {
@@ -59319,11 +59800,11 @@ var require_escodegen = __commonJS((exports) => {
         var result, fragment, rightCharCode, leftSource, leftCharCode;
         fragment = this.generateExpression(expr.argument, Precedence.Unary, E_TTT);
         if (space === "") {
-          result = join23(expr.operator, fragment);
+          result = join25(expr.operator, fragment);
         } else {
           result = [expr.operator];
           if (expr.operator.length > 2) {
-            result = join23(result, fragment);
+            result = join25(result, fragment);
           } else {
             leftSource = toSourceNodeWhenNeeded(result).toString();
             leftCharCode = leftSource.charCodeAt(leftSource.length - 1);
@@ -59346,12 +59827,12 @@ var require_escodegen = __commonJS((exports) => {
           result = "yield";
         }
         if (expr.argument) {
-          result = join23(result, this.generateExpression(expr.argument, Precedence.Yield, E_TTT));
+          result = join25(result, this.generateExpression(expr.argument, Precedence.Yield, E_TTT));
         }
         return parenthesize(result, Precedence.Yield, precedence);
       },
       AwaitExpression: function(expr, precedence, flags) {
-        var result = join23(expr.all ? "await*" : "await", this.generateExpression(expr.argument, Precedence.Await, E_TTT));
+        var result = join25(expr.all ? "await*" : "await", this.generateExpression(expr.argument, Precedence.Await, E_TTT));
         return parenthesize(result, Precedence.Await, precedence);
       },
       UpdateExpression: function(expr, precedence, flags) {
@@ -59423,11 +59904,11 @@ var require_escodegen = __commonJS((exports) => {
         var result, fragment;
         result = ["class"];
         if (expr.id) {
-          result = join23(result, this.generateExpression(expr.id, Precedence.Sequence, E_TTT));
+          result = join25(result, this.generateExpression(expr.id, Precedence.Sequence, E_TTT));
         }
         if (expr.superClass) {
-          fragment = join23("extends", this.generateExpression(expr.superClass, Precedence.Unary, E_TTT));
-          result = join23(result, fragment);
+          fragment = join25("extends", this.generateExpression(expr.superClass, Precedence.Unary, E_TTT));
+          result = join25(result, fragment);
         }
         result.push(space);
         result.push(this.generateStatement(expr.body, S_TFFT));
@@ -59442,7 +59923,7 @@ var require_escodegen = __commonJS((exports) => {
         }
         if (expr.kind === "get" || expr.kind === "set") {
           fragment = [
-            join23(expr.kind, this.generatePropertyKey(expr.key, expr.computed)),
+            join25(expr.kind, this.generatePropertyKey(expr.key, expr.computed)),
             this.generateFunctionBody(expr.value)
           ];
         } else {
@@ -59452,7 +59933,7 @@ var require_escodegen = __commonJS((exports) => {
             this.generateFunctionBody(expr.value)
           ];
         }
-        return join23(result, fragment);
+        return join25(result, fragment);
       },
       Property: function(expr, precedence, flags) {
         if (expr.kind === "get" || expr.kind === "set") {
@@ -59646,7 +60127,7 @@ var require_escodegen = __commonJS((exports) => {
             for (i = 0, iz = expr.blocks.length;i < iz; ++i) {
               fragment = that.generateExpression(expr.blocks[i], Precedence.Sequence, E_TTT);
               if (i > 0 || extra.moz.comprehensionExpressionStartsWithAssignment) {
-                result = join23(result, fragment);
+                result = join25(result, fragment);
               } else {
                 result.push(fragment);
               }
@@ -59654,13 +60135,13 @@ var require_escodegen = __commonJS((exports) => {
           });
         }
         if (expr.filter) {
-          result = join23(result, "if" + space);
+          result = join25(result, "if" + space);
           fragment = this.generateExpression(expr.filter, Precedence.Sequence, E_TTT);
-          result = join23(result, ["(", fragment, ")"]);
+          result = join25(result, ["(", fragment, ")"]);
         }
         if (!extra.moz.comprehensionExpressionStartsWithAssignment) {
           fragment = this.generateExpression(expr.body, Precedence.Assignment, E_TTT);
-          result = join23(result, fragment);
+          result = join25(result, fragment);
         }
         result.push(expr.type === Syntax.GeneratorExpression ? ")" : "]");
         return result;
@@ -59676,8 +60157,8 @@ var require_escodegen = __commonJS((exports) => {
         } else {
           fragment = this.generateExpression(expr.left, Precedence.Call, E_TTT);
         }
-        fragment = join23(fragment, expr.of ? "of" : "in");
-        fragment = join23(fragment, this.generateExpression(expr.right, Precedence.Sequence, E_TTT));
+        fragment = join25(fragment, expr.of ? "of" : "in");
+        fragment = join25(fragment, this.generateExpression(expr.right, Precedence.Sequence, E_TTT));
         return ["for" + space + "(", fragment, ")"];
       },
       SpreadElement: function(expr, precedence, flags) {
@@ -79774,7 +80255,7 @@ var init_fileUtil = __esm(() => {
 // node_modules/@puppeteer/browsers/lib/esm/install.js
 import assert2 from "node:assert";
 import { spawnSync as spawnSync3 } from "node:child_process";
-import { existsSync as existsSync23, readFileSync as readFileSync22 } from "node:fs";
+import { existsSync as existsSync25, readFileSync as readFileSync24 } from "node:fs";
 import { mkdir as mkdir2, unlink } from "node:fs/promises";
 import os5 from "node:os";
 import path8 from "node:path";
@@ -79827,7 +80308,7 @@ async function installWithProviders(options) {
         continue;
       }
       debugInstall(`Successfully got URL from ${provider.getName()}: ${url}`);
-      if (!existsSync23(browserRoot)) {
+      if (!existsSync25(browserRoot)) {
         await mkdir2(browserRoot, { recursive: true });
       }
       return await installUrl(url, options, provider);
@@ -79860,11 +80341,11 @@ async function installDeps(installedBrowser) {
     return;
   }
   const depsPath = path8.join(path8.dirname(installedBrowser.executablePath), "deb.deps");
-  if (!existsSync23(depsPath)) {
+  if (!existsSync25(depsPath)) {
     debugInstall(`deb.deps file was not found at ${depsPath}`);
     return;
   }
-  const data = readFileSync22(depsPath, "utf-8").split(`
+  const data = readFileSync24(depsPath, "utf-8").split(`
 `).join(",");
   if (process.getuid?.() !== 0) {
     throw new Error("Installing system dependencies requires root privileges");
@@ -79902,11 +80383,11 @@ async function installUrl(url, options, provider) {
   const cache = new Cache(options.cacheDir);
   const browserRoot = cache.browserRoot(options.browser);
   const archivePath = path8.join(browserRoot, `${options.buildId}-${fileName}`);
-  if (!existsSync23(browserRoot)) {
+  if (!existsSync25(browserRoot)) {
     await mkdir2(browserRoot, { recursive: true });
   }
   if (!options.unpack) {
-    if (existsSync23(archivePath)) {
+    if (existsSync25(archivePath)) {
       return archivePath;
     }
     debugInstall(`Downloading binary from ${url}`);
@@ -79927,8 +80408,8 @@ async function installUrl(url, options, provider) {
     cache.writeExecutablePath(options.browser, options.platform, options.buildId, relativeExecutablePath6);
   }
   try {
-    if (existsSync23(outputPath)) {
-      if (!existsSync23(installedBrowser.executablePath)) {
+    if (existsSync25(outputPath)) {
+      if (!existsSync25(installedBrowser.executablePath)) {
         throw new Error(`The browser folder (${outputPath}) exists but the executable (${installedBrowser.executablePath}) is missing`);
       }
       await runSetup(installedBrowser);
@@ -79937,7 +80418,7 @@ async function installUrl(url, options, provider) {
       }
       return installedBrowser;
     }
-    if (!existsSync23(archivePath)) {
+    if (!existsSync25(archivePath)) {
       debugInstall(`Downloading binary from ${url}`);
       try {
         debugTime("download");
@@ -79966,7 +80447,7 @@ async function installUrl(url, options, provider) {
     }
     return installedBrowser;
   } finally {
-    if (existsSync23(archivePath)) {
+    if (existsSync25(archivePath)) {
       await unlink(archivePath);
     }
   }
@@ -79977,7 +80458,7 @@ async function runSetup(installedBrowser) {
       debugTime("permissions");
       const browserDir = path8.dirname(installedBrowser.executablePath);
       const setupExePath = path8.join(browserDir, "setup.exe");
-      if (!existsSync23(setupExePath)) {
+      if (!existsSync25(setupExePath)) {
         return;
       }
       spawnSync3(path8.join(browserDir, "setup.exe"), [`--configure-browser-in-directory=` + browserDir], {
@@ -81390,14 +81871,14 @@ var init_yerror = __esm(() => {
 });
 
 // node_modules/y18n/build/lib/platform-shims/node.js
-import { readFileSync as readFileSync23, statSync as statSync11, writeFile } from "fs";
+import { readFileSync as readFileSync25, statSync as statSync11, writeFile } from "fs";
 import { format as format2 } from "util";
 import { resolve as resolve10 } from "path";
 var node_default;
 var init_node = __esm(() => {
   node_default = {
     fs: {
-      readFileSync: readFileSync23,
+      readFileSync: readFileSync25,
       writeFile
     },
     format: format2,
@@ -81582,7 +82063,7 @@ var init_y18n = __esm(() => {
 // node_modules/yargs/lib/platform-shims/esm.mjs
 import { notStrictEqual, strictEqual } from "assert";
 import { inspect } from "util";
-import { readFileSync as readFileSync24 } from "fs";
+import { readFileSync as readFileSync26 } from "fs";
 import { fileURLToPath } from "url";
 import { basename as basename10, dirname as dirname11, extname as extname3, relative as relative7, resolve as resolve11 } from "path";
 var REQUIRE_ERROR = "require is not supported by ESM", REQUIRE_DIRECTORY_ERROR = "loading a directory of commands is not supported yet for ESM", __dirname2, mainFilename, esm_default;
@@ -81631,7 +82112,7 @@ var init_esm = __esm(() => {
       nextTick: process.nextTick,
       stdColumns: typeof process.stdout.columns !== "undefined" ? process.stdout.columns : null
     },
-    readFileSync: readFileSync24,
+    readFileSync: readFileSync26,
     require: () => {
       throw new YError(REQUIRE_ERROR);
     },
@@ -85330,9 +85811,9 @@ async function getConnectionTransport(options) {
       throw new Error("Could not detect required browser platform");
     }
     const { convertPuppeteerChannelToBrowsersChannel: convertPuppeteerChannelToBrowsersChannel2 } = await Promise.resolve().then(() => (init_LaunchOptions(), exports_LaunchOptions));
-    const { join: join24 } = await import("node:path");
+    const { join: join26 } = await import("node:path");
     const userDataDir = resolveDefaultUserDataDir3(Browser7.CHROME, platform2, convertPuppeteerChannelToBrowsersChannel2(options.channel));
-    const portPath = join24(userDataDir, "DevToolsActivePort");
+    const portPath = join26(userDataDir, "DevToolsActivePort");
     try {
       const fileContent = await environment.value.fs.promises.readFile(portPath, "ascii");
       const [rawPort, rawPath] = fileContent.split(`
@@ -85556,9 +86037,9 @@ var init_PipeTransport = __esm(() => {
 });
 
 // node_modules/puppeteer-core/lib/esm/puppeteer/node/BrowserLauncher.js
-import { existsSync as existsSync24 } from "node:fs";
+import { existsSync as existsSync26 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join24 } from "node:path";
+import { join as join26 } from "node:path";
 
 class BrowserLauncher {
   #browser;
@@ -85583,7 +86064,7 @@ class BrowserLauncher {
       ...options,
       protocol
     });
-    if (!existsSync24(launchArgs.executablePath)) {
+    if (!existsSync26(launchArgs.executablePath)) {
       throw new Error(`Browser was not found at the configured executablePath (${launchArgs.executablePath})`);
     }
     const usePipe = launchArgs.args.includes("--remote-debugging-pipe");
@@ -85658,7 +86139,7 @@ class BrowserLauncher {
       browserCloseCallback();
       const logs = browserProcess.getRecentLogs().join(`
 `);
-      if (logs.includes("Failed to create a ProcessSingleton for your profile directory") || process.platform === "win32" && existsSync24(join24(launchArgs.userDataDir, "lockfile"))) {
+      if (logs.includes("Failed to create a ProcessSingleton for your profile directory") || process.platform === "win32" && existsSync26(join26(launchArgs.userDataDir, "lockfile"))) {
         throw new Error(`The browser is already running for ${launchArgs.userDataDir}. Use a different \`userDataDir\` or stop the running browser first.`);
       }
       if (logs.includes("Missing X server") && options.headless === false) {
@@ -85748,12 +86229,12 @@ class BrowserLauncher {
     });
   }
   getProfilePath() {
-    return join24(this.puppeteer.configuration.temporaryDirectory ?? tmpdir(), `puppeteer_dev_${this.browser}_profile-`);
+    return join26(this.puppeteer.configuration.temporaryDirectory ?? tmpdir(), `puppeteer_dev_${this.browser}_profile-`);
   }
   resolveExecutablePath(headless, validatePath = true) {
     let executablePath = this.puppeteer.configuration.executablePath;
     if (executablePath) {
-      if (validatePath && !existsSync24(executablePath)) {
+      if (validatePath && !existsSync26(executablePath)) {
         throw new Error(`Tried to find the browser at the configured path (${executablePath}), but no executable was found.`);
       }
       return executablePath;
@@ -85776,7 +86257,7 @@ class BrowserLauncher {
       browser: browserType,
       buildId: this.puppeteer.browserVersion
     });
-    if (validatePath && !existsSync24(executablePath)) {
+    if (validatePath && !existsSync26(executablePath)) {
       const configVersion = this.puppeteer.configuration?.[this.browser]?.version;
       if (configVersion) {
         throw new Error(`Tried to find the browser at the configured path (${executablePath}) for version ${configVersion}, but no executable was found.`);
@@ -86591,17 +87072,17 @@ var init_puppeteer_core = __esm(() => {
 });
 
 // src/core/design-eval/capture.ts
-import { mkdirSync as mkdirSync11, statSync as statSync12, existsSync as existsSync25 } from "fs";
-import { join as join25 } from "path";
+import { mkdirSync as mkdirSync12, statSync as statSync12, existsSync as existsSync27 } from "fs";
+import { join as join27 } from "path";
 function findBrowser() {
   const platform2 = process.platform;
   const paths = CHROME_PATHS[platform2] ?? [];
   for (const p of paths) {
-    if (existsSync25(p))
+    if (existsSync27(p))
       return p;
   }
-  const minkBrowsers = join25(minkRoot(), "browsers");
-  if (existsSync25(minkBrowsers)) {
+  const minkBrowsers = join27(minkRoot(), "browsers");
+  if (existsSync27(minkBrowsers)) {
     const found = findChromeInDir(minkBrowsers);
     if (found)
       return found;
@@ -86622,7 +87103,7 @@ function findChromeInDir(dir) {
   try {
     const entries = readdirSync9(dir);
     for (const entry of entries) {
-      const full = join25(dir, entry);
+      const full = join27(dir, entry);
       try {
         const stat2 = statSync13(full);
         if (stat2.isDirectory()) {
@@ -86670,7 +87151,7 @@ async function captureRoute(page, route, baseUrl, viewport, options) {
     const y = section * viewport.height;
     const clipHeight = Math.min(viewport.height, pageHeight - y);
     const fileName = `${prefix}-${viewport.name}-${section}.jpg`;
-    const filePath = join25(options.outputDir, fileName);
+    const filePath = join27(options.outputDir, fileName);
     await page.screenshot({
       path: filePath,
       type: "jpeg",
@@ -86702,7 +87183,7 @@ async function captureRoute(page, route, baseUrl, viewport, options) {
   return results;
 }
 async function captureAllRoutes(routes, baseUrl, viewports, options, outputDir) {
-  mkdirSync11(outputDir, { recursive: true });
+  mkdirSync12(outputDir, { recursive: true });
   const executablePath = findBrowser();
   const browser = await puppeteer_core_default.launch({
     executablePath,
@@ -88129,180 +88610,12 @@ var init_framework_advisor2 = __esm(() => {
   init_validate();
 });
 
-// src/core/vault-templates.ts
-import { join as join26 } from "path";
-import { existsSync as existsSync26, writeFileSync as writeFileSync8, readFileSync as readFileSync25, mkdirSync as mkdirSync12 } from "fs";
-function seedTemplates(templatesDir) {
-  mkdirSync12(templatesDir, { recursive: true });
-  for (const [name, content] of Object.entries(DEFAULT_TEMPLATES)) {
-    const filePath = join26(templatesDir, `${name}.md`);
-    if (!existsSync26(filePath)) {
-      writeFileSync8(filePath, content);
-    }
-  }
-}
-function loadTemplate(templatesDir, templateName, vars) {
-  const filePath = join26(templatesDir, `${templateName}.md`);
-  let content;
-  if (existsSync26(filePath)) {
-    content = readFileSync25(filePath, "utf-8");
-  } else if (DEFAULT_TEMPLATES[templateName]) {
-    content = DEFAULT_TEMPLATES[templateName];
-  } else {
-    return null;
-  }
-  return fillTemplate(content, vars);
-}
-function fillTemplate(template, vars) {
-  let result = template;
-  for (const [key, value] of Object.entries(vars)) {
-    result = result.replaceAll(`{{${key}}}`, value);
-  }
-  return result;
-}
-var DEFAULT_TEMPLATES;
-var init_vault_templates = __esm(() => {
-  DEFAULT_TEMPLATES = {
-    "quick-capture": `---
-created: "{{created}}"
-updated: "{{updated}}"
-tags: []
-category: inbox
----
-
-# {{title}}
-
-{{body}}
-`,
-    "daily-note": `---
-created: "{{created}}"
-updated: "{{updated}}"
-tags: [daily]
-category: areas
----
-
-# {{date}}
-
-## Focus
-
--
-
-## Notes
-
--
-
-## Tasks
-
-- [ ]
-
-## Reflections
-
-`,
-    meeting: `---
-created: "{{created}}"
-updated: "{{updated}}"
-tags: [meeting]
-category: areas
----
-
-# {{title}}
-
-**Date**: {{date}}
-**Attendees**:
-
-## Agenda
-
--
-
-## Discussion
-
--
-
-## Decisions
-
--
-
-## Action Items
-
-- [ ]
-`,
-    project: `---
-created: "{{created}}"
-updated: "{{updated}}"
-tags: [project]
-category: projects
-status: active
----
-
-# {{title}}
-
-## Overview
-
-{{body}}
-
-## Goals
-
--
-
-## Key Decisions
-
--
-
-## Links
-
--
-`,
-    area: `---
-created: "{{created}}"
-updated: "{{updated}}"
-tags: [area]
-category: areas
----
-
-# {{title}}
-
-## Purpose
-
-{{body}}
-
-## Standards
-
--
-
-## Key Resources
-
--
-`,
-    person: `---
-created: "{{created}}"
-updated: "{{updated}}"
-tags: [person]
-category: resources
----
-
-# {{title}}
-
-## Role
-
-## Context
-
-## 1:1 Notes
-
--
-
-## Key Projects
-
--
-`
-  };
-});
-
 // src/commands/wiki.ts
 var exports_wiki = {};
 __export(exports_wiki, {
   wiki: () => wiki
 });
-import { existsSync as existsSync27, statSync as statSync13 } from "fs";
+import { existsSync as existsSync28, statSync as statSync13 } from "fs";
 import { resolve as resolve12 } from "path";
 import { homedir as homedir4 } from "os";
 async function wiki(_cwd, args) {
@@ -88358,7 +88671,7 @@ async function wikiInit(args) {
     console.log(`[mink] initializing vault at ${targetPath}`);
     console.log("  (set a custom path with: mink wiki init /path/to/vault)");
   }
-  const isExisting = existsSync27(targetPath) && statSync13(targetPath).isDirectory();
+  const isExisting = existsSync28(targetPath) && statSync13(targetPath).isDirectory();
   setConfigValue("wiki.path", targetPath);
   ensureVaultStructure();
   seedTemplates(vaultTemplates());
@@ -88573,163 +88886,6 @@ var init_wiki = __esm(() => {
   init_vault_templates();
   init_note_index();
   init_note_linker();
-});
-
-// src/core/note-writer.ts
-import { join as join27 } from "path";
-import { existsSync as existsSync28, readFileSync as readFileSync26 } from "fs";
-function slugifyTitle(title) {
-  return title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
-}
-function generateFrontmatter(meta) {
-  const lines = ["---"];
-  lines.push(`created: "${meta.created}"`);
-  lines.push(`updated: "${meta.updated}"`);
-  if (meta.tags.length > 0) {
-    lines.push(`tags: [${meta.tags.join(", ")}]`);
-  } else {
-    lines.push("tags: []");
-  }
-  lines.push(`category: ${meta.category}`);
-  if (meta.sourceProject) {
-    lines.push(`source_project: ${meta.sourceProject}`);
-  }
-  if (meta.aliases && meta.aliases.length > 0) {
-    lines.push(`aliases: [${meta.aliases.join(", ")}]`);
-  }
-  if (meta.extra) {
-    for (const [key, value] of Object.entries(meta.extra)) {
-      lines.push(`${key}: ${JSON.stringify(value)}`);
-    }
-  }
-  lines.push("---");
-  return lines.join(`
-`);
-}
-function createNote(meta) {
-  const now = meta.created || new Date().toISOString();
-  const slug = slugifyTitle(meta.title);
-  const dir = categoryToDir(meta.category, meta.projectSlug);
-  const filePath = join27(dir, `${slug}.md`);
-  let content;
-  if (meta.template) {
-    const rendered = loadTemplate(vaultTemplates(), meta.template, {
-      title: meta.title,
-      body: meta.body,
-      created: now,
-      updated: now,
-      date: now.split("T")[0]
-    });
-    content = rendered ?? buildNoteContent(meta, now);
-  } else {
-    content = buildNoteContent(meta, now);
-  }
-  atomicWriteText(filePath, content);
-  return { filePath, content };
-}
-function buildNoteContent(meta, now) {
-  const frontmatter = generateFrontmatter({
-    created: now,
-    updated: now,
-    tags: meta.tags,
-    category: meta.category,
-    sourceProject: meta.sourceProject
-  });
-  return `${frontmatter}
-
-# ${meta.title}
-
-${meta.body}
-`;
-}
-function appendToDaily(date, content) {
-  const dir = vaultDailyDir();
-  const filePath = join27(dir, `${date}.md`);
-  if (existsSync28(filePath)) {
-    const existing = readFileSync26(filePath, "utf-8");
-    const timestamp = new Date().toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false
-    });
-    const updated = `${existing.trimEnd()}
-
-## ${timestamp}
-
-${content}
-`;
-    atomicWriteText(filePath, updated);
-  } else {
-    const now = new Date().toISOString();
-    const rendered = loadTemplate(vaultTemplates(), "daily-note", {
-      title: date,
-      date,
-      body: content,
-      created: now,
-      updated: now
-    });
-    const noteContent = rendered ?? `---
-created: "${now}"
-updated: "${now}"
-tags: [daily]
-category: areas
----
-
-# ${date}
-
-${content}
-`;
-    atomicWriteText(filePath, noteContent);
-  }
-  return filePath;
-}
-function ingestFile(sourcePath, meta) {
-  const raw = readFileSync26(sourcePath, "utf-8");
-  const now = new Date().toISOString();
-  const headingMatch = raw.match(/^#\s+(.+)$/m);
-  const title = headingMatch?.[1] ?? sourcePath.split("/").pop().replace(/\.md$/, "");
-  const hasFrontmatter = raw.startsWith("---");
-  let content;
-  if (hasFrontmatter) {
-    const endIdx = raw.indexOf("---", 3);
-    if (endIdx !== -1) {
-      const existingFm = raw.slice(0, endIdx + 3);
-      const body = raw.slice(endIdx + 3).trim();
-      if (!existingFm.includes("category:")) {
-        const updatedFm = existingFm.replace(/---$/, `category: ${meta.category}
----`);
-        content = `${updatedFm}
-
-${body}
-`;
-      } else {
-        content = raw;
-      }
-    } else {
-      content = raw;
-    }
-  } else {
-    const frontmatter = generateFrontmatter({
-      created: now,
-      updated: now,
-      tags: meta.tags ?? [],
-      category: meta.category,
-      sourceProject: meta.sourceProject
-    });
-    content = `${frontmatter}
-
-${raw}`;
-  }
-  const slug = slugifyTitle(title);
-  const dir = categoryToDir(meta.category, meta.projectSlug);
-  const filePath = join27(dir, `${slug}.md`);
-  atomicWriteText(filePath, content);
-  return { filePath, content };
-}
-var init_note_writer = __esm(() => {
-  init_fs_utils();
-  init_vault();
-  init_vault_templates();
 });
 
 // src/commands/note.ts

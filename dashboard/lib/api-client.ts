@@ -160,3 +160,64 @@ export function fetchWiki(options: { limit?: number; category?: string } = {}) {
 export function fetchWikiNote(path: string) {
   return fetchApi<WikiNotePayload>(`/api/wiki/note?path=${encodeURIComponent(path)}`);
 }
+
+export type CaptureNoteMode = "quick" | "structured";
+
+export interface CaptureResult extends ActionResult {
+  filePath?: string;
+}
+
+function dedupHeaders(dedupKey?: string): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (dedupKey) headers["X-Mink-Dedup-Key"] = dedupKey;
+  return headers;
+}
+
+export async function createNote(args: {
+  mode: CaptureNoteMode;
+  title?: string;
+  category?: string;
+  body: string;
+  tags?: string[];
+  dedupKey?: string;
+}): Promise<CaptureResult> {
+  const res = await fetch("/api/wiki/notes", {
+    method: "POST",
+    headers: dedupHeaders(args.dedupKey),
+    body: JSON.stringify({
+      mode: args.mode,
+      title: args.title,
+      category: args.category,
+      body: args.body,
+      tags: args.tags,
+    }),
+  });
+  return res.json();
+}
+
+export async function appendDaily(content: string, dedupKey?: string): Promise<CaptureResult> {
+  const res = await fetch("/api/wiki/daily", {
+    method: "POST",
+    headers: dedupHeaders(dedupKey),
+    body: JSON.stringify({ content }),
+  });
+  return res.json();
+}
+
+export async function ingestFile(args: {
+  sourcePath: string;
+  category: string;
+  tags?: string[];
+  dedupKey?: string;
+}): Promise<CaptureResult> {
+  const res = await fetch("/api/wiki/ingest", {
+    method: "POST",
+    headers: dedupHeaders(args.dedupKey),
+    body: JSON.stringify({
+      sourcePath: args.sourcePath,
+      category: args.category,
+      tags: args.tags,
+    }),
+  });
+  return res.json();
+}

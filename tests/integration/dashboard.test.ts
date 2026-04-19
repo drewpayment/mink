@@ -250,6 +250,42 @@ describe("dashboard server", () => {
     expect(res.status).toBe(404);
   });
 
+  test("POST /api/wiki/notes rejects empty body", async () => {
+    const res = await fetch(srv.url + "/api/wiki/notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "quick", body: "" }),
+    });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+  });
+
+  test("POST /api/wiki/notes returns error when vault is not initialized", async () => {
+    const res = await fetch(srv.url + "/api/wiki/notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "quick", body: "hello world" }),
+    });
+    // Vault may or may not exist on the dev box; assert the response shape only.
+    const data = await res.json();
+    expect(typeof data.success).toBe("boolean");
+    if (!data.success) {
+      expect(typeof data.error).toBe("string");
+    }
+  });
+
+  test("POST /api/wiki/ingest rejects missing source", async () => {
+    const res = await fetch(srv.url + "/api/wiki/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourcePath: "", category: "inbox" }),
+    });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+  });
+
   test("POST /api/sync/pull returns error when sync not initialized", async () => {
     // Only run when sync is not initialized (i.e., typical test env).
     const statusRes = await fetch(srv.url + "/api/sync");

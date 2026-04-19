@@ -30,6 +30,9 @@ import {
   triggerChannelRestart,
   loadWikiPanel,
   loadWikiNote,
+  triggerCreateNote,
+  triggerAppendDaily,
+  triggerIngestFile,
 } from "./dashboard-api";
 import { listRegisteredProjects, getProjectMeta } from "./project-registry";
 import { generateProjectId } from "./project-id";
@@ -625,6 +628,61 @@ export async function startDashboardServer(
               });
             }
             return jsonResponse(result, result.success ? 200 : 500);
+          } catch (err) {
+            return jsonResponse(
+              { success: false, error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
+        // Wiki writes — global (single user-level vault).
+        if (
+          pathname === "/api/wiki/notes" ||
+          pathname === "/api/wiki/daily" ||
+          pathname === "/api/wiki/ingest"
+        ) {
+          const dedupKey = req.headers.get("X-Mink-Dedup-Key") ?? undefined;
+          try {
+            const body = (await req.json()) as Record<string, unknown>;
+
+            let action: Promise<
+              { success: boolean; error?: string; filePath?: string }
+            >;
+
+            if (pathname === "/api/wiki/notes") {
+              const mode = body.mode === "structured" ? "structured" : "quick";
+              action = triggerCreateNote({
+                mode,
+                title: typeof body.title === "string" ? body.title : undefined,
+                category: typeof body.category === "string" ? body.category : undefined,
+                body: typeof body.body === "string" ? body.body : "",
+                tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
+                dedupKey,
+              });
+            } else if (pathname === "/api/wiki/daily") {
+              action = triggerAppendDaily(
+                typeof body.content === "string" ? body.content : "",
+                dedupKey,
+              );
+            } else {
+              action = triggerIngestFile(
+                typeof body.sourcePath === "string" ? body.sourcePath : "",
+                typeof body.category === "string" ? body.category : "inbox",
+                Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
+                dedupKey,
+              );
+            }
+
+            return action.then((result) => {
+              if (result.success) {
+                sseManager.broadcast({
+                  fileId: "vault-index" as StateFileId,
+                  timestamp: new Date().toISOString(),
+                });
+              }
+              return jsonResponse(result, result.success ? 200 : 500);
+            });
           } catch (err) {
             return jsonResponse(
               { success: false, error: err instanceof Error ? err.message : String(err) },

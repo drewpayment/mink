@@ -44,9 +44,10 @@ import {
 import { resolveConfigValue } from "./global-config";
 import { resolveVaultPath, isVaultInitialized } from "./vault";
 import type { ChannelPlatform } from "../types/channel";
-import { loadVaultIndex, getRecentNotes } from "./note-index";
+import { loadVaultIndex, getRecentNotes, updateVaultIndexForFile } from "./note-index";
 import { extractWikilinks } from "./note-linker";
-import { readdirSync, readFileSync as readFileSyncFS } from "fs";
+import { createNote, appendToDaily, ingestFile } from "./note-writer";
+import { readdirSync, readFileSync as readFileSyncFS, existsSync as fsExistsSync } from "fs";
 import { join, resolve, normalize, sep } from "path";
 import type { VaultIndexEntry, NoteCategory } from "../types/note";
 import { minkRoot } from "./paths";
@@ -850,6 +851,164 @@ export async function triggerSyncDisconnect(): Promise<ActionResult> {
   try {
     disconnectSync();
     return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+const VALID_CATEGORIES: NoteCategory[] = ["inbox", "projects", "areas", "resources", "archives"];
+
+function isValidCategory(cat: unknown): cat is NoteCategory {
+  return typeof cat === "string" && (VALID_CATEGORIES as string[]).includes(cat);
+}
+
+function firstNonEmptyLine(s: string): string {
+  for (const line of s.split("\n")) {
+    const trimmed = line.trim().replace(/^#+\s*/, "");
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
+function deriveQuickTitle(body: string): string {
+  const first = firstNonEmptyLine(body);
+  if (!first) return `quick-capture-${new Date().toISOString().slice(0, 10)}`;
+  return first.slice(0, 80);
+}
+
+// In-memory idempotency tracker: maps dedup key -> created filePath.
+// Keys are TTL'd to cap memory (10 min window is generous for UI double-submits).
+const DEDUP_TTL_MS = 10 * 60 * 1000;
+const dedupCache = new Map<string, { filePath: string; expiresAt: number }>();
+
+function checkDedup(key: string | undefined): { filePath: string } | null {
+  if (!key) return null;
+  const now = Date.now();
+  // Sweep expired entries lazily.
+  for (const [k, v] of dedupCache) {
+    if (v.expiresAt < now) dedupCache.delete(k);
+  }
+  const hit = dedupCache.get(key);
+  return hit && hit.expiresAt >= now ? { filePath: hit.filePath } : null;
+}
+
+function recordDedup(key: string | undefined, filePath: string): void {
+  if (!key) return;
+  dedupCache.set(key, { filePath, expiresAt: Date.now() + DEDUP_TTL_MS });
+}
+
+export interface CaptureNoteRequest {
+  mode: "quick" | "structured";
+  title?: string;
+  category?: string;
+  body: string;
+  tags?: string[];
+  dedupKey?: string;
+}
+
+export async function triggerCreateNote(
+  req: CaptureNoteRequest,
+): Promise<ActionResult & { filePath?: string }> {
+  try {
+    if (!isVaultInitialized()) {
+      return { success: false, error: "Vault is not initialized. Run `mink wiki init` first." };
+    }
+    if (typeof req.body !== "string" || !req.body.trim()) {
+      return { success: false, error: "Body is required" };
+    }
+
+    const existing = checkDedup(req.dedupKey);
+    if (existing) return { success: true, filePath: existing.filePath };
+
+    const category: NoteCategory = isValidCategory(req.category)
+      ? req.category
+      : "inbox";
+    const title = (req.title?.trim() || "") || deriveQuickTitle(req.body);
+    const tags = (req.tags ?? []).map((t) => t.trim()).filter(Boolean);
+    const now = new Date().toISOString();
+
+    const result = createNote({
+      title,
+      category,
+      tags,
+      created: now,
+      updated: now,
+      body: req.body,
+    });
+
+    updateVaultIndexForFile(result.filePath, result.content);
+    recordDedup(req.dedupKey, result.filePath);
+    return { success: true, filePath: result.filePath };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function triggerAppendDaily(
+  content: string,
+  dedupKey?: string,
+): Promise<ActionResult & { filePath?: string }> {
+  try {
+    if (!isVaultInitialized()) {
+      return { success: false, error: "Vault is not initialized." };
+    }
+    if (typeof content !== "string" || !content.trim()) {
+      return { success: false, error: "Content is required" };
+    }
+
+    const existing = checkDedup(dedupKey);
+    if (existing) return { success: true, filePath: existing.filePath };
+
+    const today = new Date().toISOString().slice(0, 10);
+    const filePath = appendToDaily(today, content);
+    const updated = readFileSyncFS(filePath, "utf-8");
+    updateVaultIndexForFile(filePath, updated);
+    recordDedup(dedupKey, filePath);
+    return { success: true, filePath };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function triggerIngestFile(
+  sourcePath: string,
+  category: string,
+  tags?: string[],
+  dedupKey?: string,
+): Promise<ActionResult & { filePath?: string }> {
+  try {
+    if (!isVaultInitialized()) {
+      return { success: false, error: "Vault is not initialized." };
+    }
+    if (!sourcePath) {
+      return { success: false, error: "sourcePath is required" };
+    }
+    if (!isValidCategory(category)) {
+      return { success: false, error: `Invalid category: ${category}` };
+    }
+    const expanded = sourcePath.startsWith("~/")
+      ? join(process.env.HOME ?? "", sourcePath.slice(2))
+      : sourcePath;
+    if (!fsExistsSync(expanded)) {
+      return { success: false, error: `Source file not found: ${sourcePath}` };
+    }
+
+    const existing = checkDedup(dedupKey);
+    if (existing) return { success: true, filePath: existing.filePath };
+
+    const result = ingestFile(expanded, { category, tags });
+    updateVaultIndexForFile(result.filePath, result.content);
+    recordDedup(dedupKey, result.filePath);
+    return { success: true, filePath: result.filePath };
   } catch (err) {
     return {
       success: false,
