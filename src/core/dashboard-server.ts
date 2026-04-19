@@ -14,6 +14,25 @@ import {
   triggerTask,
   triggerDeadLetterRetry,
   triggerRescan,
+  triggerDaemonStart,
+  triggerDaemonStop,
+  triggerDaemonRestart,
+  loadConfigPanel,
+  triggerConfigSet,
+  triggerConfigReset,
+  loadSyncPanel,
+  triggerSyncPull,
+  triggerSyncPush,
+  triggerSyncDisconnect,
+  loadChannelPanel,
+  triggerChannelStart,
+  triggerChannelStop,
+  triggerChannelRestart,
+  loadWikiPanel,
+  loadWikiNote,
+  triggerCreateNote,
+  triggerAppendDaily,
+  triggerIngestFile,
 } from "./dashboard-api";
 import { listRegisteredProjects, getProjectMeta } from "./project-registry";
 import { generateProjectId } from "./project-id";
@@ -410,6 +429,82 @@ export async function startDashboardServer(
           return jsonResponse(getProjectsList(cwd, activeCwd));
         }
 
+        // GET /api/config — global config (no project scoping)
+        if (pathname === "/api/config") {
+          try {
+            return jsonResponse(loadConfigPanel());
+          } catch (err) {
+            return jsonResponse(
+              { error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
+        // GET /api/sync — global sync status (no project scoping)
+        if (pathname === "/api/sync") {
+          try {
+            return jsonResponse(loadSyncPanel());
+          } catch (err) {
+            return jsonResponse(
+              { error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
+        // GET /api/channel — global channel status + logs (no project scoping)
+        if (pathname === "/api/channel") {
+          try {
+            return jsonResponse(loadChannelPanel());
+          } catch (err) {
+            return jsonResponse(
+              { error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
+        // GET /api/wiki — global wiki vault summary (no project scoping)
+        if (pathname === "/api/wiki") {
+          try {
+            const limitRaw = url.searchParams.get("limit");
+            const categoryRaw = url.searchParams.get("category");
+            const limit = limitRaw ? Number(limitRaw) : undefined;
+            return jsonResponse(
+              loadWikiPanel({
+                limit: Number.isFinite(limit) ? limit : undefined,
+                category: (categoryRaw as "all" | undefined) ?? undefined,
+              }),
+            );
+          } catch (err) {
+            return jsonResponse(
+              { error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
+        // GET /api/wiki/note — single note body with backlinks
+        if (pathname === "/api/wiki/note") {
+          try {
+            const notePath = url.searchParams.get("path");
+            if (!notePath) {
+              return jsonResponse({ error: "Missing path parameter" }, 400);
+            }
+            const note = loadWikiNote(notePath);
+            if (!note) {
+              return jsonResponse({ error: "Note not found" }, 404);
+            }
+            return jsonResponse(note);
+          } catch (err) {
+            return jsonResponse(
+              { error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
         // Resolve project cwd from ?project=<id> query param
         const resolvedCwd = resolveProjectCwd(url, activeCwd);
         if (resolvedCwd === null) {
@@ -490,6 +585,181 @@ export async function startDashboardServer(
               500
             );
           }
+        }
+
+        // POST /api/config/set — write a config value
+        if (pathname === "/api/config/set") {
+          try {
+            const body = (await req.json()) as {
+              key?: string;
+              value?: string;
+            };
+            if (!body.key || typeof body.value !== "string") {
+              return jsonResponse(
+                { success: false, error: "Missing key or value" },
+                400,
+              );
+            }
+            const result = await triggerConfigSet(body.key, body.value);
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "config-changed" as StateFileId,
+                timestamp: new Date().toISOString(),
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          } catch (err) {
+            return jsonResponse(
+              { success: false, error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
+        // POST /api/config/reset — clear one key (or all)
+        if (pathname === "/api/config/reset") {
+          try {
+            const body = (await req.json()) as { key?: string; all?: boolean };
+            const result = await triggerConfigReset(body.key, body.all);
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "config-changed" as StateFileId,
+                timestamp: new Date().toISOString(),
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          } catch (err) {
+            return jsonResponse(
+              { success: false, error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
+        // Wiki writes — global (single user-level vault).
+        if (
+          pathname === "/api/wiki/notes" ||
+          pathname === "/api/wiki/daily" ||
+          pathname === "/api/wiki/ingest"
+        ) {
+          const dedupKey = req.headers.get("X-Mink-Dedup-Key") ?? undefined;
+          try {
+            const body = (await req.json()) as Record<string, unknown>;
+
+            let action: Promise<
+              { success: boolean; error?: string; filePath?: string }
+            >;
+
+            if (pathname === "/api/wiki/notes") {
+              const mode = body.mode === "structured" ? "structured" : "quick";
+              action = triggerCreateNote({
+                mode,
+                title: typeof body.title === "string" ? body.title : undefined,
+                category: typeof body.category === "string" ? body.category : undefined,
+                body: typeof body.body === "string" ? body.body : "",
+                tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
+                dedupKey,
+              });
+            } else if (pathname === "/api/wiki/daily") {
+              action = triggerAppendDaily(
+                typeof body.content === "string" ? body.content : "",
+                dedupKey,
+              );
+            } else {
+              action = triggerIngestFile(
+                typeof body.sourcePath === "string" ? body.sourcePath : "",
+                typeof body.category === "string" ? body.category : "inbox",
+                Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
+                dedupKey,
+              );
+            }
+
+            return action.then((result) => {
+              if (result.success) {
+                sseManager.broadcast({
+                  fileId: "vault-index" as StateFileId,
+                  timestamp: new Date().toISOString(),
+                });
+              }
+              return jsonResponse(result, result.success ? 200 : 500);
+            });
+          } catch (err) {
+            return jsonResponse(
+              { success: false, error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
+        // Channel controls — global (screen session is per-vault, not per-project).
+        if (
+          pathname === "/api/channel/start" ||
+          pathname === "/api/channel/stop" ||
+          pathname === "/api/channel/restart"
+        ) {
+          const action =
+            pathname === "/api/channel/start"
+              ? triggerChannelStart()
+              : pathname === "/api/channel/stop"
+                ? triggerChannelStop()
+                : triggerChannelRestart();
+          return action.then((result) => {
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "channel-status" as StateFileId,
+                timestamp: new Date().toISOString(),
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          });
+        }
+
+        // Sync controls — global (operate on ~/.mink/.git, not a project).
+        if (
+          pathname === "/api/sync/pull" ||
+          pathname === "/api/sync/push" ||
+          pathname === "/api/sync/disconnect"
+        ) {
+          const action =
+            pathname === "/api/sync/pull"
+              ? triggerSyncPull()
+              : pathname === "/api/sync/push"
+                ? triggerSyncPush()
+                : triggerSyncDisconnect();
+          return action.then((result) => {
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "sync-status" as StateFileId,
+                timestamp: new Date().toISOString(),
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          });
+        }
+
+        // Daemon controls — global (operate on ~/.mink/ PID file, not a
+        // project state directory). Use activeCwd so the spawned daemon
+        // inherits the currently-active project.
+        if (
+          pathname === "/api/daemon/start" ||
+          pathname === "/api/daemon/stop" ||
+          pathname === "/api/daemon/restart"
+        ) {
+          const action =
+            pathname === "/api/daemon/start"
+              ? triggerDaemonStart(activeCwd)
+              : pathname === "/api/daemon/stop"
+                ? triggerDaemonStop()
+                : triggerDaemonRestart(activeCwd);
+          return action.then((result) => {
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "daemon-status" as StateFileId,
+                timestamp: new Date().toISOString(),
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          });
         }
 
         // Resolve project cwd for POST actions

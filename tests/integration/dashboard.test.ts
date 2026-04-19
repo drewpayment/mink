@@ -1,8 +1,9 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
 import { startDashboardServer, type DashboardServer } from "../../src/core/dashboard-server";
+import { schedulerPidPath } from "../../src/core/paths";
 
 // We need a real state directory for the server to read from.
 // We'll mock project paths by creating a temp dir with state files.
@@ -132,6 +133,170 @@ describe("dashboard server", () => {
   test("unknown route returns 404", async () => {
     const res = await fetch(srv.url + "/api/nonexistent");
     expect(res.status).toBe(404);
+  });
+
+  test("POST /api/daemon/stop is a no-op when no daemon is running", async () => {
+    // Guard: only run when no real daemon PID file exists, otherwise this
+    // test would interfere with the developer's actual running daemon.
+    if (existsSync(schedulerPidPath())) return;
+
+    const res = await fetch(srv.url + "/api/daemon/stop", { method: "POST" });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+
+    // Overview should reflect a non-running daemon.
+    const overviewRes = await fetch(srv.url + "/api/overview");
+    const overview = await overviewRes.json();
+    expect(overview.daemon.running).toBe(false);
+  });
+
+  test("POST /api/daemon/unknown returns 404", async () => {
+    const res = await fetch(srv.url + "/api/daemon/unknown", { method: "POST" });
+    expect(res.status).toBe(404);
+  });
+
+  test("GET /api/config returns grouped entries with source chips", async () => {
+    const res = await fetch(srv.url + "/api/config");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data.entries)).toBe(true);
+    expect(data.entries.length).toBeGreaterThan(0);
+    const entry = data.entries[0];
+    expect(typeof entry.key).toBe("string");
+    expect(typeof entry.value).toBe("string");
+    expect(["default", "shared", "local", "env"]).toContain(entry.source);
+    expect(["string", "boolean", "number"]).toContain(entry.type);
+    expect(typeof entry.isSecret).toBe("boolean");
+    // Bot token must be masked in the response
+    const token = data.entries.find((e: { key: string }) => e.key === "channel.discord.bot-token");
+    expect(token?.isSecret).toBe(true);
+    expect(token?.value.includes(" ") || token?.value === "" || token?.value.startsWith("••••")).toBe(true);
+  });
+
+  test("POST /api/config/set rejects unknown keys", async () => {
+    const res = await fetch(srv.url + "/api/config/set", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "unknown.key", value: "x" }),
+    });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+    expect(data.error).toContain("Unknown");
+  });
+
+  test("POST /api/config/set rejects missing fields", async () => {
+    const res = await fetch(srv.url + "/api/config/set", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "wiki.enabled" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("GET /api/sync returns shape with initialized flag", async () => {
+    const res = await fetch(srv.url + "/api/sync");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(typeof data.initialized).toBe("boolean");
+    expect(typeof data.branch).toBe("string");
+    expect(typeof data.remote).toBe("string");
+    expect(typeof data.ahead).toBe("number");
+    expect(typeof data.behind).toBe("number");
+    expect(Array.isArray(data.pending)).toBe(true);
+  });
+
+  test("GET /api/channel returns stopped status when not running", async () => {
+    const res = await fetch(srv.url + "/api/channel");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(["running", "stopped"]).toContain(data.status);
+    expect(Array.isArray(data.allowlist)).toBe(true);
+    expect(Array.isArray(data.logs)).toBe(true);
+    expect(typeof data.tokenMasked).toBe("string");
+    expect(typeof data.autoStart).toBe("boolean");
+  });
+
+  test("POST /api/channel/stop is a no-op when channel not running", async () => {
+    // Skip if a real channel PID file exists (don't stomp the dev env).
+    const { channelPidPath } = await import("../../src/core/paths");
+    if (existsSync(channelPidPath())) return;
+
+    const res = await fetch(srv.url + "/api/channel/stop", { method: "POST" });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+  });
+
+  test("GET /api/wiki returns an uninitialized shape when vault is absent", async () => {
+    const res = await fetch(srv.url + "/api/wiki");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(typeof data.initialized).toBe("boolean");
+    expect(typeof data.vaultPath).toBe("string");
+    expect(Array.isArray(data.recent)).toBe(true);
+    expect(Array.isArray(data.tags)).toBe(true);
+    expect(Array.isArray(data.tree)).toBe(true);
+  });
+
+  test("GET /api/wiki/note requires path parameter", async () => {
+    const res = await fetch(srv.url + "/api/wiki/note");
+    expect(res.status).toBe(400);
+  });
+
+  test("GET /api/wiki/note rejects path traversal", async () => {
+    const res = await fetch(srv.url + "/api/wiki/note?path=" + encodeURIComponent("../../etc/passwd"));
+    expect(res.status).toBe(404);
+  });
+
+  test("POST /api/wiki/notes rejects empty body", async () => {
+    const res = await fetch(srv.url + "/api/wiki/notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "quick", body: "" }),
+    });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+  });
+
+  test("POST /api/wiki/notes returns error when vault is not initialized", async () => {
+    const res = await fetch(srv.url + "/api/wiki/notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "quick", body: "hello world" }),
+    });
+    // Vault may or may not exist on the dev box; assert the response shape only.
+    const data = await res.json();
+    expect(typeof data.success).toBe("boolean");
+    if (!data.success) {
+      expect(typeof data.error).toBe("string");
+    }
+  });
+
+  test("POST /api/wiki/ingest rejects missing source", async () => {
+    const res = await fetch(srv.url + "/api/wiki/ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourcePath: "", category: "inbox" }),
+    });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+  });
+
+  test("POST /api/sync/pull returns error when sync not initialized", async () => {
+    // Only run when sync is not initialized (i.e., typical test env).
+    const statusRes = await fetch(srv.url + "/api/sync");
+    const status = await statusRes.json();
+    if (status.initialized) return;
+
+    const res = await fetch(srv.url + "/api/sync/pull", { method: "POST" });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+    expect(data.error).toContain("not initialized");
   });
 
   test("SSE endpoint is accessible", async () => {

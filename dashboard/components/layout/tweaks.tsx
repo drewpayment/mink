@@ -1,7 +1,7 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { usePreferences, type Accent, type Density, type DaemonOverride } from "@/hooks/use-preferences";
+import { usePreferences, type Accent, type Density } from "@/hooks/use-preferences";
 
 const ACCENTS: Array<[Accent, string]> = [
   ["green",  "oklch(0.76 0.14 155)"],
@@ -14,12 +14,6 @@ const DENSITIES: Array<[Density, string]> = [
   ["compact", "S"],
   ["comfortable", "M"],
   ["spacious", "L"],
-];
-
-const DAEMON_CHOICES: Array<[DaemonOverride, string]> = [
-  ["auto", "auto"],
-  ["online", "online"],
-  ["offline", "offline"],
 ];
 
 export function Tweaks() {
@@ -35,8 +29,6 @@ export function Tweaks() {
   const setDensity = usePreferences((s) => s.setDensity);
   const liveFeel = usePreferences((s) => s.liveFeel);
   const setLiveFeel = usePreferences((s) => s.setLiveFeel);
-  const daemonOverride = usePreferences((s) => s.daemonOverride);
-  const setDaemonOverride = usePreferences((s) => s.setDaemonOverride);
 
   if (!open) return null;
 
@@ -115,22 +107,6 @@ export function Tweaks() {
           className={`toggle ${liveFeel ? "on" : ""}`.trim()}
           onClick={() => setLiveFeel(!liveFeel)}
         />
-      </div>
-
-      <div className="tw-row">
-        <span className="label">Daemon state</span>
-        <div className="seg">
-          {DAEMON_CHOICES.map(([k, l]) => (
-            <button
-              key={k}
-              type="button"
-              className={daemonOverride === k ? "on" : ""}
-              onClick={() => setDaemonOverride(k)}
-            >
-              {l}
-            </button>
-          ))}
-        </div>
       </div>
     </div>
   );

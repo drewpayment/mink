@@ -12,6 +12,7 @@ import {
   getChannelStatus,
   isChannelRunning,
 } from "./channel-process";
+import { runtimeSpawn } from "./runtime";
 import type { ChannelPlatform, ChannelStatus } from "../types/channel";
 
 // ── PID File Operations ─────────────────────────────────────────────────────
@@ -73,16 +74,17 @@ export function startDaemon(cwd: string): void {
     removePidFile();
   }
 
-  // Resolve the CLI entry point
+  // Resolve the CLI entry point — argv[1] is correct in both the
+  // source tree (bun run src/cli.ts) and the installed bundle (dist/cli.js).
   const __dir = dirname(new URL(import.meta.url).pathname);
-  const cliPath = resolve(__dir, "../cli.ts");
+  const cliPath = process.argv[1] ?? resolve(__dir, "../cli.ts");
 
   // Ensure log directory exists
   const logPath = schedulerLogPath();
   mkdirSync(dirname(logPath), { recursive: true });
   const logFd = openSync(logPath, "a");
 
-  const proc = Bun.spawn(["bun", "run", cliPath, "cron", "__daemon"], {
+  const proc = runtimeSpawn(["bun", "run", cliPath, "cron", "__daemon"], {
     cwd,
     stdout: logFd,
     stderr: logFd,

@@ -1,7 +1,6 @@
 "use client";
 
 import { useDashboardStore } from "@/hooks/use-dashboard-store";
-import { usePreferences } from "@/hooks/use-preferences";
 
 function fmtK(n: number): string {
   if (!n) return "0";
@@ -14,11 +13,8 @@ export function StatusBar() {
   const connected = useDashboardStore((s) => s.connected);
   const deadLetters = useDashboardStore((s) => s.deadLetters.length);
   const tasks = useDashboardStore((s) => s.tasks.length);
-  const daemonOverride = usePreferences((s) => s.daemonOverride);
 
-  const realOnline = overview?.daemon?.running ?? false;
-  const online =
-    daemonOverride === "online" ? true : daemonOverride === "offline" ? false : realOnline;
+  const online = overview?.daemon?.running ?? false;
   const pid = overview?.daemon?.pid;
 
   const summary = overview?.summary;

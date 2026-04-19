@@ -29,13 +29,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const accent = usePreferences((s) => s.accent);
   const density = usePreferences((s) => s.density);
   const liveFeel = usePreferences((s) => s.liveFeel);
-  const daemonOverride = usePreferences((s) => s.daemonOverride);
 
-  const realOnline = useDashboardStore((s) => s.overview?.daemon?.running ?? false);
+  const online = useDashboardStore((s) => s.overview?.daemon?.running ?? false);
   const hasOverview = useDashboardStore((s) => s.overview != null);
-
-  const online =
-    daemonOverride === "online" ? true : daemonOverride === "offline" ? false : realOnline;
 
   // Sync preferences to <body> data-attrs so CSS tokens cascade.
   useEffect(() => {

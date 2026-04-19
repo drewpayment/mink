@@ -8,30 +8,14 @@ import { crumbFor } from "./sidebar";
 
 export function TopBar() {
   const pathname = usePathname();
-  const daemonRunning = useDashboardStore((s) => s.overview?.daemon?.running ?? false);
-  const daemonOverride = usePreferences((s) => s.daemonOverride);
-  const setDaemonOverride = usePreferences((s) => s.setDaemonOverride);
+  const online = useDashboardStore((s) => s.overview?.daemon?.running ?? false);
   const setTweaksOpen = usePreferences((s) => s.setTweaksOpen);
   const activeProject = useDashboardStore((s) =>
     s.projects.find((p) => p.id === s.activeProjectId),
   );
   const projectName = activeProject?.name ?? "Mink";
 
-  const online = daemonOverride === "online" || (daemonOverride === "auto" && daemonRunning);
   const c = crumbFor(pathname || "/");
-
-  function togglePill() {
-    // Cycle auto → offline → online → auto.
-    setDaemonOverride(
-      daemonOverride === "auto"
-        ? online
-          ? "offline"
-          : "online"
-        : daemonOverride === "offline"
-          ? "online"
-          : "auto",
-    );
-  }
 
   return (
     <header className="topbar">
@@ -51,18 +35,15 @@ export function TopBar() {
         <kbd>⌘K</kbd>
       </div>
 
-      <button
-        type="button"
+      <span
         className="daemon-pill"
-        onClick={togglePill}
-        title={`Daemon ${online ? "online" : "offline"} — click to override`}
-        style={{ cursor: "pointer" }}
+        title={`Daemon ${online ? "online" : "offline"}`}
       >
         <span className="pulse" />
         <span className="mono" style={{ fontSize: 10.5 }}>
           {online ? "daemon · online" : "daemon · offline"}
         </span>
-      </button>
+      </span>
 
       <button type="button" className="tb-icon-btn" title="Refresh data" onClick={() => location.reload()}>
         <Icon name="refresh" size={13} />
