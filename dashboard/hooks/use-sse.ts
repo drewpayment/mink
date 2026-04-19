@@ -13,6 +13,7 @@ import {
   fetchDesign,
   fetchProjects,
   fetchConfig,
+  fetchSync,
 } from "@/lib/api-client";
 import type { ActionLogPayload, SchedulerPayload } from "@mink/types/dashboard";
 
@@ -78,6 +79,7 @@ export function fetchAllData() {
     .then((data) => store.setDesignImages(data.images))
     .catch(console.warn);
   fetchConfig().then(store.setConfig).catch(console.warn);
+  fetchSync().then(store.setSync).catch(console.warn);
 }
 
 function handleEvent(payload: { fileId?: string; type?: string; projectId?: string }) {
@@ -138,6 +140,9 @@ function handleEvent(payload: { fileId?: string; type?: string; projectId?: stri
       break;
     case "config-changed":
       fetchConfig().then(store.setConfig).catch(console.warn);
+      break;
+    case "sync-status":
+      fetchSync().then(store.setSync).catch(console.warn);
       break;
     default:
       fetchAllData();

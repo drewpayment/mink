@@ -27,6 +27,15 @@ import {
   resetConfigKey,
   resetAllConfig,
 } from "./global-config";
+import {
+  getSyncStatus,
+  syncPull,
+  syncPush,
+  disconnectSync,
+  isSyncInitialized,
+} from "./sync";
+import { minkRoot } from "./paths";
+import { execSync } from "child_process";
 import { isValidConfigKey, CONFIG_KEYS } from "../types/config";
 import type { ConfigKey } from "../types/config";
 import type {
@@ -43,6 +52,8 @@ import type {
   ConfigEntry,
   ConfigValueSource,
   ConfigValueType,
+  SyncPanelPayload,
+  SyncPendingChange,
 } from "../types/dashboard";
 import { isDesignEvalReport } from "../types/design-eval";
 import type { DesignEvalReport } from "../types/design-eval";
@@ -295,6 +306,80 @@ export function loadConfigPanel(): ConfigPanelPayload {
   return { entries };
 }
 
+// ── Sync Panel ─────────────────────────────────────────────────────────────
+
+function parsePorcelain(output: string): SyncPendingChange[] {
+  const changes: SyncPendingChange[] = [];
+  for (const rawLine of output.split("\n")) {
+    if (!rawLine.trim()) continue;
+    // Porcelain v1 format: `XY file` where X = staged, Y = unstaged, and
+    // untracked files are prefixed with "??".
+    const xy = rawLine.slice(0, 2);
+    const file = rawLine.slice(3);
+    let op: SyncPendingChange["op"];
+    if (xy === "??") op = "?";
+    else if (xy.includes("D")) op = "D";
+    else if (xy.includes("A") || xy.includes("?")) op = "A";
+    else op = "M";
+    changes.push({ op, file });
+  }
+  return changes;
+}
+
+function getAheadBehind(branch: string): { ahead: number; behind: number } {
+  if (!branch) return { ahead: 0, behind: 0 };
+  try {
+    const raw = execSync(
+      `git rev-list --left-right --count origin/${branch}...${branch}`,
+      { cwd: minkRoot(), timeout: 5000, stdio: ["pipe", "pipe", "pipe"] },
+    )
+      .toString()
+      .trim();
+    const [behindStr, aheadStr] = raw.split(/\s+/);
+    return {
+      behind: Number(behindStr) || 0,
+      ahead: Number(aheadStr) || 0,
+    };
+  } catch {
+    return { ahead: 0, behind: 0 };
+  }
+}
+
+function getPendingChanges(): SyncPendingChange[] {
+  try {
+    const raw = execSync("git status --porcelain", {
+      cwd: minkRoot(),
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    })
+      .toString();
+    return parsePorcelain(raw);
+  } catch {
+    return [];
+  }
+}
+
+export function loadSyncPanel(): SyncPanelPayload {
+  const status = getSyncStatus();
+  const initialized = isSyncInitialized();
+  const pending = status.gitInitialized ? getPendingChanges() : [];
+  const { ahead, behind } = status.gitInitialized
+    ? getAheadBehind(status.branch)
+    : { ahead: 0, behind: 0 };
+
+  return {
+    initialized,
+    enabled: status.enabled,
+    branch: status.branch,
+    remote: status.remoteUrl,
+    ahead,
+    behind,
+    lastPush: status.lastPush,
+    lastPull: status.lastPull,
+    pending,
+  };
+}
+
 // ── Action Triggers ────────────────────────────────────────────────────────
 
 export async function triggerTask(
@@ -408,6 +493,56 @@ export async function triggerConfigSet(
       return { success: false, error: "Config value must be a string" };
     }
     setConfigValue(key as ConfigKey, value);
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function triggerSyncPull(): Promise<ActionResult> {
+  try {
+    if (!isSyncInitialized()) {
+      return { success: false, error: "Sync is not initialized" };
+    }
+    const errors: string[] = [];
+    syncPull((msg) => errors.push(msg));
+    if (errors.length > 0) {
+      return { success: false, error: errors.join("\n") };
+    }
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function triggerSyncPush(): Promise<ActionResult> {
+  try {
+    if (!isSyncInitialized()) {
+      return { success: false, error: "Sync is not initialized" };
+    }
+    const errors: string[] = [];
+    syncPush((msg) => errors.push(msg));
+    if (errors.length > 0) {
+      return { success: false, error: errors.join("\n") };
+    }
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function triggerSyncDisconnect(): Promise<ActionResult> {
+  try {
+    disconnectSync();
     return { success: true };
   } catch (err) {
     return {

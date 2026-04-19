@@ -20,7 +20,8 @@ export type StateFileId =
   | "design-report"
   | "project-switched"
   | "daemon-status"
-  | "config-changed";
+  | "config-changed"
+  | "sync-status";
 
 // ── SSE Event ──────────────────────────────────────────────────────────────
 
@@ -121,4 +122,21 @@ export interface ConfigEntry {
 
 export interface ConfigPanelPayload {
   entries: ConfigEntry[];
+}
+
+export interface SyncPendingChange {
+  op: "A" | "M" | "D" | "?";
+  file: string;
+}
+
+export interface SyncPanelPayload {
+  initialized: boolean;
+  enabled: boolean;
+  branch: string;
+  remote: string;
+  ahead: number;
+  behind: number;
+  lastPush: string;
+  lastPull: string;
+  pending: SyncPendingChange[];
 }

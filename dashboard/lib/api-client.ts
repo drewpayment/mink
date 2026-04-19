@@ -1,4 +1,4 @@
-import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, SchedulerPayload, BugLogPayload, ActionLogPayload, ActionResult, DesignPayload, ConfigPanelPayload } from "@mink/types/dashboard";
+import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, SchedulerPayload, BugLogPayload, ActionLogPayload, ActionResult, DesignPayload, ConfigPanelPayload, SyncPanelPayload } from "@mink/types/dashboard";
 import type { LearningMemory } from "@mink/types/learning-memory";
 import type { ProjectsResponse } from "@/types/project";
 
@@ -108,5 +108,24 @@ export async function resetConfigKey(key?: string, all?: boolean): Promise<Actio
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ key, all }),
   });
+  return res.json();
+}
+
+export function fetchSync() {
+  return fetchApi<SyncPanelPayload>("/api/sync");
+}
+
+export async function triggerSyncPull(): Promise<ActionResult> {
+  const res = await fetch("/api/sync/pull", { method: "POST" });
+  return res.json();
+}
+
+export async function triggerSyncPush(): Promise<ActionResult> {
+  const res = await fetch("/api/sync/push", { method: "POST" });
+  return res.json();
+}
+
+export async function triggerSyncDisconnect(): Promise<ActionResult> {
+  const res = await fetch("/api/sync/disconnect", { method: "POST" });
   return res.json();
 }

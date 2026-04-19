@@ -195,6 +195,31 @@ describe("dashboard server", () => {
     expect(res.status).toBe(400);
   });
 
+  test("GET /api/sync returns shape with initialized flag", async () => {
+    const res = await fetch(srv.url + "/api/sync");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(typeof data.initialized).toBe("boolean");
+    expect(typeof data.branch).toBe("string");
+    expect(typeof data.remote).toBe("string");
+    expect(typeof data.ahead).toBe("number");
+    expect(typeof data.behind).toBe("number");
+    expect(Array.isArray(data.pending)).toBe(true);
+  });
+
+  test("POST /api/sync/pull returns error when sync not initialized", async () => {
+    // Only run when sync is not initialized (i.e., typical test env).
+    const statusRes = await fetch(srv.url + "/api/sync");
+    const status = await statusRes.json();
+    if (status.initialized) return;
+
+    const res = await fetch(srv.url + "/api/sync/pull", { method: "POST" });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+    expect(data.error).toContain("not initialized");
+  });
+
   test("SSE endpoint is accessible", async () => {
     // Use AbortController to avoid hanging on the streaming response
     const controller = new AbortController();

@@ -17,12 +17,6 @@ export interface MockNote {
   at: string;
 }
 
-export interface MockSyncPending {
-  op: "A" | "M" | "D";
-  file: string;
-  delta: string;
-}
-
 export interface MockDiscordLog {
   t: string;
   m: string;
@@ -62,16 +56,4 @@ export const MOCK_DISCORD = {
   ] as MockDiscordLog[],
 };
 
-export const MOCK_SYNC = {
-  branch: "main",
-  remote: "git@github.com:drewpayment/mink-wiki.git",
-  ahead: 2,
-  behind: 0,
-  lastPush: "11:45",
-  lastPull: "08:12",
-  pending: [
-    { op: "A", file: "inbox/2026-04-19-rate-limits.md", delta: "+24" },
-    { op: "M", file: "daily/2026-04-19.md",             delta: "+3 -1" },
-  ] as MockSyncPending[],
-};
 

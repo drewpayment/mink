@@ -5275,6 +5275,7 @@ var init_design_eval = __esm(() => {
 
 // src/core/dashboard-api.ts
 import { existsSync as existsSync15, readFileSync as readFileSync18 } from "fs";
+import { execSync as execSync3 } from "child_process";
 function isSecretKey(key) {
   return SECRET_KEY_PATTERNS.some((re) => re.test(key));
 }
@@ -5471,6 +5472,70 @@ function loadConfigPanel() {
   });
   return { entries };
 }
+function parsePorcelain(output) {
+  const changes = [];
+  for (const rawLine of output.split(`
+`)) {
+    if (!rawLine.trim())
+      continue;
+    const xy = rawLine.slice(0, 2);
+    const file = rawLine.slice(3);
+    let op;
+    if (xy === "??")
+      op = "?";
+    else if (xy.includes("D"))
+      op = "D";
+    else if (xy.includes("A") || xy.includes("?"))
+      op = "A";
+    else
+      op = "M";
+    changes.push({ op, file });
+  }
+  return changes;
+}
+function getAheadBehind(branch) {
+  if (!branch)
+    return { ahead: 0, behind: 0 };
+  try {
+    const raw = execSync3(`git rev-list --left-right --count origin/${branch}...${branch}`, { cwd: minkRoot(), timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
+    const [behindStr, aheadStr] = raw.split(/\s+/);
+    return {
+      behind: Number(behindStr) || 0,
+      ahead: Number(aheadStr) || 0
+    };
+  } catch {
+    return { ahead: 0, behind: 0 };
+  }
+}
+function getPendingChanges() {
+  try {
+    const raw = execSync3("git status --porcelain", {
+      cwd: minkRoot(),
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"]
+    }).toString();
+    return parsePorcelain(raw);
+  } catch {
+    return [];
+  }
+}
+function loadSyncPanel() {
+  const status2 = getSyncStatus();
+  const initialized = isSyncInitialized();
+  const pending = status2.gitInitialized ? getPendingChanges() : [];
+  const { ahead, behind } = status2.gitInitialized ? getAheadBehind(status2.branch) : { ahead: 0, behind: 0 };
+  return {
+    initialized,
+    enabled: status2.enabled,
+    branch: status2.branch,
+    remote: status2.remoteUrl,
+    ahead,
+    behind,
+    lastPush: status2.lastPush,
+    lastPull: status2.lastPull,
+    pending
+  };
+}
 async function triggerTask(cwd, taskId) {
   try {
     await executeTask(taskId, cwd);
@@ -5571,6 +5636,55 @@ async function triggerConfigSet(key, value) {
     };
   }
 }
+async function triggerSyncPull() {
+  try {
+    if (!isSyncInitialized()) {
+      return { success: false, error: "Sync is not initialized" };
+    }
+    const errors = [];
+    syncPull((msg) => errors.push(msg));
+    if (errors.length > 0) {
+      return { success: false, error: errors.join(`
+`) };
+    }
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+async function triggerSyncPush() {
+  try {
+    if (!isSyncInitialized()) {
+      return { success: false, error: "Sync is not initialized" };
+    }
+    const errors = [];
+    syncPush((msg) => errors.push(msg));
+    if (errors.length > 0) {
+      return { success: false, error: errors.join(`
+`) };
+    }
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+async function triggerSyncDisconnect() {
+  try {
+    disconnectSync();
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
 async function triggerConfigReset(key, all) {
   try {
     if (all) {
@@ -5604,6 +5718,8 @@ var init_dashboard_api = __esm(() => {
   init_scheduler();
   init_task_registry();
   init_global_config();
+  init_sync();
+  init_paths();
   init_config();
   init_design_eval();
   SECRET_KEY_PATTERNS = [/token/i, /secret/i, /password/i, /api[-_]?key/i];
@@ -6075,6 +6191,13 @@ retry: 3000
             return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);
           }
         }
+        if (pathname === "/api/sync") {
+          try {
+            return jsonResponse(loadSyncPanel());
+          } catch (err) {
+            return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);
+          }
+        }
         const resolvedCwd = resolveProjectCwd(url, activeCwd);
         if (resolvedCwd === null) {
           return jsonResponse({ error: "Project not found" }, 404);
@@ -6172,6 +6295,18 @@ retry: 3000
           } catch (err) {
             return jsonResponse({ success: false, error: err instanceof Error ? err.message : String(err) }, 500);
           }
+        }
+        if (pathname === "/api/sync/pull" || pathname === "/api/sync/push" || pathname === "/api/sync/disconnect") {
+          const action = pathname === "/api/sync/pull" ? triggerSyncPull() : pathname === "/api/sync/push" ? triggerSyncPush() : triggerSyncDisconnect();
+          return action.then((result) => {
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "sync-status",
+                timestamp: new Date().toISOString()
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          });
         }
         if (pathname === "/api/daemon/start" || pathname === "/api/daemon/stop" || pathname === "/api/daemon/restart") {
           const action = pathname === "/api/daemon/start" ? triggerDaemonStart(activeCwd) : pathname === "/api/daemon/stop" ? triggerDaemonStop() : triggerDaemonRestart(activeCwd);
@@ -6662,12 +6797,12 @@ var init_config2 = __esm(() => {
 });
 
 // src/commands/init.ts
-import { execSync as execSync3 } from "child_process";
+import { execSync as execSync4 } from "child_process";
 import { mkdirSync as mkdirSync10, existsSync as existsSync20 } from "fs";
 import { resolve as resolve4, dirname as dirname8, basename as basename8, join as join18 } from "path";
 function detectRuntime2() {
   try {
-    execSync3("bun --version", { stdio: "ignore" });
+    execSync4("bun --version", { stdio: "ignore" });
     return "bun";
   } catch {
     return "node";
@@ -72845,7 +72980,7 @@ var init_httpUtil = __esm(() => {
 });
 
 // node_modules/@puppeteer/browsers/lib/esm/browser-data/chrome.js
-import { execSync as execSync4 } from "node:child_process";
+import { execSync as execSync5 } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 function folder(platform2) {
@@ -72935,7 +73070,7 @@ function getChromeWindowsLocation(channel2, locationsPrefixes) {
 }
 function getWslVariable(variable) {
   try {
-    const result = execSync4(`cmd.exe /c echo %${variable.toLocaleUpperCase()}%`, {
+    const result = execSync5(`cmd.exe /c echo %${variable.toLocaleUpperCase()}%`, {
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf-8"
     }).trim();
@@ -72946,7 +73081,7 @@ function getWslVariable(variable) {
   return;
 }
 function getWslLocation(channel2) {
-  const wslVersion = execSync4("wslinfo --version", {
+  const wslVersion = execSync5("wslinfo --version", {
     stdio: ["ignore", "pipe", "ignore"],
     encoding: "utf-8"
   }).trim();
@@ -72962,7 +73097,7 @@ function getWslLocation(channel2) {
   }
   const windowsPath = getChromeWindowsLocation(channel2, wslPrefixes);
   return windowsPath.map((path2) => {
-    return execSync4(`wslpath "${path2}"`).toString().trim();
+    return execSync5(`wslpath "${path2}"`).toString().trim();
   });
 }
 function getChromeLinuxOrWslLocation(channel2) {

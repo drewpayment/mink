@@ -20,6 +20,10 @@ import {
   loadConfigPanel,
   triggerConfigSet,
   triggerConfigReset,
+  loadSyncPanel,
+  triggerSyncPull,
+  triggerSyncPush,
+  triggerSyncDisconnect,
 } from "./dashboard-api";
 import { listRegisteredProjects, getProjectMeta } from "./project-registry";
 import { generateProjectId } from "./project-id";
@@ -428,6 +432,18 @@ export async function startDashboardServer(
           }
         }
 
+        // GET /api/sync — global sync status (no project scoping)
+        if (pathname === "/api/sync") {
+          try {
+            return jsonResponse(loadSyncPanel());
+          } catch (err) {
+            return jsonResponse(
+              { error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
         // Resolve project cwd from ?project=<id> query param
         const resolvedCwd = resolveProjectCwd(url, activeCwd);
         if (resolvedCwd === null) {
@@ -557,6 +573,29 @@ export async function startDashboardServer(
               500,
             );
           }
+        }
+
+        // Sync controls — global (operate on ~/.mink/.git, not a project).
+        if (
+          pathname === "/api/sync/pull" ||
+          pathname === "/api/sync/push" ||
+          pathname === "/api/sync/disconnect"
+        ) {
+          const action =
+            pathname === "/api/sync/pull"
+              ? triggerSyncPull()
+              : pathname === "/api/sync/push"
+                ? triggerSyncPush()
+                : triggerSyncDisconnect();
+          return action.then((result) => {
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "sync-status" as StateFileId,
+                timestamp: new Date().toISOString(),
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          });
         }
 
         // Daemon controls — global (operate on ~/.mink/ PID file, not a

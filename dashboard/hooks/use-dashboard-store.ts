@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, DesignImagePayload, ConfigPanelPayload } from "@mink/types/dashboard";
+import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, DesignImagePayload, ConfigPanelPayload, SyncPanelPayload } from "@mink/types/dashboard";
 import type { LearningMemory } from "@mink/types/learning-memory";
 import type { BugEntry } from "@mink/types/bug-memory";
 import type { WasteFlag } from "@mink/types/waste-detection";
@@ -31,6 +31,7 @@ interface DashboardState {
   wasteFlags: WasteFlag[];
   designImages: DesignImagePayload[];
   config: ConfigPanelPayload | null;
+  sync: SyncPanelPayload | null;
 
   setConnected: (v: boolean) => void;
   setProjects: (projects: RegisteredProject[], activeId: string) => void;
@@ -46,6 +47,7 @@ interface DashboardState {
   setWasteFlags: (flags: WasteFlag[]) => void;
   setDesignImages: (images: DesignImagePayload[]) => void;
   setConfig: (data: ConfigPanelPayload) => void;
+  setSync: (data: SyncPanelPayload) => void;
 }
 
 export const useDashboardStore = create<DashboardState>((set) => ({
@@ -65,6 +67,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   wasteFlags: [],
   designImages: [],
   config: null,
+  sync: null,
 
   setConnected: (v) => set({ connected: v }),
   setProjects: (projects, activeId) => set({ projects, activeProjectId: activeId }),
@@ -95,4 +98,5 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   setWasteFlags: (flags) => set({ wasteFlags: flags }),
   setDesignImages: (images) => set({ designImages: images }),
   setConfig: (data) => set({ config: data }),
+  setSync: (data) => set({ sync: data }),
 }));
