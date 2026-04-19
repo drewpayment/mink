@@ -2,7 +2,12 @@
 
 **Status:** Transient. Delete this file once all six PRs below are merged and `dashboard/lib/mock-dashboard-data.ts` no longer exists.
 
-**Branch convention:** one feature branch per PR, each cut from `main`. Do not stack the branches — the mocks give every panel a working fallback, so each PR can merge independently.
+**Branch convention:** `feat/gui-command-center` is the integration branch for all of this work and stays open until every PR below has landed. Then `feat/gui-command-center` merges to `main` in a single PR.
+
+- Cut each PR's feature branch from `feat/gui-command-center`.
+- Target each PR back at `feat/gui-command-center` — **never at `main`**.
+- Do not stack the PR branches on each other. The mocks give every panel a working fallback, so each PR can merge into `feat/gui-command-center` independently.
+- After merging, rebase any in-flight branches onto the updated `feat/gui-command-center` before opening their PRs.
 
 ## Background
 
