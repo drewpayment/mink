@@ -28,6 +28,8 @@ import {
   triggerChannelStart,
   triggerChannelStop,
   triggerChannelRestart,
+  loadWikiPanel,
+  loadWikiNote,
 } from "./dashboard-api";
 import { listRegisteredProjects, getProjectMeta } from "./project-registry";
 import { generateProjectId } from "./project-id";
@@ -452,6 +454,46 @@ export async function startDashboardServer(
         if (pathname === "/api/channel") {
           try {
             return jsonResponse(loadChannelPanel());
+          } catch (err) {
+            return jsonResponse(
+              { error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
+        // GET /api/wiki — global wiki vault summary (no project scoping)
+        if (pathname === "/api/wiki") {
+          try {
+            const limitRaw = url.searchParams.get("limit");
+            const categoryRaw = url.searchParams.get("category");
+            const limit = limitRaw ? Number(limitRaw) : undefined;
+            return jsonResponse(
+              loadWikiPanel({
+                limit: Number.isFinite(limit) ? limit : undefined,
+                category: (categoryRaw as "all" | undefined) ?? undefined,
+              }),
+            );
+          } catch (err) {
+            return jsonResponse(
+              { error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
+        // GET /api/wiki/note — single note body with backlinks
+        if (pathname === "/api/wiki/note") {
+          try {
+            const notePath = url.searchParams.get("path");
+            if (!notePath) {
+              return jsonResponse({ error: "Missing path parameter" }, 400);
+            }
+            const note = loadWikiNote(notePath);
+            if (!note) {
+              return jsonResponse({ error: "Note not found" }, 404);
+            }
+            return jsonResponse(note);
           } catch (err) {
             return jsonResponse(
               { error: err instanceof Error ? err.message : String(err) },

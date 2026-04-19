@@ -1096,6 +1096,10 @@ function searchVaultIndex(term) {
   const lower = term.toLowerCase();
   return Object.values(index.entries).filter((e) => e.title.toLowerCase().includes(lower) || e.description.toLowerCase().includes(lower) || e.tags.some((t) => t.toLowerCase().includes(lower)) || e.filePath.toLowerCase().includes(lower));
 }
+function getRecentNotes(n) {
+  const index = loadVaultIndex();
+  return Object.values(index.entries).sort((a, b) => b.lastModified.localeCompare(a.lastModified)).slice(0, n);
+}
 function collectAllMarkdown(rootPath) {
   const files = [];
   function walk(dir) {
@@ -5259,6 +5263,89 @@ var init_cron = __esm(() => {
   init_task_registry();
 });
 
+// src/core/note-linker.ts
+import { join as join16 } from "path";
+import { existsSync as existsSync15, readFileSync as readFileSync18, readdirSync as readdirSync4, statSync as statSync8 } from "fs";
+function extractWikilinks(content) {
+  const links = [];
+  let match;
+  const re = new RegExp(WIKILINK_RE.source, "g");
+  while ((match = re.exec(content)) !== null) {
+    links.push(match[1].trim());
+  }
+  return [...new Set(links)];
+}
+function updateMasterIndex(vaultRootPath) {
+  const now = new Date().toISOString().split("T")[0];
+  const sections = [
+    `---`,
+    `updated: "${new Date().toISOString()}"`,
+    `---`,
+    ``,
+    `# Knowledge Base`,
+    ``,
+    `> Last updated: ${now}`,
+    ``
+  ];
+  const categories = [
+    { name: "Inbox", dir: "inbox", emoji: "" },
+    { name: "Projects", dir: "projects", emoji: "" },
+    { name: "Areas", dir: "areas", emoji: "" },
+    { name: "Resources", dir: "resources", emoji: "" },
+    { name: "Archives", dir: "archives", emoji: "" },
+    { name: "Patterns", dir: "patterns", emoji: "" }
+  ];
+  for (const cat of categories) {
+    const dirPath = join16(vaultRootPath, cat.dir);
+    if (!existsSync15(dirPath))
+      continue;
+    const files = collectMarkdownFiles(dirPath, vaultRootPath);
+    if (files.length === 0 && cat.dir !== "inbox")
+      continue;
+    sections.push(`## ${cat.name}`);
+    sections.push("");
+    if (files.length === 0) {
+      sections.push("*No notes yet.*");
+    } else {
+      const sorted = files.sort((a, b) => b.mtime - a.mtime).slice(0, 20);
+      for (const file of sorted) {
+        sections.push(`- [[${file.title}]]`);
+      }
+      if (files.length > 20) {
+        sections.push(`- *...and ${files.length - 20} more*`);
+      }
+    }
+    sections.push("");
+  }
+  const indexPath = vaultMasterIndexPath();
+  atomicWriteText(indexPath, sections.join(`
+`));
+}
+function collectMarkdownFiles(dirPath, rootPath) {
+  const files = [];
+  try {
+    const entries = readdirSync4(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = join16(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...collectMarkdownFiles(fullPath, rootPath));
+      } else if (entry.name.endsWith(".md") && !entry.name.startsWith("_")) {
+        const stat = statSync8(fullPath);
+        const title = entry.name.replace(/\.md$/, "");
+        const relativePath = fullPath.slice(rootPath.length + 1);
+        files.push({ title, relativePath, mtime: stat.mtimeMs });
+      }
+    }
+  } catch {}
+  return files;
+}
+var WIKILINK_RE;
+var init_note_linker = __esm(() => {
+  init_fs_utils();
+  init_vault();
+  WIKILINK_RE = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+});
+
 // src/types/design-eval.ts
 function isDesignEvalReport(v) {
   return typeof v === "object" && v !== null && "capturedAt" in v && "captures" in v && Array.isArray(v.captures);
@@ -5281,7 +5368,9 @@ var init_design_eval = __esm(() => {
 });
 
 // src/core/dashboard-api.ts
-import { existsSync as existsSync15, readFileSync as readFileSync18 } from "fs";
+import { existsSync as existsSync16, readFileSync as readFileSync19 } from "fs";
+import { readdirSync as readdirSync5, readFileSync as readFileSyncFS } from "fs";
+import { join as join17, resolve as resolve4, normalize, sep } from "path";
 import { execSync as execSync3 } from "child_process";
 function isSecretKey(key) {
   return SECRET_KEY_PATTERNS.some((re) => re.test(key));
@@ -5294,7 +5383,7 @@ function maskSecret(value, showLast = 4) {
   return "••••" + value.slice(-showLast);
 }
 function checkJsonFile2(name, filePath, validator) {
-  if (!existsSync15(filePath))
+  if (!existsSync16(filePath))
     return { name, status: "missing" };
   const data = safeReadJson(filePath);
   if (data === null)
@@ -5304,10 +5393,10 @@ function checkJsonFile2(name, filePath, validator) {
   return { name, status: "ok" };
 }
 function checkTextFile2(name, filePath) {
-  if (!existsSync15(filePath))
+  if (!existsSync16(filePath))
     return { name, status: "missing" };
   try {
-    readFileSync18(filePath, "utf-8");
+    readFileSync19(filePath, "utf-8");
     return { name, status: "ok" };
   } catch {
     return { name, status: "corrupt" };
@@ -5390,7 +5479,7 @@ function loadSchedulerPanel(cwd) {
 }
 function loadLearningMemoryPanel(cwd) {
   const memPath = learningMemoryPath(cwd);
-  if (!existsSync15(memPath)) {
+  if (!existsSync16(memPath)) {
     return {
       projectName: "unknown",
       sections: {
@@ -5402,7 +5491,7 @@ function loadLearningMemoryPanel(cwd) {
     };
   }
   try {
-    const content = readFileSync18(memPath, "utf-8");
+    const content = readFileSync19(memPath, "utf-8");
     return parseLearningMemory(content);
   } catch {
     return {
@@ -5581,6 +5670,169 @@ function loadChannelPanel() {
     allowlist: parseAllowlist(allowlistRaw),
     logs
   };
+}
+function countMarkdownIn(dir) {
+  let count = 0;
+  try {
+    for (const entry of readdirSync5(dir, { withFileTypes: true })) {
+      if (WIKI_TREE_EXCLUDES.has(entry.name) || entry.name.startsWith("."))
+        continue;
+      const fullPath = join17(dir, entry.name);
+      if (entry.isDirectory()) {
+        count += countMarkdownIn(fullPath);
+      } else if (entry.name.endsWith(".md") && !entry.name.startsWith("_")) {
+        count += 1;
+      }
+    }
+  } catch {}
+  return count;
+}
+function buildVaultTree(root) {
+  const nodes = [];
+  function walk(dir, depth) {
+    if (depth > WIKI_TREE_MAX_DEPTH)
+      return;
+    let entries = [];
+    try {
+      entries = readdirSync5(dir, { withFileTypes: true }).filter((e) => !WIKI_TREE_EXCLUDES.has(e.name) && !e.name.startsWith(".")).map((e) => ({ name: e.name, isDir: e.isDirectory() }));
+    } catch {
+      return;
+    }
+    entries.sort((a, b) => {
+      if (a.isDir !== b.isDir)
+        return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const entry of entries) {
+      if (!entry.isDir)
+        continue;
+      const fullPath = join17(dir, entry.name);
+      const relPath = fullPath.slice(root.length + 1);
+      const count = countMarkdownIn(fullPath);
+      nodes.push({ name: entry.name, path: relPath, count, depth });
+      walk(fullPath, depth + 1);
+    }
+  }
+  walk(root, 0);
+  return nodes;
+}
+function tallyTags(entries) {
+  const counts = new Map;
+  for (const entry of entries) {
+    for (const tag of entry.tags) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+}
+function loadWikiPanel(opts = {}) {
+  const initialized = isVaultInitialized();
+  const vaultPath = resolveVaultPath();
+  if (!initialized) {
+    return {
+      initialized: false,
+      vaultPath,
+      totalNotes: 0,
+      inboxCount: 0,
+      recent: [],
+      tags: [],
+      tree: []
+    };
+  }
+  const index = loadVaultIndex();
+  const allEntries = Object.values(index.entries);
+  const limit = Math.max(1, Math.min(opts.limit ?? DEFAULT_RECENT_LIMIT, 200));
+  let recent = getRecentNotes(limit);
+  if (opts.category && opts.category !== "all") {
+    recent = recent.filter((e) => e.category === opts.category);
+  }
+  const inboxCount = allEntries.filter((e) => e.category === "inbox").length;
+  const tags = tallyTags(allEntries);
+  const tree = buildVaultTree(vaultPath);
+  return {
+    initialized: true,
+    vaultPath,
+    totalNotes: index.totalNotes || allEntries.length,
+    inboxCount,
+    recent,
+    tags,
+    tree
+  };
+}
+function parseFrontmatter(content) {
+  if (!content.startsWith("---"))
+    return { frontmatter: {}, body: content };
+  const end = content.indexOf(`
+---`, 3);
+  if (end === -1)
+    return { frontmatter: {}, body: content };
+  const raw = content.slice(3, end).trim();
+  const body = content.slice(end + 4).replace(/^\n/, "");
+  const frontmatter = {};
+  for (const rawLine of raw.split(`
+`)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#"))
+      continue;
+    const colonIdx = line.indexOf(":");
+    if (colonIdx === -1)
+      continue;
+    const key = line.slice(0, colonIdx).trim();
+    const valRaw = line.slice(colonIdx + 1).trim();
+    if (valRaw.startsWith("[") && valRaw.endsWith("]")) {
+      frontmatter[key] = valRaw.slice(1, -1).split(",").map((s) => s.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+    } else {
+      frontmatter[key] = valRaw.replace(/^["']|["']$/g, "");
+    }
+  }
+  return { frontmatter, body };
+}
+function resolveVaultRelativePath(relPath) {
+  if (!relPath || relPath.includes("\x00"))
+    return null;
+  const root = resolveVaultPath();
+  const absolute = resolve4(root, relPath);
+  const normalizedRoot = normalize(root) + sep;
+  if (!absolute.startsWith(normalizedRoot) && absolute !== normalize(root)) {
+    return null;
+  }
+  return absolute;
+}
+function loadWikiNote(relPath) {
+  const absolute = resolveVaultRelativePath(relPath);
+  if (!absolute)
+    return null;
+  let content;
+  try {
+    content = readFileSyncFS(absolute, "utf-8");
+  } catch {
+    return null;
+  }
+  const { frontmatter, body } = parseFrontmatter(content);
+  const index = loadVaultIndex();
+  const thisEntry = index.entries[relPath];
+  const targetTitle = thisEntry?.title ?? relPath.replace(/\.md$/, "");
+  const targetBasename = relPath.replace(/\.md$/, "").split("/").pop() ?? "";
+  const backlinks = [];
+  for (const entry of Object.values(index.entries)) {
+    if (entry.filePath === relPath)
+      continue;
+    const absSource = resolveVaultRelativePath(entry.filePath);
+    if (!absSource)
+      continue;
+    let sourceContent;
+    try {
+      sourceContent = readFileSyncFS(absSource, "utf-8");
+    } catch {
+      continue;
+    }
+    const links = extractWikilinks(sourceContent);
+    const matches2 = links.some((l) => l === targetTitle || l === targetBasename || l === relPath);
+    if (matches2) {
+      backlinks.push({ path: entry.filePath, title: entry.title });
+    }
+  }
+  return { path: relPath, frontmatter, body, backlinks };
 }
 async function triggerTask(cwd, taskId) {
   try {
@@ -5796,7 +6048,7 @@ async function triggerConfigReset(key, all) {
     };
   }
 }
-var SECRET_KEY_PATTERNS, BOOLEAN_VALUES, GROUP_LABELS, CHANNEL_LOG_LIMIT = 120, TIMESTAMP_PREFIX;
+var SECRET_KEY_PATTERNS, BOOLEAN_VALUES, GROUP_LABELS, CHANNEL_LOG_LIMIT = 120, TIMESTAMP_PREFIX, WIKI_TREE_MAX_DEPTH = 2, WIKI_TREE_EXCLUDES, DEFAULT_RECENT_LIMIT = 25;
 var init_dashboard_api = __esm(() => {
   init_paths();
   init_fs_utils();
@@ -5812,6 +6064,8 @@ var init_dashboard_api = __esm(() => {
   init_channel_process();
   init_global_config();
   init_vault();
+  init_note_index();
+  init_note_linker();
   init_paths();
   init_config();
   init_design_eval();
@@ -5824,13 +6078,20 @@ var init_dashboard_api = __esm(() => {
     channel: "Channels"
   };
   TIMESTAMP_PREFIX = /^\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?\s*/;
+  WIKI_TREE_EXCLUDES = new Set([
+    ".obsidian",
+    ".git",
+    ".mink-vault.json",
+    ".mink-index.json",
+    "node_modules"
+  ]);
 });
 
 // src/core/project-registry.ts
-import { readdirSync as readdirSync4, existsSync as existsSync16 } from "fs";
-import { join as join16 } from "path";
+import { readdirSync as readdirSync6, existsSync as existsSync17 } from "fs";
+import { join as join18 } from "path";
 function getProjectMeta(projDir) {
-  const metaPath = join16(projDir, "project-meta.json");
+  const metaPath = join18(projDir, "project-meta.json");
   const raw = safeReadJson(metaPath);
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
@@ -5847,15 +6108,15 @@ function getProjectMeta(projDir) {
   };
 }
 function listRegisteredProjects() {
-  const projectsDir = join16(minkRoot(), "projects");
-  if (!existsSync16(projectsDir))
+  const projectsDir = join18(minkRoot(), "projects");
+  if (!existsSync17(projectsDir))
     return [];
-  const entries = readdirSync4(projectsDir, { withFileTypes: true });
+  const entries = readdirSync6(projectsDir, { withFileTypes: true });
   const projects = [];
   for (const entry of entries) {
     if (!entry.isDirectory())
       continue;
-    const projDir = join16(projectsDir, entry.name);
+    const projDir = join18(projectsDir, entry.name);
     const meta = getProjectMeta(projDir);
     if (meta) {
       projects.push({
@@ -5938,7 +6199,7 @@ async function runtimeServe(opts) {
   }
   const { createServer } = await import("node:http");
   const { Readable } = await import("node:stream");
-  return new Promise((resolve4) => {
+  return new Promise((resolve5) => {
     const httpServer = createServer(async (req, res) => {
       const url = `http://${opts.hostname}:${opts.port}${req.url ?? "/"}`;
       const headers = new Headers;
@@ -5997,7 +6258,7 @@ async function runtimeServe(opts) {
     httpServer.listen(opts.port, opts.hostname, () => {
       const addr = httpServer.address();
       const boundPort = typeof addr === "object" && addr ? addr.port : opts.port;
-      resolve4({
+      resolve5({
         port: boundPort,
         stop: (close) => {
           if (close)
@@ -6019,8 +6280,8 @@ __export(exports_dashboard_server, {
   startDashboardServer: () => startDashboardServer
 });
 import { watch } from "fs";
-import { existsSync as existsSync17 } from "fs";
-import { basename as basename7, dirname as dirname7, join as join17, extname as extname2 } from "path";
+import { existsSync as existsSync18 } from "fs";
+import { basename as basename7, dirname as dirname7, join as join19, extname as extname2 } from "path";
 
 class SSEManager {
   clients = new Map;
@@ -6196,12 +6457,12 @@ async function startDashboardServer(cwd, options = {}) {
   const __dir = dirname7(new URL(import.meta.url).pathname);
   let pkgRoot = __dir;
   while (pkgRoot !== dirname7(pkgRoot)) {
-    if (existsSync17(join17(pkgRoot, "package.json")))
+    if (existsSync18(join19(pkgRoot, "package.json")))
       break;
     pkgRoot = dirname7(pkgRoot);
   }
-  const dashboardOutDir = join17(pkgRoot, "dashboard", "out");
-  const dashboardBuilt = existsSync17(join17(dashboardOutDir, "index.html"));
+  const dashboardOutDir = join19(pkgRoot, "dashboard", "out");
+  const dashboardBuilt = existsSync18(join19(dashboardOutDir, "index.html"));
   let clientIdCounter = 0;
   if (!dashboardBuilt) {
     console.warn("[mink] dashboard not built. Run: cd dashboard && bun run build");
@@ -6231,9 +6492,9 @@ async function startDashboardServer(cwd, options = {}) {
         } else {
           let filePath;
           if (pathname === "/") {
-            filePath = join17(dashboardOutDir, "index.html");
+            filePath = join19(dashboardOutDir, "index.html");
           } else {
-            filePath = join17(dashboardOutDir, pathname);
+            filePath = join19(dashboardOutDir, pathname);
           }
           if (!filePath.startsWith(dashboardOutDir)) {
             return jsonResponse({ error: "Forbidden" }, 403);
@@ -6246,7 +6507,7 @@ async function startDashboardServer(cwd, options = {}) {
           const htmlServed = await serveFile(filePath + ".html", "text/html; charset=utf-8");
           if (htmlServed)
             return htmlServed;
-          const indexServed = await serveFile(join17(dashboardOutDir, "index.html"), "text/html; charset=utf-8");
+          const indexServed = await serveFile(join19(dashboardOutDir, "index.html"), "text/html; charset=utf-8");
           if (indexServed)
             return indexServed;
         }
@@ -6299,6 +6560,34 @@ retry: 3000
             return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);
           }
         }
+        if (pathname === "/api/wiki") {
+          try {
+            const limitRaw = url.searchParams.get("limit");
+            const categoryRaw = url.searchParams.get("category");
+            const limit = limitRaw ? Number(limitRaw) : undefined;
+            return jsonResponse(loadWikiPanel({
+              limit: Number.isFinite(limit) ? limit : undefined,
+              category: categoryRaw ?? undefined
+            }));
+          } catch (err) {
+            return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);
+          }
+        }
+        if (pathname === "/api/wiki/note") {
+          try {
+            const notePath = url.searchParams.get("path");
+            if (!notePath) {
+              return jsonResponse({ error: "Missing path parameter" }, 400);
+            }
+            const note = loadWikiNote(notePath);
+            if (!note) {
+              return jsonResponse({ error: "Note not found" }, 404);
+            }
+            return jsonResponse(note);
+          } catch (err) {
+            return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);
+          }
+        }
         const resolvedCwd = resolveProjectCwd(url, activeCwd);
         if (resolvedCwd === null) {
           return jsonResponse({ error: "Project not found" }, 404);
@@ -6327,7 +6616,7 @@ retry: 3000
             if (!filename || filename.includes("..") || filename.includes("/")) {
               return jsonResponse({ error: "Invalid filename" }, 400);
             }
-            const imgPath = join17(designCapturesDir(resolvedCwd), filename);
+            const imgPath = join19(designCapturesDir(resolvedCwd), filename);
             const served = await serveFile(imgPath, "image/jpeg");
             if (served) {
               served.headers.set("Cache-Control", "public, max-age=60");
@@ -6528,9 +6817,9 @@ var exports_dashboard = {};
 __export(exports_dashboard, {
   dashboard: () => dashboard
 });
-import { existsSync as existsSync18 } from "fs";
+import { existsSync as existsSync19 } from "fs";
 async function dashboard(cwd, args) {
-  if (!existsSync18(projectDir(cwd))) {
+  if (!existsSync19(projectDir(cwd))) {
     console.error("[mink] project not initialized. Run: mink init");
     process.exit(1);
   }
@@ -6552,7 +6841,7 @@ var exports_daemon = {};
 __export(exports_daemon, {
   daemon: () => daemon
 });
-import { readFileSync as readFileSync19, existsSync as existsSync19 } from "fs";
+import { readFileSync as readFileSync20, existsSync as existsSync20 } from "fs";
 async function daemon(cwd, args) {
   const subcommand = args[0];
   switch (subcommand) {
@@ -6568,12 +6857,12 @@ async function daemon(cwd, args) {
       break;
     case "logs": {
       const logPath = schedulerLogPath();
-      if (!existsSync19(logPath)) {
+      if (!existsSync20(logPath)) {
         console.log("[mink] no log file found");
         return;
       }
       try {
-        const content = readFileSync19(logPath, "utf-8");
+        const content = readFileSync20(logPath, "utf-8");
         const lines = content.split(`
 `);
         const tail = lines.slice(-50).join(`
@@ -6833,13 +7122,13 @@ function printValidKeys() {
   }
 }
 function readLineFromStdin() {
-  return new Promise((resolve4) => {
+  return new Promise((resolve5) => {
     const chunks = [];
     process.stdin.resume();
     process.stdin.setEncoding("utf-8");
     process.stdin.once("data", (data) => {
       process.stdin.pause();
-      resolve4(String(data).trim());
+      resolve5(String(data).trim());
     });
   });
 }
@@ -6911,8 +7200,8 @@ var init_config2 = __esm(() => {
 
 // src/commands/init.ts
 import { execSync as execSync4 } from "child_process";
-import { mkdirSync as mkdirSync10, existsSync as existsSync20 } from "fs";
-import { resolve as resolve4, dirname as dirname8, basename as basename8, join as join18 } from "path";
+import { mkdirSync as mkdirSync10, existsSync as existsSync21 } from "fs";
+import { resolve as resolve5, dirname as dirname8, basename as basename8, join as join20 } from "path";
 function detectRuntime2() {
   try {
     execSync4("bun --version", { stdio: "ignore" });
@@ -6976,7 +7265,7 @@ var exports_update = {};
 __export(exports_update, {
   update: () => update
 });
-import { resolve as resolve5, dirname as dirname9 } from "path";
+import { resolve as resolve6, dirname as dirname9 } from "path";
 function parseArgs(args) {
   let dryRun = false;
   let project = null;
@@ -7024,7 +7313,7 @@ async function update(cwd, args) {
     return;
   }
   const runtime = detectRuntime2();
-  const cliPath = resolve5(dirname9(new URL(import.meta.url).pathname), "../cli.ts");
+  const cliPath = resolve6(dirname9(new URL(import.meta.url).pathname), "../cli.ts");
   const newHooks = buildHooksConfig2(runtime, cliPath);
   for (const target of targets) {
     console.log(`[mink] updating: ${target.name} (${target.id})`);
@@ -7035,7 +7324,7 @@ async function update(cwd, args) {
     }
     const backupName = createBackup(target.cwd);
     console.log(`  backup: ${backupName}`);
-    const settingsPath = resolve5(target.cwd, ".claude", "settings.json");
+    const settingsPath = resolve6(target.cwd, ".claude", "settings.json");
     mergeHooksIntoSettings2(settingsPath, newHooks);
     console.log("  hooks: updated");
     const metaPath = projectMetaPath(target.cwd);
@@ -7093,8 +7382,8 @@ var init_restore = __esm(() => {
 });
 
 // src/core/design-eval/server-detect.ts
-import { readFileSync as readFileSync20 } from "fs";
-import { join as join19 } from "path";
+import { readFileSync as readFileSync21 } from "fs";
+import { join as join21 } from "path";
 async function probePort(port) {
   try {
     const controller = new AbortController;
@@ -7116,7 +7405,7 @@ async function findRunningServer(ports = DEFAULT_PROBE_PORTS) {
 }
 function detectDevCommand(cwd) {
   try {
-    const raw = readFileSync20(join19(cwd, "package.json"), "utf-8");
+    const raw = readFileSync21(join21(cwd, "package.json"), "utf-8");
     const pkg = JSON.parse(raw);
     const scripts = pkg.scripts;
     if (!scripts || typeof scripts !== "object")
@@ -7136,10 +7425,10 @@ var init_server_detect = __esm(() => {
 });
 
 // src/core/design-eval/route-detect.ts
-import { existsSync as existsSync21, readdirSync as readdirSync5, statSync as statSync8 } from "fs";
-import { join as join20, relative as relative6, sep } from "path";
+import { existsSync as existsSync22, readdirSync as readdirSync7, statSync as statSync9 } from "fs";
+import { join as join22, relative as relative6, sep as sep2 } from "path";
 function detectFramework(cwd) {
-  const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync21(join20(cwd, `${name}.${ext}`))) || existsSync21(join20(cwd, name));
+  const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync22(join22(cwd, `${name}.${ext}`))) || existsSync22(join22(cwd, name));
   if (has("next.config"))
     return "nextjs";
   if (has("svelte.config"))
@@ -7164,31 +7453,31 @@ function detectRoutes(cwd) {
 }
 function detectNextRoutes(cwd) {
   const routes = [];
-  const appDir = join20(cwd, "app");
-  if (existsSync21(appDir)) {
+  const appDir = join22(cwd, "app");
+  if (existsSync22(appDir)) {
     const pageFiles = findFiles(appDir, /^page\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
       const rel = relative6(appDir, file);
       const dir = rel.replace(/([/\\])?page\.(tsx?|jsx?)$/, "");
-      const route = dir === "" ? "/" : `/${dir.split(sep).join("/")}`;
+      const route = dir === "" ? "/" : `/${dir.split(sep2).join("/")}`;
       if (/\[|@|\(/.test(route))
         continue;
       routes.push(route);
     }
   }
-  const pagesDir = join20(cwd, "pages");
-  if (existsSync21(pagesDir)) {
+  const pagesDir = join22(cwd, "pages");
+  if (existsSync22(pagesDir)) {
     const pageFiles = findFiles(pagesDir, /\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
       const rel = relative6(pagesDir, file);
       const name = rel.replace(/\.(tsx?|jsx?)$/, "");
       if (/^_(app|document|error)/.test(name))
         continue;
-      if (name.startsWith(`api${sep}`) || name === "api")
+      if (name.startsWith(`api${sep2}`) || name === "api")
         continue;
       if (/\[/.test(name))
         continue;
-      const route = name === "index" ? "/" : `/${name.split(sep).join("/")}`;
+      const route = name === "index" ? "/" : `/${name.split(sep2).join("/")}`;
       routes.push(route);
     }
   }
@@ -7196,15 +7485,15 @@ function detectNextRoutes(cwd) {
   return unique.length > 0 ? unique.sort() : ["/"];
 }
 function detectSvelteKitRoutes(cwd) {
-  const routesDir = join20(cwd, "src", "routes");
-  if (!existsSync21(routesDir))
+  const routesDir = join22(cwd, "src", "routes");
+  if (!existsSync22(routesDir))
     return ["/"];
   const routes = [];
   const pageFiles = findFiles(routesDir, /^\+page\.svelte$/);
   for (const file of pageFiles) {
     const rel = relative6(routesDir, file);
     const dir = rel.replace(/([/\\])?\+page\.svelte$/, "");
-    const route = dir === "" ? "/" : `/${dir.split(sep).join("/")}`;
+    const route = dir === "" ? "/" : `/${dir.split(sep2).join("/")}`;
     if (/\[|\(/.test(route))
       continue;
     routes.push(route);
@@ -7212,8 +7501,8 @@ function detectSvelteKitRoutes(cwd) {
   return routes.length > 0 ? routes.sort() : ["/"];
 }
 function detectNuxtRoutes(cwd) {
-  const pagesDir = join20(cwd, "pages");
-  if (!existsSync21(pagesDir))
+  const pagesDir = join22(cwd, "pages");
+  if (!existsSync22(pagesDir))
     return ["/"];
   const routes = [];
   const vueFiles = findFiles(pagesDir, /\.vue$/);
@@ -7222,7 +7511,7 @@ function detectNuxtRoutes(cwd) {
     const name = rel.replace(/\.vue$/, "");
     if (/\[/.test(name))
       continue;
-    const route = name === "index" ? "/" : `/${name.split(sep).join("/")}`;
+    const route = name === "index" ? "/" : `/${name.split(sep2).join("/")}`;
     routes.push(route);
   }
   return routes.length > 0 ? routes.sort() : ["/"];
@@ -7232,16 +7521,16 @@ function findFiles(dir, pattern) {
   function walk(current) {
     let entries;
     try {
-      entries = readdirSync5(current);
+      entries = readdirSync7(current);
     } catch {
       return;
     }
     for (const entry of entries) {
       if (entry.startsWith(".") || entry === "node_modules")
         continue;
-      const full = join20(current, entry);
+      const full = join22(current, entry);
       try {
-        const stat2 = statSync8(full);
+        const stat2 = statSync9(full);
         if (stat2.isDirectory()) {
           walk(full);
         } else if (pattern.test(entry)) {
@@ -7267,11 +7556,11 @@ function __extends(d, b) {
 }
 function __awaiter(thisArg, _arguments, P, generator) {
   function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve6) {
-      resolve6(value);
+    return value instanceof P ? value : new P(function(resolve7) {
+      resolve7(value);
     });
   }
-  return new (P || (P = Promise))(function(resolve6, reject) {
+  return new (P || (P = Promise))(function(resolve7, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -7287,7 +7576,7 @@ function __awaiter(thisArg, _arguments, P, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve6(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve7(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -7470,14 +7759,14 @@ function __asyncValues(o) {
   }, i);
   function verb(n) {
     i[n] = o[n] && function(v) {
-      return new Promise(function(resolve6, reject) {
-        v = o[n](v), settle(resolve6, reject, v.done, v.value);
+      return new Promise(function(resolve7, reject) {
+        v = o[n](v), settle(resolve7, reject, v.done, v.value);
       });
     };
   }
-  function settle(resolve6, reject, d, v) {
+  function settle(resolve7, reject, d, v) {
     Promise.resolve(v).then(function(v2) {
-      resolve6({ value: v2, done: d });
+      resolve7({ value: v2, done: d });
     }, reject);
   }
 }
@@ -8008,7 +8297,7 @@ function of() {
 }
 function lastValueFrom(source, config22) {
   var hasConfig = typeof config22 === "object";
-  return new Promise(function(resolve6, reject) {
+  return new Promise(function(resolve7, reject) {
     var _hasValue = false;
     var _value;
     source.subscribe({
@@ -8019,9 +8308,9 @@ function lastValueFrom(source, config22) {
       error: reject,
       complete: function() {
         if (_hasValue) {
-          resolve6(_value);
+          resolve7(_value);
         } else if (hasConfig) {
-          resolve6(config22.defaultValue);
+          resolve7(config22.defaultValue);
         } else {
           reject(new EmptyError);
         }
@@ -8031,16 +8320,16 @@ function lastValueFrom(source, config22) {
 }
 function firstValueFrom(source, config22) {
   var hasConfig = typeof config22 === "object";
-  return new Promise(function(resolve6, reject) {
+  return new Promise(function(resolve7, reject) {
     var subscriber = new SafeSubscriber({
       next: function(value) {
-        resolve6(value);
+        resolve7(value);
         subscriber.unsubscribe();
       },
       error: reject,
       complete: function() {
         if (hasConfig) {
-          resolve6(config22.defaultValue);
+          resolve7(config22.defaultValue);
         } else {
           reject(new EmptyError);
         }
@@ -9092,7 +9381,7 @@ var init_rxjs = __esm(() => {
     Observable2.prototype.forEach = function(next, promiseCtor) {
       var _this = this;
       promiseCtor = getPromiseCtor(promiseCtor);
-      return new promiseCtor(function(resolve6, reject) {
+      return new promiseCtor(function(resolve7, reject) {
         var subscriber = new SafeSubscriber({
           next: function(value) {
             try {
@@ -9103,7 +9392,7 @@ var init_rxjs = __esm(() => {
             }
           },
           error: reject,
-          complete: resolve6
+          complete: resolve7
         });
         _this.subscribe(subscriber);
       });
@@ -9125,14 +9414,14 @@ var init_rxjs = __esm(() => {
     Observable2.prototype.toPromise = function(promiseCtor) {
       var _this = this;
       promiseCtor = getPromiseCtor(promiseCtor);
-      return new promiseCtor(function(resolve6, reject) {
+      return new promiseCtor(function(resolve7, reject) {
         var value;
         _this.subscribe(function(x) {
           return value = x;
         }, function(err) {
           return reject(err);
         }, function() {
-          return resolve6(value);
+          return resolve7(value);
         });
       });
     };
@@ -11058,8 +11347,8 @@ class Deferred {
   #isRejected = false;
   #value;
   #resolve;
-  #taskPromise = new Promise((resolve6) => {
-    this.#resolve = resolve6;
+  #taskPromise = new Promise((resolve7) => {
+    this.#resolve = resolve7;
   });
   #timeoutId;
   #timeoutError;
@@ -11148,12 +11437,12 @@ var init_Mutex = __esm(() => {
       return new Mutex.Guard(this, onRelease);
     }
     release() {
-      const resolve6 = this.#acquirers.shift();
-      if (!resolve6) {
+      const resolve7 = this.#acquirers.shift();
+      if (!resolve7) {
         this.#locked = false;
         return;
       }
-      resolve6();
+      resolve7();
     }
   };
 });
@@ -12897,12 +13186,12 @@ var init_locators = __esm(() => {
       }
       return defer(() => {
         return from(handle.evaluate((element) => {
-          return new Promise((resolve6) => {
+          return new Promise((resolve7) => {
             window.requestAnimationFrame(() => {
               const rect1 = element.getBoundingClientRect();
               window.requestAnimationFrame(() => {
                 const rect2 = element.getBoundingClientRect();
-                resolve6([
+                resolve7([
                   {
                     x: rect1.x,
                     y: rect1.y,
@@ -14193,9 +14482,9 @@ var init_ElementHandle = __esm(() => {
           const handle = await this.#asSVGElementHandle();
           const target = __addDisposableResource6(env_5, handle && await handle.#getOwnerSVGElement(), false);
           return await (target ?? this).evaluate(async (element, threshold) => {
-            const visibleRatio = await new Promise((resolve6) => {
+            const visibleRatio = await new Promise((resolve7) => {
               const observer = new IntersectionObserver((entries) => {
-                resolve6(entries[0].intersectionRatio);
+                resolve7(entries[0].intersectionRatio);
                 observer.disconnect();
               });
               observer.observe(element);
@@ -14589,7 +14878,7 @@ var init_Frame = __esm(() => {
         }
         type = type ?? "text/javascript";
         return await this.mainRealm().transferHandle(await this.isolatedRealm().evaluateHandle(async ({ url, id, type: type2, content: content2 }) => {
-          return await new Promise((resolve6, reject) => {
+          return await new Promise((resolve7, reject) => {
             const script = document.createElement("script");
             script.type = type2;
             script.text = content2;
@@ -14602,12 +14891,12 @@ var init_Frame = __esm(() => {
             if (url) {
               script.src = url;
               script.addEventListener("load", () => {
-                resolve6(script);
+                resolve7(script);
               }, { once: true });
               document.head.appendChild(script);
             } else {
               document.head.appendChild(script);
-              resolve6(script);
+              resolve7(script);
             }
           });
         }, { ...options, type, content }));
@@ -14624,7 +14913,7 @@ var init_Frame = __esm(() => {
           options.content = content;
         }
         return await this.mainRealm().transferHandle(await this.isolatedRealm().evaluateHandle(async ({ url, content: content2 }) => {
-          return await new Promise((resolve6, reject) => {
+          return await new Promise((resolve7, reject) => {
             let element;
             if (!url) {
               element = document.createElement("style");
@@ -14636,7 +14925,7 @@ var init_Frame = __esm(() => {
               element = link;
             }
             element.addEventListener("load", () => {
-              resolve6(element);
+              resolve7(element);
             }, { once: true });
             element.addEventListener("error", (event) => {
               reject(new Error(event.message ?? "Could not load style"));
@@ -15490,9 +15779,9 @@ var init_Page = __esm(() => {
         ++this.#screencastSessionCount;
         if (!this.#startScreencastPromise) {
           this.#startScreencastPromise = this.mainFrame().client.send("Page.startScreencast", { format: "png" }).then(() => {
-            return new Promise((resolve6) => {
+            return new Promise((resolve7) => {
               return this.mainFrame().client.once("Page.screencastFrame", () => {
-                return resolve6();
+                return resolve7();
               });
             });
           });
@@ -18150,11 +18439,11 @@ function addPageBinding(type, name, prefix) {
           return value instanceof Node;
         })
       }));
-      return new Promise((resolve6, reject) => {
+      return new Promise((resolve7, reject) => {
         callPuppeteer.callbacks.set(seq, {
           resolve(value) {
             callPuppeteer.args.delete(seq);
-            resolve6(value);
+            resolve7(value);
           },
           reject(value) {
             callPuppeteer.args.delete(seq);
@@ -21617,8 +21906,8 @@ var init_Input2 = __esm(() => {
       if (typeof delay === "number") {
         await Promise.all(actions);
         actions.length = 0;
-        await new Promise((resolve6) => {
-          setTimeout(resolve6, delay);
+        await new Promise((resolve7) => {
+          setTimeout(resolve7, delay);
         });
       }
       actions.push(this.up({ ...options, clickCount }));
@@ -21638,9 +21927,9 @@ var init_Input2 = __esm(() => {
       });
     }
     async drag(start, target) {
-      const promise = new Promise((resolve6) => {
+      const promise = new Promise((resolve7) => {
         this.#client.once("Input.dragIntercepted", (event) => {
-          return resolve6(event.data);
+          return resolve7(event.data);
         });
       });
       await this.move(start.x, start.y);
@@ -21681,8 +21970,8 @@ var init_Input2 = __esm(() => {
       await this.dragEnter(target, data);
       await this.dragOver(target, data);
       if (delay) {
-        await new Promise((resolve6) => {
-          return setTimeout(resolve6, delay);
+        await new Promise((resolve7) => {
+          return setTimeout(resolve7, delay);
         });
       }
       await this.drop(target, data);
@@ -22494,9 +22783,9 @@ var init_Page2 = __esm(() => {
     async captureHeapSnapshot(options) {
       const { createWriteStream } = environment.value.fs;
       const stream = createWriteStream(options.path);
-      const streamPromise = new Promise((resolve6, reject) => {
+      const streamPromise = new Promise((resolve7, reject) => {
         stream.on("error", reject);
-        stream.on("finish", resolve6);
+        stream.on("finish", resolve7);
       });
       const client = this.#primaryTargetClient;
       await client.send("HeapProfiler.enable");
@@ -24009,10 +24298,10 @@ __export(exports_BrowserWebSocketTransport, {
 
 class BrowserWebSocketTransport {
   static create(url) {
-    return new Promise((resolve6, reject) => {
+    return new Promise((resolve7, reject) => {
       const ws = new WebSocket(url);
       ws.addEventListener("open", () => {
-        return resolve6(new BrowserWebSocketTransport(ws));
+        return resolve7(new BrowserWebSocketTransport(ws));
       });
       ws.addEventListener("error", reject);
     });
@@ -26846,11 +27135,11 @@ var require_BrowsingContextProcessor = __commonJS((exports) => {
       }
       const parentCdpClient = context2.cdpTarget.parentCdpClient;
       try {
-        const detachedFromTargetPromise = new Promise((resolve6) => {
+        const detachedFromTargetPromise = new Promise((resolve7) => {
           const onContextDestroyed = (event) => {
             if (event.targetId === params.context) {
               parentCdpClient.off("Target.detachedFromTarget", onContextDestroyed);
-              resolve6();
+              resolve7();
             }
           };
           parentCdpClient.on("Target.detachedFromTarget", onContextDestroyed);
@@ -28170,7 +28459,7 @@ var require_ActionDispatcher = __commonJS((exports) => {
         }
       }
       const promises = [
-        new Promise((resolve6) => setTimeout(resolve6, this.#tickDuration))
+        new Promise((resolve7) => setTimeout(resolve7, this.#tickDuration))
       ];
       for (const option of options) {
         promises.push(this.#dispatchAction(option));
@@ -28769,8 +29058,8 @@ var require_Mutex = __commonJS((exports) => {
     acquire() {
       const state = { resolved: false };
       if (this.#locked) {
-        return new Promise((resolve6) => {
-          this.#acquirers.push(() => resolve6(this.#release.bind(this, state)));
+        return new Promise((resolve7) => {
+          this.#acquirers.push(() => resolve7(this.#release.bind(this, state)));
         });
       }
       this.#locked = true;
@@ -28781,12 +29070,12 @@ var require_Mutex = __commonJS((exports) => {
         throw new Error("Cannot release more than once.");
       }
       state.resolved = true;
-      const resolve6 = this.#acquirers.shift();
-      if (!resolve6) {
+      const resolve7 = this.#acquirers.shift();
+      if (!resolve7) {
         this.#locked = false;
         return;
       }
-      resolve6();
+      resolve7();
     }
     async run(action) {
       const release = await this.acquire();
@@ -29913,8 +30202,8 @@ var require_ChannelProxy = __commonJS((exports) => {
         let queueNonEmptyResolver = null;
         return {
           async getMessage() {
-            const onMessage = queue.length > 0 ? Promise.resolve() : new Promise((resolve6) => {
-              queueNonEmptyResolver = resolve6;
+            const onMessage = queue.length > 0 ? Promise.resolve() : new Promise((resolve7) => {
+              queueNonEmptyResolver = resolve7;
             });
             await onMessage;
             return queue.shift();
@@ -30000,7 +30289,7 @@ var require_ChannelProxy = __commonJS((exports) => {
         functionDeclaration: String((id) => {
           const w = window;
           if (w[id] === undefined) {
-            return new Promise((resolve6) => w[id] = resolve6);
+            return new Promise((resolve7) => w[id] = resolve7);
           }
           const channelProxy = w[id];
           delete w[id];
@@ -31351,8 +31640,8 @@ var require_Deferred = __commonJS((exports) => {
       return this.#result;
     }
     constructor() {
-      this.#promise = new Promise((resolve6, reject) => {
-        this.#resolve = resolve6;
+      this.#promise = new Promise((resolve7, reject) => {
+        this.#resolve = resolve7;
         this.#reject = reject;
       });
       this.#promise.catch((_error) => {});
@@ -35677,11 +35966,11 @@ var require_BrowsingContextStorage = __commonJS((exports) => {
       if (this.#contexts.has(browsingContextId)) {
         return Promise.resolve(this.getContext(browsingContextId));
       }
-      return new Promise((resolve6) => {
+      return new Promise((resolve7) => {
         const listener = (event) => {
           if (event.browsingContext.id === browsingContextId) {
             this.#eventEmitter.off("added", listener);
-            resolve6(event.browsingContext);
+            resolve7(event.browsingContext);
           }
         };
         this.#eventEmitter.on("added", listener);
@@ -39177,8 +39466,8 @@ var init_ExposedFunction = __esm(() => {
       const functionDeclaration = stringifyFunction(interpolateFunction((callback) => {
         Object.assign(globalThis, {
           [PLACEHOLDER("name")]: function(...args) {
-            return new Promise((resolve6, reject) => {
-              callback([resolve6, reject, args]);
+            return new Promise((resolve7, reject) => {
+              callback([resolve7, reject, args]);
             });
           }
         });
@@ -39266,8 +39555,8 @@ var init_ExposedFunction = __esm(() => {
           return;
         }
         try {
-          await dataHandle.evaluate(([resolve6], result2) => {
-            resolve6(result2);
+          await dataHandle.evaluate(([resolve7], result2) => {
+            resolve7(result2);
           }, result);
         } catch (error) {
           debugError(error);
@@ -46559,7 +46848,7 @@ __export(exports_NodeWebSocketTransport, {
 
 class NodeWebSocketTransport {
   static create(url, headers) {
-    return new Promise((resolve6, reject) => {
+    return new Promise((resolve7, reject) => {
       const ws = new wrapper_default(url, [], {
         followRedirects: true,
         perMessageDeflate: false,
@@ -46571,7 +46860,7 @@ class NodeWebSocketTransport {
         }
       });
       ws.addEventListener("open", () => {
-        return resolve6(new NodeWebSocketTransport(ws));
+        return resolve7(new NodeWebSocketTransport(ws));
       });
       ws.addEventListener("error", reject);
     });
@@ -49463,8 +49752,8 @@ var require_helpers = __commonJS((exports) => {
   function req(url, opts = {}) {
     const href = typeof url === "string" ? url : url.href;
     const req2 = (href.startsWith("https:") ? https : http).request(url, opts);
-    const promise = new Promise((resolve6, reject) => {
-      req2.once("response", resolve6).once("error", reject).end();
+    const promise = new Promise((resolve7, reject) => {
+      req2.once("response", resolve7).once("error", reject).end();
     });
     req2.then = promise.then.bind(promise);
     return req2;
@@ -49835,7 +50124,7 @@ var require_parse_proxy_response = __commonJS((exports) => {
   var debug_1 = __importDefault(require_src());
   var debug2 = (0, debug_1.default)("https-proxy-agent:parse-proxy-response");
   function parseProxyResponse(socket) {
-    return new Promise((resolve6, reject) => {
+    return new Promise((resolve7, reject) => {
       let buffersLength = 0;
       const buffers = [];
       function read() {
@@ -49904,7 +50193,7 @@ var require_parse_proxy_response = __commonJS((exports) => {
         }
         debug2("got proxy server response: %o %o", firstLine, headers);
         cleanup();
-        resolve6({
+        resolve7({
           connect: {
             statusCode,
             statusText,
@@ -52008,11 +52297,11 @@ var require_receivebuffer = __commonJS((exports) => {
 var require_socksclient = __commonJS((exports) => {
   var __awaiter2 = exports && exports.__awaiter || function(thisArg, _arguments, P, generator) {
     function adopt(value) {
-      return value instanceof P ? value : new P(function(resolve6) {
-        resolve6(value);
+      return value instanceof P ? value : new P(function(resolve7) {
+        resolve7(value);
       });
     }
-    return new (P || (P = Promise))(function(resolve6, reject) {
+    return new (P || (P = Promise))(function(resolve7, reject) {
       function fulfilled(value) {
         try {
           step(generator.next(value));
@@ -52028,7 +52317,7 @@ var require_socksclient = __commonJS((exports) => {
         }
       }
       function step(result) {
-        result.done ? resolve6(result.value) : adopt(result.value).then(fulfilled, rejected);
+        result.done ? resolve7(result.value) : adopt(result.value).then(fulfilled, rejected);
       }
       step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
@@ -52055,13 +52344,13 @@ var require_socksclient = __commonJS((exports) => {
       this.setState(constants_1.SocksClientState.Created);
     }
     static createConnection(options, callback) {
-      return new Promise((resolve6, reject) => {
+      return new Promise((resolve7, reject) => {
         try {
           (0, helpers_1.validateSocksClientOptions)(options, ["connect"]);
         } catch (err) {
           if (typeof callback === "function") {
             callback(err);
-            return resolve6(err);
+            return resolve7(err);
           } else {
             return reject(err);
           }
@@ -52072,16 +52361,16 @@ var require_socksclient = __commonJS((exports) => {
           client.removeAllListeners();
           if (typeof callback === "function") {
             callback(null, info);
-            resolve6(info);
+            resolve7(info);
           } else {
-            resolve6(info);
+            resolve7(info);
           }
         });
         client.once("error", (err) => {
           client.removeAllListeners();
           if (typeof callback === "function") {
             callback(err);
-            resolve6(err);
+            resolve7(err);
           } else {
             reject(err);
           }
@@ -52089,13 +52378,13 @@ var require_socksclient = __commonJS((exports) => {
       });
     }
     static createConnectionChain(options, callback) {
-      return new Promise((resolve6, reject) => __awaiter2(this, undefined, undefined, function* () {
+      return new Promise((resolve7, reject) => __awaiter2(this, undefined, undefined, function* () {
         try {
           (0, helpers_1.validateSocksClientChainOptions)(options);
         } catch (err) {
           if (typeof callback === "function") {
             callback(err);
-            return resolve6(err);
+            return resolve7(err);
           } else {
             return reject(err);
           }
@@ -52121,14 +52410,14 @@ var require_socksclient = __commonJS((exports) => {
           }
           if (typeof callback === "function") {
             callback(null, { socket: sock });
-            resolve6({ socket: sock });
+            resolve7({ socket: sock });
           } else {
-            resolve6({ socket: sock });
+            resolve7({ socket: sock });
           }
         } catch (err) {
           if (typeof callback === "function") {
             callback(err);
-            resolve6(err);
+            resolve7(err);
           } else {
             reject(err);
           }
@@ -52728,12 +53017,12 @@ var require_dist4 = __commonJS((exports) => {
       let { host } = opts;
       const { port, lookup: lookupFn = dns.lookup } = opts;
       if (shouldLookup) {
-        host = await new Promise((resolve6, reject) => {
+        host = await new Promise((resolve7, reject) => {
           lookupFn(host, {}, (err, res) => {
             if (err) {
               reject(err);
             } else {
-              resolve6(res);
+              resolve7(res);
             }
           });
         });
@@ -53740,7 +54029,7 @@ var require_netUtils = __commonJS((exports) => {
     return `${socket.remoteAddress}:${socket.remotePort}`;
   }
   function upgradeSocket(socket, options) {
-    return new Promise((resolve6, reject) => {
+    return new Promise((resolve7, reject) => {
       const tlsOptions = Object.assign({}, options, {
         socket
       });
@@ -53750,7 +54039,7 @@ var require_netUtils = __commonJS((exports) => {
           reject(tlsSocket.authorizationError);
         } else {
           tlsSocket.removeAllListeners("error");
-          resolve6(tlsSocket);
+          resolve7(tlsSocket);
         }
       }).once("error", (error) => {
         reject(error);
@@ -53842,7 +54131,7 @@ var require_transfer = __commonJS((exports) => {
     };
   }
   function connectForPassiveTransfer(host, port, ftp) {
-    return new Promise((resolve6, reject) => {
+    return new Promise((resolve7, reject) => {
       let socket = ftp._newSocket();
       const handleConnErr = function(err) {
         err.message = "Can't open data connection in passive mode: " + err.message;
@@ -53865,7 +54154,7 @@ var require_transfer = __commonJS((exports) => {
         socket.removeListener("error", handleConnErr);
         socket.removeListener("timeout", handleTimeout);
         ftp.dataSocket = socket;
-        resolve6();
+        resolve7();
       });
     });
   }
@@ -55905,7 +56194,7 @@ var require_util2 = __commonJS((exports) => {
     return url;
   }
   exports.urlGenerate = urlGenerate;
-  function normalize(aPath) {
+  function normalize2(aPath) {
     var path = aPath;
     var url = urlParse(aPath);
     if (url) {
@@ -55942,8 +56231,8 @@ var require_util2 = __commonJS((exports) => {
     }
     return path;
   }
-  exports.normalize = normalize;
-  function join21(aRoot, aPath) {
+  exports.normalize = normalize2;
+  function join23(aRoot, aPath) {
     if (aRoot === "") {
       aRoot = ".";
     }
@@ -55968,14 +56257,14 @@ var require_util2 = __commonJS((exports) => {
       aRootUrl.host = aPath;
       return urlGenerate(aRootUrl);
     }
-    var joined = aPath.charAt(0) === "/" ? aPath : normalize(aRoot.replace(/\/+$/, "") + "/" + aPath);
+    var joined = aPath.charAt(0) === "/" ? aPath : normalize2(aRoot.replace(/\/+$/, "") + "/" + aPath);
     if (aRootUrl) {
       aRootUrl.path = joined;
       return urlGenerate(aRootUrl);
     }
     return joined;
   }
-  exports.join = join21;
+  exports.join = join23;
   exports.isAbsolute = function(aPath) {
     return aPath.charAt(0) === "/" || urlRegexp.test(aPath);
   };
@@ -56148,9 +56437,9 @@ var require_util2 = __commonJS((exports) => {
           parsed.path = parsed.path.substring(0, index + 1);
         }
       }
-      sourceURL = join21(urlGenerate(parsed), sourceURL);
+      sourceURL = join23(urlGenerate(parsed), sourceURL);
     }
-    return normalize(sourceURL);
+    return normalize2(sourceURL);
   }
   exports.computeSourceURL = computeSourceURL;
 });
@@ -57880,7 +58169,7 @@ var require_escodegen = __commonJS((exports) => {
     function noEmptySpace() {
       return space ? space : " ";
     }
-    function join21(left, right) {
+    function join23(left, right) {
       var leftSource, rightSource, leftCharCode, rightCharCode;
       leftSource = toSourceNodeWhenNeeded(left).toString();
       if (leftSource.length === 0) {
@@ -58221,8 +58510,8 @@ var require_escodegen = __commonJS((exports) => {
         } else {
           result.push(that.generateExpression(stmt.left, Precedence.Call, E_TTT));
         }
-        result = join21(result, operator);
-        result = [join21(result, that.generateExpression(stmt.right, Precedence.Assignment, E_TTT)), ")"];
+        result = join23(result, operator);
+        result = [join23(result, that.generateExpression(stmt.right, Precedence.Assignment, E_TTT)), ")"];
       });
       result.push(this.maybeBlock(stmt.body, flags));
       return result;
@@ -58360,11 +58649,11 @@ var require_escodegen = __commonJS((exports) => {
         var result, fragment;
         result = ["class"];
         if (stmt.id) {
-          result = join21(result, this.generateExpression(stmt.id, Precedence.Sequence, E_TTT));
+          result = join23(result, this.generateExpression(stmt.id, Precedence.Sequence, E_TTT));
         }
         if (stmt.superClass) {
-          fragment = join21("extends", this.generateExpression(stmt.superClass, Precedence.Unary, E_TTT));
-          result = join21(result, fragment);
+          fragment = join23("extends", this.generateExpression(stmt.superClass, Precedence.Unary, E_TTT));
+          result = join23(result, fragment);
         }
         result.push(space);
         result.push(this.generateStatement(stmt.body, S_TFFT));
@@ -58377,9 +58666,9 @@ var require_escodegen = __commonJS((exports) => {
         return escapeDirective(stmt.directive) + this.semicolon(flags);
       },
       DoWhileStatement: function(stmt, flags) {
-        var result = join21("do", this.maybeBlock(stmt.body, S_TFFF));
+        var result = join23("do", this.maybeBlock(stmt.body, S_TFFF));
         result = this.maybeBlockSuffix(stmt.body, result);
-        return join21(result, [
+        return join23(result, [
           "while" + space + "(",
           this.generateExpression(stmt.test, Precedence.Sequence, E_TTT),
           ")" + this.semicolon(flags)
@@ -58415,11 +58704,11 @@ var require_escodegen = __commonJS((exports) => {
       ExportDefaultDeclaration: function(stmt, flags) {
         var result = ["export"], bodyFlags;
         bodyFlags = flags & F_SEMICOLON_OPT ? S_TFFT : S_TFFF;
-        result = join21(result, "default");
+        result = join23(result, "default");
         if (isStatement(stmt.declaration)) {
-          result = join21(result, this.generateStatement(stmt.declaration, bodyFlags));
+          result = join23(result, this.generateStatement(stmt.declaration, bodyFlags));
         } else {
-          result = join21(result, this.generateExpression(stmt.declaration, Precedence.Assignment, E_TTT) + this.semicolon(flags));
+          result = join23(result, this.generateExpression(stmt.declaration, Precedence.Assignment, E_TTT) + this.semicolon(flags));
         }
         return result;
       },
@@ -58427,15 +58716,15 @@ var require_escodegen = __commonJS((exports) => {
         var result = ["export"], bodyFlags, that = this;
         bodyFlags = flags & F_SEMICOLON_OPT ? S_TFFT : S_TFFF;
         if (stmt.declaration) {
-          return join21(result, this.generateStatement(stmt.declaration, bodyFlags));
+          return join23(result, this.generateStatement(stmt.declaration, bodyFlags));
         }
         if (stmt.specifiers) {
           if (stmt.specifiers.length === 0) {
-            result = join21(result, "{" + space + "}");
+            result = join23(result, "{" + space + "}");
           } else if (stmt.specifiers[0].type === Syntax.ExportBatchSpecifier) {
-            result = join21(result, this.generateExpression(stmt.specifiers[0], Precedence.Sequence, E_TTT));
+            result = join23(result, this.generateExpression(stmt.specifiers[0], Precedence.Sequence, E_TTT));
           } else {
-            result = join21(result, "{");
+            result = join23(result, "{");
             withIndent(function(indent2) {
               var i, iz;
               result.push(newline);
@@ -58453,7 +58742,7 @@ var require_escodegen = __commonJS((exports) => {
             result.push(base + "}");
           }
           if (stmt.source) {
-            result = join21(result, [
+            result = join23(result, [
               "from" + space,
               this.generateExpression(stmt.source, Precedence.Sequence, E_TTT),
               this.semicolon(flags)
@@ -58537,7 +58826,7 @@ var require_escodegen = __commonJS((exports) => {
         ];
         cursor = 0;
         if (stmt.specifiers[cursor].type === Syntax.ImportDefaultSpecifier) {
-          result = join21(result, [
+          result = join23(result, [
             this.generateExpression(stmt.specifiers[cursor], Precedence.Sequence, E_TTT)
           ]);
           ++cursor;
@@ -58547,7 +58836,7 @@ var require_escodegen = __commonJS((exports) => {
             result.push(",");
           }
           if (stmt.specifiers[cursor].type === Syntax.ImportNamespaceSpecifier) {
-            result = join21(result, [
+            result = join23(result, [
               space,
               this.generateExpression(stmt.specifiers[cursor], Precedence.Sequence, E_TTT)
             ]);
@@ -58576,7 +58865,7 @@ var require_escodegen = __commonJS((exports) => {
             }
           }
         }
-        result = join21(result, [
+        result = join23(result, [
           "from" + space,
           this.generateExpression(stmt.source, Precedence.Sequence, E_TTT),
           this.semicolon(flags)
@@ -58630,7 +58919,7 @@ var require_escodegen = __commonJS((exports) => {
         return result;
       },
       ThrowStatement: function(stmt, flags) {
-        return [join21("throw", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
+        return [join23("throw", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
       },
       TryStatement: function(stmt, flags) {
         var result, i, iz, guardedHandlers;
@@ -58638,7 +58927,7 @@ var require_escodegen = __commonJS((exports) => {
         result = this.maybeBlockSuffix(stmt.block, result);
         if (stmt.handlers) {
           for (i = 0, iz = stmt.handlers.length;i < iz; ++i) {
-            result = join21(result, this.generateStatement(stmt.handlers[i], S_TFFF));
+            result = join23(result, this.generateStatement(stmt.handlers[i], S_TFFF));
             if (stmt.finalizer || i + 1 !== iz) {
               result = this.maybeBlockSuffix(stmt.handlers[i].body, result);
             }
@@ -58646,7 +58935,7 @@ var require_escodegen = __commonJS((exports) => {
         } else {
           guardedHandlers = stmt.guardedHandlers || [];
           for (i = 0, iz = guardedHandlers.length;i < iz; ++i) {
-            result = join21(result, this.generateStatement(guardedHandlers[i], S_TFFF));
+            result = join23(result, this.generateStatement(guardedHandlers[i], S_TFFF));
             if (stmt.finalizer || i + 1 !== iz) {
               result = this.maybeBlockSuffix(guardedHandlers[i].body, result);
             }
@@ -58654,13 +58943,13 @@ var require_escodegen = __commonJS((exports) => {
           if (stmt.handler) {
             if (Array.isArray(stmt.handler)) {
               for (i = 0, iz = stmt.handler.length;i < iz; ++i) {
-                result = join21(result, this.generateStatement(stmt.handler[i], S_TFFF));
+                result = join23(result, this.generateStatement(stmt.handler[i], S_TFFF));
                 if (stmt.finalizer || i + 1 !== iz) {
                   result = this.maybeBlockSuffix(stmt.handler[i].body, result);
                 }
               }
             } else {
-              result = join21(result, this.generateStatement(stmt.handler, S_TFFF));
+              result = join23(result, this.generateStatement(stmt.handler, S_TFFF));
               if (stmt.finalizer) {
                 result = this.maybeBlockSuffix(stmt.handler.body, result);
               }
@@ -58668,7 +58957,7 @@ var require_escodegen = __commonJS((exports) => {
           }
         }
         if (stmt.finalizer) {
-          result = join21(result, ["finally", this.maybeBlock(stmt.finalizer, S_TFFF)]);
+          result = join23(result, ["finally", this.maybeBlock(stmt.finalizer, S_TFFF)]);
         }
         return result;
       },
@@ -58702,7 +58991,7 @@ var require_escodegen = __commonJS((exports) => {
         withIndent(function() {
           if (stmt.test) {
             result = [
-              join21("case", that.generateExpression(stmt.test, Precedence.Sequence, E_TTT)),
+              join23("case", that.generateExpression(stmt.test, Precedence.Sequence, E_TTT)),
               ":"
             ];
           } else {
@@ -58750,9 +59039,9 @@ var require_escodegen = __commonJS((exports) => {
           result.push(this.maybeBlock(stmt.consequent, S_TFFF));
           result = this.maybeBlockSuffix(stmt.consequent, result);
           if (stmt.alternate.type === Syntax.IfStatement) {
-            result = join21(result, ["else ", this.generateStatement(stmt.alternate, bodyFlags)]);
+            result = join23(result, ["else ", this.generateStatement(stmt.alternate, bodyFlags)]);
           } else {
-            result = join21(result, join21("else", this.maybeBlock(stmt.alternate, bodyFlags)));
+            result = join23(result, join23("else", this.maybeBlock(stmt.alternate, bodyFlags)));
           }
         } else {
           result.push(this.maybeBlock(stmt.consequent, bodyFlags));
@@ -58854,7 +59143,7 @@ var require_escodegen = __commonJS((exports) => {
       },
       ReturnStatement: function(stmt, flags) {
         if (stmt.argument) {
-          return [join21("return", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
+          return [join23("return", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
         }
         return ["return" + this.semicolon(flags)];
       },
@@ -58936,14 +59225,14 @@ var require_escodegen = __commonJS((exports) => {
         if (leftSource.charCodeAt(leftSource.length - 1) === 47 && esutils.code.isIdentifierPartES5(expr.operator.charCodeAt(0))) {
           result = [fragment, noEmptySpace(), expr.operator];
         } else {
-          result = join21(fragment, expr.operator);
+          result = join23(fragment, expr.operator);
         }
         fragment = this.generateExpression(expr.right, rightPrecedence, flags);
         if (expr.operator === "/" && fragment.toString().charAt(0) === "/" || expr.operator.slice(-1) === "<" && fragment.toString().slice(0, 3) === "!--") {
           result.push(noEmptySpace());
           result.push(fragment);
         } else {
-          result = join21(result, fragment);
+          result = join23(result, fragment);
         }
         if (expr.operator === "in" && !(flags & F_ALLOW_IN)) {
           return ["(", result, ")"];
@@ -58983,7 +59272,7 @@ var require_escodegen = __commonJS((exports) => {
         var result, length, i, iz, itemFlags;
         length = expr["arguments"].length;
         itemFlags = flags & F_ALLOW_UNPARATH_NEW && !parentheses && length === 0 ? E_TFT : E_TFF;
-        result = join21("new", this.generateExpression(expr.callee, Precedence.New, itemFlags));
+        result = join23("new", this.generateExpression(expr.callee, Precedence.New, itemFlags));
         if (!(flags & F_ALLOW_UNPARATH_NEW) || parentheses || length > 0) {
           result.push("(");
           for (i = 0, iz = length;i < iz; ++i) {
@@ -59030,11 +59319,11 @@ var require_escodegen = __commonJS((exports) => {
         var result, fragment, rightCharCode, leftSource, leftCharCode;
         fragment = this.generateExpression(expr.argument, Precedence.Unary, E_TTT);
         if (space === "") {
-          result = join21(expr.operator, fragment);
+          result = join23(expr.operator, fragment);
         } else {
           result = [expr.operator];
           if (expr.operator.length > 2) {
-            result = join21(result, fragment);
+            result = join23(result, fragment);
           } else {
             leftSource = toSourceNodeWhenNeeded(result).toString();
             leftCharCode = leftSource.charCodeAt(leftSource.length - 1);
@@ -59057,12 +59346,12 @@ var require_escodegen = __commonJS((exports) => {
           result = "yield";
         }
         if (expr.argument) {
-          result = join21(result, this.generateExpression(expr.argument, Precedence.Yield, E_TTT));
+          result = join23(result, this.generateExpression(expr.argument, Precedence.Yield, E_TTT));
         }
         return parenthesize(result, Precedence.Yield, precedence);
       },
       AwaitExpression: function(expr, precedence, flags) {
-        var result = join21(expr.all ? "await*" : "await", this.generateExpression(expr.argument, Precedence.Await, E_TTT));
+        var result = join23(expr.all ? "await*" : "await", this.generateExpression(expr.argument, Precedence.Await, E_TTT));
         return parenthesize(result, Precedence.Await, precedence);
       },
       UpdateExpression: function(expr, precedence, flags) {
@@ -59134,11 +59423,11 @@ var require_escodegen = __commonJS((exports) => {
         var result, fragment;
         result = ["class"];
         if (expr.id) {
-          result = join21(result, this.generateExpression(expr.id, Precedence.Sequence, E_TTT));
+          result = join23(result, this.generateExpression(expr.id, Precedence.Sequence, E_TTT));
         }
         if (expr.superClass) {
-          fragment = join21("extends", this.generateExpression(expr.superClass, Precedence.Unary, E_TTT));
-          result = join21(result, fragment);
+          fragment = join23("extends", this.generateExpression(expr.superClass, Precedence.Unary, E_TTT));
+          result = join23(result, fragment);
         }
         result.push(space);
         result.push(this.generateStatement(expr.body, S_TFFT));
@@ -59153,7 +59442,7 @@ var require_escodegen = __commonJS((exports) => {
         }
         if (expr.kind === "get" || expr.kind === "set") {
           fragment = [
-            join21(expr.kind, this.generatePropertyKey(expr.key, expr.computed)),
+            join23(expr.kind, this.generatePropertyKey(expr.key, expr.computed)),
             this.generateFunctionBody(expr.value)
           ];
         } else {
@@ -59163,7 +59452,7 @@ var require_escodegen = __commonJS((exports) => {
             this.generateFunctionBody(expr.value)
           ];
         }
-        return join21(result, fragment);
+        return join23(result, fragment);
       },
       Property: function(expr, precedence, flags) {
         if (expr.kind === "get" || expr.kind === "set") {
@@ -59357,7 +59646,7 @@ var require_escodegen = __commonJS((exports) => {
             for (i = 0, iz = expr.blocks.length;i < iz; ++i) {
               fragment = that.generateExpression(expr.blocks[i], Precedence.Sequence, E_TTT);
               if (i > 0 || extra.moz.comprehensionExpressionStartsWithAssignment) {
-                result = join21(result, fragment);
+                result = join23(result, fragment);
               } else {
                 result.push(fragment);
               }
@@ -59365,13 +59654,13 @@ var require_escodegen = __commonJS((exports) => {
           });
         }
         if (expr.filter) {
-          result = join21(result, "if" + space);
+          result = join23(result, "if" + space);
           fragment = this.generateExpression(expr.filter, Precedence.Sequence, E_TTT);
-          result = join21(result, ["(", fragment, ")"]);
+          result = join23(result, ["(", fragment, ")"]);
         }
         if (!extra.moz.comprehensionExpressionStartsWithAssignment) {
           fragment = this.generateExpression(expr.body, Precedence.Assignment, E_TTT);
-          result = join21(result, fragment);
+          result = join23(result, fragment);
         }
         result.push(expr.type === Syntax.GeneratorExpression ? ")" : "]");
         return result;
@@ -59387,8 +59676,8 @@ var require_escodegen = __commonJS((exports) => {
         } else {
           fragment = this.generateExpression(expr.left, Precedence.Call, E_TTT);
         }
-        fragment = join21(fragment, expr.of ? "of" : "in");
-        fragment = join21(fragment, this.generateExpression(expr.right, Precedence.Sequence, E_TTT));
+        fragment = join23(fragment, expr.of ? "of" : "in");
+        fragment = join23(fragment, this.generateExpression(expr.right, Precedence.Sequence, E_TTT));
         return ["for" + space + "(", fragment, ")"];
       },
       SpreadElement: function(expr, precedence, flags) {
@@ -65876,11 +66165,11 @@ var require_tslib = __commonJS((exports, module) => {
     };
     __awaiter2 = function(thisArg, _arguments, P, generator) {
       function adopt(value) {
-        return value instanceof P ? value : new P(function(resolve6) {
-          resolve6(value);
+        return value instanceof P ? value : new P(function(resolve7) {
+          resolve7(value);
         });
       }
-      return new (P || (P = Promise))(function(resolve6, reject) {
+      return new (P || (P = Promise))(function(resolve7, reject) {
         function fulfilled(value) {
           try {
             step(generator.next(value));
@@ -65896,7 +66185,7 @@ var require_tslib = __commonJS((exports, module) => {
           }
         }
         function step(result) {
-          result.done ? resolve6(result.value) : adopt(result.value).then(fulfilled, rejected);
+          result.done ? resolve7(result.value) : adopt(result.value).then(fulfilled, rejected);
         }
         step((generator = generator.apply(thisArg, _arguments || [])).next());
       });
@@ -66125,14 +66414,14 @@ var require_tslib = __commonJS((exports, module) => {
       }, i);
       function verb(n) {
         i[n] = o[n] && function(v) {
-          return new Promise(function(resolve6, reject) {
-            v = o[n](v), settle(resolve6, reject, v.done, v.value);
+          return new Promise(function(resolve7, reject) {
+            v = o[n](v), settle(resolve7, reject, v.done, v.value);
           });
         };
       }
-      function settle(resolve6, reject, d, v) {
+      function settle(resolve7, reject, d, v) {
         Promise.resolve(v).then(function(v2) {
-          resolve6({ value: v2, done: d });
+          resolve7({ value: v2, done: d });
         }, reject);
       }
     };
@@ -69371,12 +69660,12 @@ var require_util3 = __commonJS((exports) => {
   exports.isGMT = exports.dnsLookup = undefined;
   var dns_1 = __require("dns");
   function dnsLookup(host, opts) {
-    return new Promise((resolve6, reject) => {
+    return new Promise((resolve7, reject) => {
       (0, dns_1.lookup)(host, opts, (err, res) => {
         if (err) {
           reject(err);
         } else {
-          resolve6(res);
+          resolve7(res);
         }
       });
     });
@@ -69950,10 +70239,10 @@ var require_myIpAddress = __commonJS((exports) => {
   var ip_1 = require_ip();
   var net_1 = __importDefault(__require("net"));
   async function myIpAddress() {
-    return new Promise((resolve6, reject) => {
+    return new Promise((resolve7, reject) => {
       const socket = net_1.default.connect({ host: "8.8.8.8", port: 53 });
       const onError = () => {
-        resolve6(ip_1.ip.address());
+        resolve7(ip_1.ip.address());
       };
       socket.once("error", onError);
       socket.once("connect", () => {
@@ -69961,9 +70250,9 @@ var require_myIpAddress = __commonJS((exports) => {
         const addr = socket.address();
         socket.destroy();
         if (typeof addr === "string") {
-          resolve6(addr);
+          resolve7(addr);
         } else if (addr.address) {
-          resolve6(addr.address);
+          resolve7(addr.address);
         } else {
           reject(new Error("Expected a `string`"));
         }
@@ -70477,8 +70766,8 @@ var require_deferred_promise = __commonJS((exports) => {
       this.context = args.context;
       this.owner = args.context.runtime;
       this.handle = args.promiseHandle;
-      this.settled = new Promise((resolve6) => {
-        this.onSettled = resolve6;
+      this.settled = new Promise((resolve7) => {
+        this.onSettled = resolve7;
       });
       this.resolveHandle = args.resolveHandle;
       this.rejectHandle = args.rejectHandle;
@@ -70870,13 +71159,13 @@ var require_context = __commonJS((exports) => {
       if (vmResolveResult.error) {
         return Promise.resolve(vmResolveResult);
       }
-      return new Promise((resolve6) => {
+      return new Promise((resolve7) => {
         lifetime_1.Scope.withScope((scope) => {
           const resolveHandle = scope.manage(this.newFunction("resolve", (value) => {
-            resolve6({ value: value && value.dup() });
+            resolve7({ value: value && value.dup() });
           }));
           const rejectHandle = scope.manage(this.newFunction("reject", (error) => {
-            resolve6({ error: error && error.dup() });
+            resolve7({ error: error && error.dup() });
           }));
           const promiseHandle = scope.manage(vmResolveResult.value);
           const promiseThenHandle = scope.manage(this.getProp(promiseHandle, "then"));
@@ -72990,13 +73279,13 @@ import * as http from "node:http";
 import * as https from "node:https";
 import { URL as URL2, urlToHttpOptions } from "node:url";
 function headHttpRequest(url) {
-  return new Promise((resolve6) => {
+  return new Promise((resolve7) => {
     const request3 = httpRequest(url, "HEAD", (response) => {
       response.resume();
-      resolve6(response.statusCode === 200);
+      resolve7(response.statusCode === 200);
     }, false);
     request3.on("error", () => {
-      resolve6(false);
+      resolve7(false);
     });
   });
 }
@@ -73024,7 +73313,7 @@ function httpRequest(url, method, response, keepAlive = true) {
   return request3;
 }
 function downloadFile(url, destinationPath, progressCallback) {
-  return new Promise((resolve6, reject) => {
+  return new Promise((resolve7, reject) => {
     let downloadedBytes = 0;
     let totalBytes = 0;
     function onData(chunk) {
@@ -73040,7 +73329,7 @@ function downloadFile(url, destinationPath, progressCallback) {
       }
       const file = createWriteStream(destinationPath);
       file.on("close", () => {
-        return resolve6();
+        return resolve7();
       });
       file.on("error", (error) => {
         return reject(error);
@@ -73065,7 +73354,7 @@ async function getJSON(url) {
   }
 }
 function getText(url) {
-  return new Promise((resolve6, reject) => {
+  return new Promise((resolve7, reject) => {
     const request3 = httpRequest(url, "GET", (response) => {
       let data = "";
       if (response.statusCode && response.statusCode >= 400) {
@@ -73076,7 +73365,7 @@ function getText(url) {
       });
       response.on("end", () => {
         try {
-          return resolve6(String(data));
+          return resolve7(String(data));
         } catch {
           return reject(new Error(`Failed to read text response from ${url}`));
         }
@@ -74297,7 +74586,7 @@ class Process {
     if (opts.onExit) {
       this.#onExitHook = opts.onExit;
     }
-    this.#browserProcessExiting = new Promise((resolve6, reject) => {
+    this.#browserProcessExiting = new Promise((resolve7, reject) => {
       this.#browserProcess.once("exit", async () => {
         debugLaunch(`Browser process ${this.#browserProcess.pid} onExit`);
         this.#clearListeners();
@@ -74308,7 +74597,7 @@ class Process {
           reject(err);
           return;
         }
-        resolve6();
+        resolve7();
       });
     });
   }
@@ -74418,7 +74707,7 @@ Error cause: ${isErrorLike2(error) ? error.stack : error}`);
     return [...this.#logs];
   }
   waitForLineOutput(regex, timeout2 = 0) {
-    return new Promise((resolve6, reject) => {
+    return new Promise((resolve7, reject) => {
       const onClose = (errorOrCode) => {
         cleanup();
         reject(new Error([
@@ -74456,7 +74745,7 @@ Error cause: ${isErrorLike2(error) ? error.stack : error}`);
           return;
         }
         cleanup();
-        resolve6(match[1]);
+        resolve7(match[1]);
       }
     });
   }
@@ -74986,7 +75275,7 @@ var require_get_stream = __commonJS((exports, module) => {
     };
     const { maxBuffer } = options;
     let stream;
-    await new Promise((resolve6, reject) => {
+    await new Promise((resolve7, reject) => {
       const rejectPromise = (error) => {
         if (error && stream.getBufferedLength() <= BufferConstants.MAX_LENGTH) {
           error.bufferedData = stream.getBufferedValue();
@@ -74998,7 +75287,7 @@ var require_get_stream = __commonJS((exports, module) => {
           rejectPromise(error);
           return;
         }
-        resolve6();
+        resolve7();
       });
       stream.on("data", () => {
         if (stream.getBufferedLength() > maxBuffer) {
@@ -76359,7 +76648,7 @@ var require_extract_zip = __commonJS((exports, module) => {
       debug4("opening", this.zipPath, "with opts", this.opts);
       this.zipfile = await openZip(this.zipPath, { lazyEntries: true });
       this.canceled = false;
-      return new Promise((resolve6, reject) => {
+      return new Promise((resolve7, reject) => {
         this.zipfile.on("error", (err) => {
           this.canceled = true;
           reject(err);
@@ -76368,7 +76657,7 @@ var require_extract_zip = __commonJS((exports, module) => {
         this.zipfile.on("close", () => {
           if (!this.canceled) {
             debug4("zip extraction complete");
-            resolve6();
+            resolve7();
           }
         });
         this.zipfile.on("entry", async (entry) => {
@@ -77710,8 +77999,8 @@ var require_streamx = __commonJS((exports, module) => {
           return this;
         },
         next() {
-          return new Promise(function(resolve6, reject) {
-            promiseResolve = resolve6;
+          return new Promise(function(resolve7, reject) {
+            promiseResolve = resolve7;
             promiseReject = reject;
             const data = stream.read();
             if (data !== null)
@@ -77748,14 +78037,14 @@ var require_streamx = __commonJS((exports, module) => {
       }
       function destroy(err) {
         stream.destroy(err);
-        return new Promise((resolve6, reject) => {
+        return new Promise((resolve7, reject) => {
           if (stream._duplexState & DESTROYED)
-            return resolve6({ value: undefined, done: true });
+            return resolve7({ value: undefined, done: true });
           stream.once("close", function() {
             if (err)
               reject(err);
             else
-              resolve6({ value: undefined, done: true });
+              resolve7({ value: undefined, done: true });
           });
         });
       }
@@ -77807,8 +78096,8 @@ var require_streamx = __commonJS((exports, module) => {
         return Promise.resolve(true);
       if (state.drains === null)
         state.drains = [];
-      return new Promise((resolve6) => {
-        state.drains.push({ writes, resolve: resolve6 });
+      return new Promise((resolve7) => {
+        state.drains.push({ writes, resolve: resolve7 });
       });
     }
     write(data) {
@@ -77922,11 +78211,11 @@ var require_streamx = __commonJS((exports, module) => {
     cb(null);
   }
   function pipelinePromise(...streams) {
-    return new Promise((resolve6, reject) => {
+    return new Promise((resolve7, reject) => {
       return pipeline(...streams, (err) => {
         if (err)
           return reject(err);
-        resolve6();
+        resolve7();
       });
     });
   }
@@ -78640,16 +78929,16 @@ var require_extract = __commonJS((exports, module) => {
         entryCallback = null;
         cb(err);
       }
-      function onnext(resolve6, reject) {
+      function onnext(resolve7, reject) {
         if (error) {
           return reject(error);
         }
         if (entryStream) {
-          resolve6({ value: entryStream, done: false });
+          resolve7({ value: entryStream, done: false });
           entryStream = null;
           return;
         }
-        promiseResolve = resolve6;
+        promiseResolve = resolve7;
         promiseReject = reject;
         consumeCallback(null);
         if (extract._finished && promiseResolve) {
@@ -78680,14 +78969,14 @@ var require_extract = __commonJS((exports, module) => {
       function destroy(err) {
         extract.destroy(err);
         consumeCallback(err);
-        return new Promise((resolve6, reject) => {
+        return new Promise((resolve7, reject) => {
           if (extract.destroyed)
-            return resolve6({ value: undefined, done: true });
+            return resolve7({ value: undefined, done: true });
           extract.once("close", function() {
             if (err)
               reject(err);
             else
-              resolve6({ value: undefined, done: true });
+              resolve7({ value: undefined, done: true });
           });
         });
       }
@@ -79022,7 +79311,7 @@ var require_tar_fs = __commonJS((exports) => {
       xfs.readlink(path7.join(cwd, filename), function(err, linkname) {
         if (err)
           return pack2.destroy(err);
-        header.linkname = normalize(linkname);
+        header.linkname = normalize2(linkname);
         pack2.entry(header, onnextentry);
       });
     }
@@ -79039,7 +79328,7 @@ var require_tar_fs = __commonJS((exports) => {
       if (stat2.isSocket())
         return onnextentry();
       let header = {
-        name: normalize(filename),
+        name: normalize2(filename),
         mode: (stat2.mode | (stat2.isDirectory() ? dmode : fmode)) & umask,
         mtime: stat2.mtime,
         size: stat2.size,
@@ -79123,7 +79412,7 @@ var require_tar_fs = __commonJS((exports) => {
     return extract2;
     function onentry(header, stream, next) {
       header = map2(header) || header;
-      header.name = normalize(header.name);
+      header.name = normalize2(header.name);
       const name = path7.join(cwd, path7.join("/", header.name));
       if (ignore(name, header)) {
         stream.resume();
@@ -79311,7 +79600,7 @@ var require_tar_fs = __commonJS((exports) => {
   function echo(name) {
     return name;
   }
-  function normalize(name) {
+  function normalize2(name) {
     return win32 ? name.replace(/\\/g, "/").replace(/[:?<>|]/g, "_") : name;
   }
   function statAll(fs4, stat2, cwd, ignore, entries, sort) {
@@ -79485,7 +79774,7 @@ var init_fileUtil = __esm(() => {
 // node_modules/@puppeteer/browsers/lib/esm/install.js
 import assert2 from "node:assert";
 import { spawnSync as spawnSync3 } from "node:child_process";
-import { existsSync as existsSync22, readFileSync as readFileSync21 } from "node:fs";
+import { existsSync as existsSync23, readFileSync as readFileSync22 } from "node:fs";
 import { mkdir as mkdir2, unlink } from "node:fs/promises";
 import os5 from "node:os";
 import path8 from "node:path";
@@ -79538,7 +79827,7 @@ async function installWithProviders(options) {
         continue;
       }
       debugInstall(`Successfully got URL from ${provider.getName()}: ${url}`);
-      if (!existsSync22(browserRoot)) {
+      if (!existsSync23(browserRoot)) {
         await mkdir2(browserRoot, { recursive: true });
       }
       return await installUrl(url, options, provider);
@@ -79571,11 +79860,11 @@ async function installDeps(installedBrowser) {
     return;
   }
   const depsPath = path8.join(path8.dirname(installedBrowser.executablePath), "deb.deps");
-  if (!existsSync22(depsPath)) {
+  if (!existsSync23(depsPath)) {
     debugInstall(`deb.deps file was not found at ${depsPath}`);
     return;
   }
-  const data = readFileSync21(depsPath, "utf-8").split(`
+  const data = readFileSync22(depsPath, "utf-8").split(`
 `).join(",");
   if (process.getuid?.() !== 0) {
     throw new Error("Installing system dependencies requires root privileges");
@@ -79613,11 +79902,11 @@ async function installUrl(url, options, provider) {
   const cache = new Cache(options.cacheDir);
   const browserRoot = cache.browserRoot(options.browser);
   const archivePath = path8.join(browserRoot, `${options.buildId}-${fileName}`);
-  if (!existsSync22(browserRoot)) {
+  if (!existsSync23(browserRoot)) {
     await mkdir2(browserRoot, { recursive: true });
   }
   if (!options.unpack) {
-    if (existsSync22(archivePath)) {
+    if (existsSync23(archivePath)) {
       return archivePath;
     }
     debugInstall(`Downloading binary from ${url}`);
@@ -79638,8 +79927,8 @@ async function installUrl(url, options, provider) {
     cache.writeExecutablePath(options.browser, options.platform, options.buildId, relativeExecutablePath6);
   }
   try {
-    if (existsSync22(outputPath)) {
-      if (!existsSync22(installedBrowser.executablePath)) {
+    if (existsSync23(outputPath)) {
+      if (!existsSync23(installedBrowser.executablePath)) {
         throw new Error(`The browser folder (${outputPath}) exists but the executable (${installedBrowser.executablePath}) is missing`);
       }
       await runSetup(installedBrowser);
@@ -79648,7 +79937,7 @@ async function installUrl(url, options, provider) {
       }
       return installedBrowser;
     }
-    if (!existsSync22(archivePath)) {
+    if (!existsSync23(archivePath)) {
       debugInstall(`Downloading binary from ${url}`);
       try {
         debugTime("download");
@@ -79677,7 +79966,7 @@ async function installUrl(url, options, provider) {
     }
     return installedBrowser;
   } finally {
-    if (existsSync22(archivePath)) {
+    if (existsSync23(archivePath)) {
       await unlink(archivePath);
     }
   }
@@ -79688,7 +79977,7 @@ async function runSetup(installedBrowser) {
       debugTime("permissions");
       const browserDir = path8.dirname(installedBrowser.executablePath);
       const setupExePath = path8.join(browserDir, "setup.exe");
-      if (!existsSync22(setupExePath)) {
+      if (!existsSync23(setupExePath)) {
         return;
       }
       spawnSync3(path8.join(browserDir, "setup.exe"), [`--configure-browser-in-directory=` + browserDir], {
@@ -80069,18 +80358,18 @@ var init_cliui = __esm(() => {
 });
 
 // node_modules/escalade/sync/index.mjs
-import { dirname as dirname10, resolve as resolve7 } from "path";
-import { readdirSync as readdirSync6, statSync as statSync9 } from "fs";
+import { dirname as dirname10, resolve as resolve8 } from "path";
+import { readdirSync as readdirSync8, statSync as statSync10 } from "fs";
 function sync_default(start, callback) {
-  let dir = resolve7(".", start);
-  let tmp, stats = statSync9(dir);
+  let dir = resolve8(".", start);
+  let tmp, stats = statSync10(dir);
   if (!stats.isDirectory()) {
     dir = dirname10(dir);
   }
   while (true) {
-    tmp = callback(dir, readdirSync6(dir));
+    tmp = callback(dir, readdirSync8(dir));
     if (tmp)
-      return resolve7(dir, tmp);
+      return resolve8(dir, tmp);
     dir = dirname10(tmp = dir);
     if (tmp === dir)
       break;
@@ -81027,7 +81316,7 @@ var init_yargs_parser = __esm(() => {
 
 // node_modules/yargs-parser/build/lib/index.js
 import { format } from "util";
-import { normalize, resolve as resolve8 } from "path";
+import { normalize as normalize2, resolve as resolve9 } from "path";
 var _a3, _b, _c, minNodeVersion, nodeVersion, env, parser, yargsParser = function Parser(args, opts) {
   const result = parser.parse(args.slice(), opts);
   return result.argv;
@@ -81049,8 +81338,8 @@ var init_lib2 = __esm(() => {
       return env;
     },
     format,
-    normalize,
-    resolve: resolve8,
+    normalize: normalize2,
+    resolve: resolve9,
     require: (path9) => {
       if (true) {
         return __require(path9);
@@ -81101,21 +81390,21 @@ var init_yerror = __esm(() => {
 });
 
 // node_modules/y18n/build/lib/platform-shims/node.js
-import { readFileSync as readFileSync22, statSync as statSync10, writeFile } from "fs";
+import { readFileSync as readFileSync23, statSync as statSync11, writeFile } from "fs";
 import { format as format2 } from "util";
-import { resolve as resolve9 } from "path";
+import { resolve as resolve10 } from "path";
 var node_default;
 var init_node = __esm(() => {
   node_default = {
     fs: {
-      readFileSync: readFileSync22,
+      readFileSync: readFileSync23,
       writeFile
     },
     format: format2,
-    resolve: resolve9,
+    resolve: resolve10,
     exists: (file) => {
       try {
-        return statSync10(file).isFile();
+        return statSync11(file).isFile();
       } catch (err) {
         return false;
       }
@@ -81293,9 +81582,9 @@ var init_y18n = __esm(() => {
 // node_modules/yargs/lib/platform-shims/esm.mjs
 import { notStrictEqual, strictEqual } from "assert";
 import { inspect } from "util";
-import { readFileSync as readFileSync23 } from "fs";
+import { readFileSync as readFileSync24 } from "fs";
 import { fileURLToPath } from "url";
-import { basename as basename10, dirname as dirname11, extname as extname3, relative as relative7, resolve as resolve10 } from "path";
+import { basename as basename10, dirname as dirname11, extname as extname3, relative as relative7, resolve as resolve11 } from "path";
 var REQUIRE_ERROR = "require is not supported by ESM", REQUIRE_DIRECTORY_ERROR = "loading a directory of commands is not supported yet for ESM", __dirname2, mainFilename, esm_default;
 var init_esm = __esm(() => {
   init_cliui();
@@ -81331,7 +81620,7 @@ var init_esm = __esm(() => {
       dirname: dirname11,
       extname: extname3,
       relative: relative7,
-      resolve: resolve10
+      resolve: resolve11
     },
     process: {
       argv: () => process.argv,
@@ -81342,7 +81631,7 @@ var init_esm = __esm(() => {
       nextTick: process.nextTick,
       stdColumns: typeof process.stdout.columns !== "undefined" ? process.stdout.columns : null
     },
-    readFileSync: readFileSync23,
+    readFileSync: readFileSync24,
     require: () => {
       throw new YError(REQUIRE_ERROR);
     },
@@ -81353,7 +81642,7 @@ var init_esm = __esm(() => {
       return [...str].length;
     },
     y18n: y18n_default({
-      directory: resolve10(__dirname2, "../../../locales"),
+      directory: resolve11(__dirname2, "../../../locales"),
       updateFiles: false
     })
   };
@@ -82420,13 +82709,13 @@ function usage(yargs, shim2) {
   };
   self2.stringifiedValues = function stringifiedValues(values, separator) {
     let string = "";
-    const sep2 = separator || ", ";
+    const sep3 = separator || ", ";
     const array = [].concat(values);
     if (!values || !array.length)
       return string;
     array.forEach((value) => {
       if (string.length)
-        string += sep2;
+        string += sep3;
       string += JSON.stringify(value);
     });
     return string;
@@ -83601,12 +83890,12 @@ var init_yargs_factory = __esm(() => {
     async getCompletion(args, done) {
       argsert("<array> [function]", [args, done], arguments.length);
       if (!done) {
-        return new Promise((resolve11, reject) => {
+        return new Promise((resolve12, reject) => {
           __classPrivateFieldGet(this, _YargsInstance_completion, "f").getCompletion(args, (err, completions) => {
             if (err)
               reject(err);
             else
-              resolve11(completions);
+              resolve12(completions);
           });
         });
       } else {
@@ -85041,9 +85330,9 @@ async function getConnectionTransport(options) {
       throw new Error("Could not detect required browser platform");
     }
     const { convertPuppeteerChannelToBrowsersChannel: convertPuppeteerChannelToBrowsersChannel2 } = await Promise.resolve().then(() => (init_LaunchOptions(), exports_LaunchOptions));
-    const { join: join22 } = await import("node:path");
+    const { join: join24 } = await import("node:path");
     const userDataDir = resolveDefaultUserDataDir3(Browser7.CHROME, platform2, convertPuppeteerChannelToBrowsersChannel2(options.channel));
-    const portPath = join22(userDataDir, "DevToolsActivePort");
+    const portPath = join24(userDataDir, "DevToolsActivePort");
     try {
       const fileContent = await environment.value.fs.promises.readFile(portPath, "ascii");
       const [rawPort, rawPath] = fileContent.split(`
@@ -85267,9 +85556,9 @@ var init_PipeTransport = __esm(() => {
 });
 
 // node_modules/puppeteer-core/lib/esm/puppeteer/node/BrowserLauncher.js
-import { existsSync as existsSync23 } from "node:fs";
+import { existsSync as existsSync24 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join22 } from "node:path";
+import { join as join24 } from "node:path";
 
 class BrowserLauncher {
   #browser;
@@ -85294,7 +85583,7 @@ class BrowserLauncher {
       ...options,
       protocol
     });
-    if (!existsSync23(launchArgs.executablePath)) {
+    if (!existsSync24(launchArgs.executablePath)) {
       throw new Error(`Browser was not found at the configured executablePath (${launchArgs.executablePath})`);
     }
     const usePipe = launchArgs.args.includes("--remote-debugging-pipe");
@@ -85369,7 +85658,7 @@ class BrowserLauncher {
       browserCloseCallback();
       const logs = browserProcess.getRecentLogs().join(`
 `);
-      if (logs.includes("Failed to create a ProcessSingleton for your profile directory") || process.platform === "win32" && existsSync23(join22(launchArgs.userDataDir, "lockfile"))) {
+      if (logs.includes("Failed to create a ProcessSingleton for your profile directory") || process.platform === "win32" && existsSync24(join24(launchArgs.userDataDir, "lockfile"))) {
         throw new Error(`The browser is already running for ${launchArgs.userDataDir}. Use a different \`userDataDir\` or stop the running browser first.`);
       }
       if (logs.includes("Missing X server") && options.headless === false) {
@@ -85459,12 +85748,12 @@ class BrowserLauncher {
     });
   }
   getProfilePath() {
-    return join22(this.puppeteer.configuration.temporaryDirectory ?? tmpdir(), `puppeteer_dev_${this.browser}_profile-`);
+    return join24(this.puppeteer.configuration.temporaryDirectory ?? tmpdir(), `puppeteer_dev_${this.browser}_profile-`);
   }
   resolveExecutablePath(headless, validatePath = true) {
     let executablePath = this.puppeteer.configuration.executablePath;
     if (executablePath) {
-      if (validatePath && !existsSync23(executablePath)) {
+      if (validatePath && !existsSync24(executablePath)) {
         throw new Error(`Tried to find the browser at the configured path (${executablePath}), but no executable was found.`);
       }
       return executablePath;
@@ -85487,7 +85776,7 @@ class BrowserLauncher {
       browser: browserType,
       buildId: this.puppeteer.browserVersion
     });
-    if (validatePath && !existsSync23(executablePath)) {
+    if (validatePath && !existsSync24(executablePath)) {
       const configVersion = this.puppeteer.configuration?.[this.browser]?.version;
       if (configVersion) {
         throw new Error(`Tried to find the browser at the configured path (${executablePath}) for version ${configVersion}, but no executable was found.`);
@@ -86099,8 +86388,8 @@ var init_ScreenRecorder = __esm(() => {
       static {
         const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(_classSuper[Symbol.metadata] ?? null) : undefined;
         __esDecorate22(this, _private_writeFrame_descriptor = { value: __setFunctionName5(async function(buffer) {
-          const error = await new Promise((resolve11) => {
-            this.#process.stdin.write(buffer, resolve11);
+          const error = await new Promise((resolve12) => {
+            this.#process.stdin.write(buffer, resolve12);
           });
           if (error) {
             console.log(`ffmpeg failed to write: ${error.message}.`);
@@ -86255,8 +86544,8 @@ var init_ScreenRecorder = __esm(() => {
         const [buffer, timestamp] = await this.#lastFrame;
         await Promise.all(Array(Math.max(1, Math.round(this.#fps * (performance.now() - timestamp) / 1000))).fill(buffer).map(this.#writeFrame.bind(this)));
         this.#process.stdin.end();
-        await new Promise((resolve11) => {
-          this.#process.once("close", resolve11);
+        await new Promise((resolve12) => {
+          this.#process.once("close", resolve12);
         });
       }
       async[(_private_writeFrame_decorators = [guarded()], _stop_decorators = [guarded()], asyncDisposeSymbol)]() {
@@ -86302,17 +86591,17 @@ var init_puppeteer_core = __esm(() => {
 });
 
 // src/core/design-eval/capture.ts
-import { mkdirSync as mkdirSync11, statSync as statSync11, existsSync as existsSync24 } from "fs";
-import { join as join23 } from "path";
+import { mkdirSync as mkdirSync11, statSync as statSync12, existsSync as existsSync25 } from "fs";
+import { join as join25 } from "path";
 function findBrowser() {
   const platform2 = process.platform;
   const paths = CHROME_PATHS[platform2] ?? [];
   for (const p of paths) {
-    if (existsSync24(p))
+    if (existsSync25(p))
       return p;
   }
-  const minkBrowsers = join23(minkRoot(), "browsers");
-  if (existsSync24(minkBrowsers)) {
+  const minkBrowsers = join25(minkRoot(), "browsers");
+  if (existsSync25(minkBrowsers)) {
     const found = findChromeInDir(minkBrowsers);
     if (found)
       return found;
@@ -86329,13 +86618,13 @@ function findBrowser() {
 `));
 }
 function findChromeInDir(dir) {
-  const { readdirSync: readdirSync7, statSync: statSync12 } = __require("fs");
+  const { readdirSync: readdirSync9, statSync: statSync13 } = __require("fs");
   try {
-    const entries = readdirSync7(dir);
+    const entries = readdirSync9(dir);
     for (const entry of entries) {
-      const full = join23(dir, entry);
+      const full = join25(dir, entry);
       try {
-        const stat2 = statSync12(full);
+        const stat2 = statSync13(full);
         if (stat2.isDirectory()) {
           const found = findChromeInDir(full);
           if (found)
@@ -86381,7 +86670,7 @@ async function captureRoute(page, route, baseUrl, viewport, options) {
     const y = section * viewport.height;
     const clipHeight = Math.min(viewport.height, pageHeight - y);
     const fileName = `${prefix}-${viewport.name}-${section}.jpg`;
-    const filePath = join23(options.outputDir, fileName);
+    const filePath = join25(options.outputDir, fileName);
     await page.screenshot({
       path: filePath,
       type: "jpeg",
@@ -86395,7 +86684,7 @@ async function captureRoute(page, route, baseUrl, viewport, options) {
     });
     let fileSize = 0;
     try {
-      fileSize = statSync11(filePath).size;
+      fileSize = statSync12(filePath).size;
     } catch {}
     results.push({
       route,
@@ -87841,22 +88130,22 @@ var init_framework_advisor2 = __esm(() => {
 });
 
 // src/core/vault-templates.ts
-import { join as join24 } from "path";
-import { existsSync as existsSync25, writeFileSync as writeFileSync8, readFileSync as readFileSync24, mkdirSync as mkdirSync12 } from "fs";
+import { join as join26 } from "path";
+import { existsSync as existsSync26, writeFileSync as writeFileSync8, readFileSync as readFileSync25, mkdirSync as mkdirSync12 } from "fs";
 function seedTemplates(templatesDir) {
   mkdirSync12(templatesDir, { recursive: true });
   for (const [name, content] of Object.entries(DEFAULT_TEMPLATES)) {
-    const filePath = join24(templatesDir, `${name}.md`);
-    if (!existsSync25(filePath)) {
+    const filePath = join26(templatesDir, `${name}.md`);
+    if (!existsSync26(filePath)) {
       writeFileSync8(filePath, content);
     }
   }
 }
 function loadTemplate(templatesDir, templateName, vars) {
-  const filePath = join24(templatesDir, `${templateName}.md`);
+  const filePath = join26(templatesDir, `${templateName}.md`);
   let content;
-  if (existsSync25(filePath)) {
-    content = readFileSync24(filePath, "utf-8");
+  if (existsSync26(filePath)) {
+    content = readFileSync25(filePath, "utf-8");
   } else if (DEFAULT_TEMPLATES[templateName]) {
     content = DEFAULT_TEMPLATES[templateName];
   } else {
@@ -88008,85 +88297,13 @@ category: resources
   };
 });
 
-// src/core/note-linker.ts
-import { join as join25 } from "path";
-import { existsSync as existsSync26, readFileSync as readFileSync25, readdirSync as readdirSync7, statSync as statSync12 } from "fs";
-function updateMasterIndex(vaultRootPath) {
-  const now = new Date().toISOString().split("T")[0];
-  const sections = [
-    `---`,
-    `updated: "${new Date().toISOString()}"`,
-    `---`,
-    ``,
-    `# Knowledge Base`,
-    ``,
-    `> Last updated: ${now}`,
-    ``
-  ];
-  const categories = [
-    { name: "Inbox", dir: "inbox", emoji: "" },
-    { name: "Projects", dir: "projects", emoji: "" },
-    { name: "Areas", dir: "areas", emoji: "" },
-    { name: "Resources", dir: "resources", emoji: "" },
-    { name: "Archives", dir: "archives", emoji: "" },
-    { name: "Patterns", dir: "patterns", emoji: "" }
-  ];
-  for (const cat of categories) {
-    const dirPath = join25(vaultRootPath, cat.dir);
-    if (!existsSync26(dirPath))
-      continue;
-    const files = collectMarkdownFiles(dirPath, vaultRootPath);
-    if (files.length === 0 && cat.dir !== "inbox")
-      continue;
-    sections.push(`## ${cat.name}`);
-    sections.push("");
-    if (files.length === 0) {
-      sections.push("*No notes yet.*");
-    } else {
-      const sorted = files.sort((a, b) => b.mtime - a.mtime).slice(0, 20);
-      for (const file of sorted) {
-        sections.push(`- [[${file.title}]]`);
-      }
-      if (files.length > 20) {
-        sections.push(`- *...and ${files.length - 20} more*`);
-      }
-    }
-    sections.push("");
-  }
-  const indexPath = vaultMasterIndexPath();
-  atomicWriteText(indexPath, sections.join(`
-`));
-}
-function collectMarkdownFiles(dirPath, rootPath) {
-  const files = [];
-  try {
-    const entries = readdirSync7(dirPath, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = join25(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        files.push(...collectMarkdownFiles(fullPath, rootPath));
-      } else if (entry.name.endsWith(".md") && !entry.name.startsWith("_")) {
-        const stat2 = statSync12(fullPath);
-        const title = entry.name.replace(/\.md$/, "");
-        const relativePath = fullPath.slice(rootPath.length + 1);
-        files.push({ title, relativePath, mtime: stat2.mtimeMs });
-      }
-    }
-  } catch {}
-  return files;
-}
-var init_note_linker = __esm(() => {
-  init_fs_utils();
-  init_vault();
-});
-
 // src/commands/wiki.ts
 var exports_wiki = {};
 __export(exports_wiki, {
   wiki: () => wiki
 });
 import { existsSync as existsSync27, statSync as statSync13 } from "fs";
-import { resolve as resolve11 } from "path";
+import { resolve as resolve12 } from "path";
 import { homedir as homedir4 } from "os";
 async function wiki(_cwd, args) {
   const sub = args[0];
@@ -88345,9 +88562,9 @@ function wikiLinks() {
 }
 function expandPath(raw) {
   if (raw.startsWith("~/")) {
-    return resolve11(homedir4(), raw.slice(2));
+    return resolve12(homedir4(), raw.slice(2));
   }
-  return resolve11(raw);
+  return resolve12(raw);
 }
 var init_wiki = __esm(() => {
   init_vault();
@@ -88359,7 +88576,7 @@ var init_wiki = __esm(() => {
 });
 
 // src/core/note-writer.ts
-import { join as join26 } from "path";
+import { join as join27 } from "path";
 import { existsSync as existsSync28, readFileSync as readFileSync26 } from "fs";
 function slugifyTitle(title) {
   return title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
@@ -88393,7 +88610,7 @@ function createNote(meta) {
   const now = meta.created || new Date().toISOString();
   const slug = slugifyTitle(meta.title);
   const dir = categoryToDir(meta.category, meta.projectSlug);
-  const filePath = join26(dir, `${slug}.md`);
+  const filePath = join27(dir, `${slug}.md`);
   let content;
   if (meta.template) {
     const rendered = loadTemplate(vaultTemplates(), meta.template, {
@@ -88427,7 +88644,7 @@ ${meta.body}
 }
 function appendToDaily(date, content) {
   const dir = vaultDailyDir();
-  const filePath = join26(dir, `${date}.md`);
+  const filePath = join27(dir, `${date}.md`);
   if (existsSync28(filePath)) {
     const existing = readFileSync26(filePath, "utf-8");
     const timestamp = new Date().toLocaleTimeString("en-US", {
@@ -88505,7 +88722,7 @@ ${raw}`;
   }
   const slug = slugifyTitle(title);
   const dir = categoryToDir(meta.category, meta.projectSlug);
-  const filePath = join26(dir, `${slug}.md`);
+  const filePath = join27(dir, `${slug}.md`);
   atomicWriteText(filePath, content);
   return { filePath, content };
 }
@@ -88520,7 +88737,7 @@ var exports_note = {};
 __export(exports_note, {
   note: () => note
 });
-import { resolve as resolve12 } from "path";
+import { resolve as resolve13 } from "path";
 import { existsSync as existsSync29, readFileSync as readFileSync27 } from "fs";
 async function note(cwd, args) {
   if (!isWikiEnabled()) {
@@ -88551,7 +88768,7 @@ async function note(cwd, args) {
     return;
   }
   if (parsed.file) {
-    const sourcePath = resolve12(cwd, parsed.file);
+    const sourcePath = resolve13(cwd, parsed.file);
     if (!existsSync29(sourcePath)) {
       console.error(`[mink] file not found: ${sourcePath}`);
       process.exit(1);
@@ -88713,29 +88930,29 @@ var exports_skill = {};
 __export(exports_skill, {
   skill: () => skill
 });
-import { join as join27, resolve as resolve13, dirname as dirname13 } from "path";
+import { join as join28, resolve as resolve14, dirname as dirname13 } from "path";
 import { homedir as homedir5 } from "os";
 import {
   existsSync as existsSync30,
   mkdirSync as mkdirSync13,
   copyFileSync,
   unlinkSync as unlinkSync4,
-  readdirSync as readdirSync8,
+  readdirSync as readdirSync9,
   rmSync,
   symlinkSync as symlinkSync2,
   lstatSync as lstatSync2
 } from "fs";
 function getSkillsSourceDir() {
-  return resolve13(dirname13(new URL(import.meta.url).pathname), "../../skills");
+  return resolve14(dirname13(new URL(import.meta.url).pathname), "../../skills");
 }
 function getAvailableSkills() {
   const dir = getSkillsSourceDir();
   if (!existsSync30(dir))
     return [];
-  return readdirSync8(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync30(join27(dir, d.name, "SKILL.md"))).map((d) => d.name);
+  return readdirSync9(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync30(join28(dir, d.name, "SKILL.md"))).map((d) => d.name);
 }
 function isInstalled(skillName) {
-  return existsSync30(join27(AGENTS_SKILLS_DIR, skillName, "SKILL.md"));
+  return existsSync30(join28(AGENTS_SKILLS_DIR, skillName, "SKILL.md"));
 }
 async function skill(args) {
   const sub = args[0];
@@ -88771,9 +88988,9 @@ function skillInstall(name) {
   }
   mkdirSync13(AGENTS_SKILLS_DIR, { recursive: true });
   for (const skillName of skills) {
-    const srcDir = join27(sourceDir, skillName);
-    const srcFile = join27(srcDir, "SKILL.md");
-    const destDir = join27(AGENTS_SKILLS_DIR, skillName);
+    const srcDir = join28(sourceDir, skillName);
+    const srcFile = join28(srcDir, "SKILL.md");
+    const destDir = join28(AGENTS_SKILLS_DIR, skillName);
     if (!existsSync30(srcFile)) {
       console.error(`[mink] skill not found: ${skillName}`);
       continue;
@@ -88781,7 +88998,7 @@ function skillInstall(name) {
     mkdirSync13(destDir, { recursive: true });
     copyDirRecursive(srcDir, destDir);
     mkdirSync13(CLAUDE_SKILLS_DIR, { recursive: true });
-    const symlink = join27(CLAUDE_SKILLS_DIR, skillName);
+    const symlink = join28(CLAUDE_SKILLS_DIR, skillName);
     try {
       if (existsSync30(symlink)) {
         if (lstatSync2(symlink).isSymbolicLink() || lstatSync2(symlink).isFile()) {
@@ -88790,7 +89007,7 @@ function skillInstall(name) {
           rmSync(symlink, { recursive: true, force: true });
         }
       }
-      const relativeTarget = join27("..", "..", ".agents", "skills", skillName);
+      const relativeTarget = join28("..", "..", ".agents", "skills", skillName);
       symlinkSync2(relativeTarget, symlink);
     } catch {}
     console.log(`[mink] installed: ${skillName} -> ${destDir}`);
@@ -88801,13 +89018,13 @@ function skillInstall(name) {
 function skillUninstall(name) {
   const skills = name ? [name] : getAvailableSkills();
   for (const skillName of skills) {
-    const destDir = join27(AGENTS_SKILLS_DIR, skillName);
+    const destDir = join28(AGENTS_SKILLS_DIR, skillName);
     if (!existsSync30(destDir)) {
       console.log(`[mink] not installed: ${skillName}`);
       continue;
     }
     rmSync(destDir, { recursive: true, force: true });
-    const symlink = join27(CLAUDE_SKILLS_DIR, skillName);
+    const symlink = join28(CLAUDE_SKILLS_DIR, skillName);
     try {
       if (existsSync30(symlink))
         unlinkSync4(symlink);
@@ -88824,7 +89041,7 @@ function skillList() {
   if (installed.length > 0) {
     console.log("  Installed:");
     for (const s of installed) {
-      console.log(`    ${s}  (${join27(AGENTS_SKILLS_DIR, s)})`);
+      console.log(`    ${s}  (${join28(AGENTS_SKILLS_DIR, s)})`);
     }
   }
   if (notInstalled.length > 0) {
@@ -88841,10 +89058,10 @@ function skillList() {
   console.log("  Or via skills CLI: npx skills add drewpayment/mink");
 }
 function copyDirRecursive(src, dest) {
-  const entries = readdirSync8(src, { withFileTypes: true });
+  const entries = readdirSync9(src, { withFileTypes: true });
   for (const entry of entries) {
-    const srcPath = join27(src, entry.name);
-    const destPath = join27(dest, entry.name);
+    const srcPath = join28(src, entry.name);
+    const destPath = join28(dest, entry.name);
     if (entry.isDirectory()) {
       mkdirSync13(destPath, { recursive: true });
       copyDirRecursive(srcPath, destPath);
@@ -88855,8 +89072,8 @@ function copyDirRecursive(src, dest) {
 }
 var AGENTS_SKILLS_DIR, CLAUDE_SKILLS_DIR;
 var init_skill = __esm(() => {
-  AGENTS_SKILLS_DIR = join27(homedir5(), ".agents", "skills");
-  CLAUDE_SKILLS_DIR = join27(homedir5(), ".claude", "skills");
+  AGENTS_SKILLS_DIR = join28(homedir5(), ".agents", "skills");
+  CLAUDE_SKILLS_DIR = join28(homedir5(), ".claude", "skills");
 });
 
 // src/commands/sync.ts
@@ -89385,11 +89602,11 @@ switch (command2) {
   case "version":
   case "--version":
   case "-v": {
-    const { resolve: resolve14, dirname: dirname14 } = await import("path");
-    const cliPath = resolve14(dirname14(new URL(import.meta.url).pathname));
+    const { resolve: resolve15, dirname: dirname14 } = await import("path");
+    const cliPath = resolve15(dirname14(new URL(import.meta.url).pathname));
     const { readFileSync: readFileSync28 } = await import("fs");
     try {
-      const pkg = JSON.parse(readFileSync28(resolve14(cliPath, "../package.json"), "utf-8"));
+      const pkg = JSON.parse(readFileSync28(resolve15(cliPath, "../package.json"), "utf-8"));
       console.log(`mink ${pkg.version}`);
     } catch {
       console.log("mink (unknown version)");

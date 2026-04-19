@@ -1,59 +1,120 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/panel-card";
 import { Chip } from "@/components/ui/chip";
 import { Btn } from "@/components/ui/btn";
 import { Icon } from "@/components/ui/icon";
-import { MOCK_NOTES } from "@/lib/mock-dashboard-data";
+import { useDashboardStore } from "@/hooks/use-dashboard-store";
+import { fetchWikiNote } from "@/lib/api-client";
 
-const CATS = ["all", "inbox", "daily", "project", "resource", "pattern"] as const;
+const CATS = ["all", "inbox", "projects", "areas", "resources", "archives"] as const;
 type Cat = (typeof CATS)[number];
 
-const TREE = [
-  { n: "inbox",     c: 3,  depth: 0 },
-  { n: "projects",  c: 6,  depth: 0 },
-  { n: "mink",      c: 14, depth: 1 },
-  { n: "payroll-ui",c: 8,  depth: 1 },
-  { n: "areas",     c: 4,  depth: 0 },
-  { n: "daily",     c: 86, depth: 1 },
-  { n: "resources", c: 41, depth: 0 },
-  { n: "patterns",  c: 12, depth: 0 },
-  { n: "archives",  c: 18, depth: 0 },
-];
+function formatTimestamp(iso: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "short",
+  });
+}
 
 export function WikiPanel() {
-  const [selected, setSelected] = useState(MOCK_NOTES.recent[0].path);
+  const wiki = useDashboardStore((s) => s.wiki);
+  const wikiNote = useDashboardStore((s) => s.wikiNote);
+  const setWikiNote = useDashboardStore((s) => s.setWikiNote);
   const [cat, setCat] = useState<Cat>("all");
+  const [selected, setSelected] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState<string | null>(null);
 
-  const filtered = cat === "all" ? MOCK_NOTES.recent : MOCK_NOTES.recent.filter((n) => n.cat === cat);
-  const current = MOCK_NOTES.recent.find((n) => n.path === selected);
+  // Auto-select first recent note once the payload arrives.
+  useEffect(() => {
+    if (!selected && wiki && wiki.recent.length > 0) {
+      setSelected(wiki.recent[0].filePath);
+    }
+  }, [selected, wiki]);
+
+  // Load selected note body.
+  useEffect(() => {
+    if (!selected) {
+      setWikiNote(null);
+      setNoteError(null);
+      return;
+    }
+    setNoteError(null);
+    fetchWikiNote(selected)
+      .then(setWikiNote)
+      .catch((err) => {
+        setWikiNote(null);
+        setNoteError(err instanceof Error ? err.message : String(err));
+      });
+  }, [selected, setWikiNote]);
+
+  if (!wiki) {
+    return <div className="page"><Card title="Wiki"><div className="empty"><h4>Loading…</h4></div></Card></div>;
+  }
+
+  if (!wiki.initialized) {
+    return (
+      <div className="page">
+        <div className="page-head">
+          <div>
+            <h1 className="page-title">Vault</h1>
+            <p className="page-sub">{wiki.vaultPath}</p>
+          </div>
+        </div>
+        <Card title="Wiki not initialized">
+          <div className="vstack" style={{ padding: "12px 0" }}>
+            <p className="muted" style={{ fontSize: 12 }}>
+              Initialize the vault from the CLI:
+            </p>
+            <pre className="mono inset" style={{ padding: "10px 12px", fontSize: 12 }}>
+              mink wiki init
+            </pre>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  const filtered = cat === "all" ? wiki.recent : wiki.recent.filter((n) => n.category === cat);
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <h1 className="page-title row tight">
-            <span>Vault</span>
-            <Chip tone="amber">preview</Chip>
-          </h1>
-          <p className="page-sub">{MOCK_NOTES.totalNotes} notes · inbox {MOCK_NOTES.inbox} · ~/.mink/wiki/</p>
+          <h1 className="page-title">Vault</h1>
+          <p className="page-sub">
+            {wiki.totalNotes} notes · inbox {wiki.inboxCount} · {wiki.vaultPath}
+          </p>
         </div>
         <div className="page-actions">
-          <Btn icon="plus" variant="primary" disabled title="Wiki write endpoint coming soon">New note</Btn>
+          <Btn icon="plus" variant="primary" disabled title="Capture panel handles writes (PR 6)">New note</Btn>
         </div>
       </div>
 
-      <div className="grid" style={{ gridTemplateColumns: "200px 1fr 380px", gap: 14 }}>
+      <div className="grid" style={{ gridTemplateColumns: "220px 1fr 380px", gap: 14 }}>
         <Card title="Tree" flush>
-          <div className="tree" style={{ padding: 8 }}>
-            {TREE.map((n, i) => (
-              <div key={i} className="tree-row dir" style={{ paddingLeft: 10 + n.depth * 14 }}>
-                <Icon name="folder" size={11} />
-                <span className="fn">{n.n}</span>
-                <span className="meta">{n.c}</span>
-              </div>
-            ))}
+          <div className="tree" style={{ padding: 8, maxHeight: 520, overflowY: "auto" }}>
+            {wiki.tree.length === 0 ? (
+              <div className="muted" style={{ fontSize: 11, padding: 6 }}>Vault is empty.</div>
+            ) : (
+              wiki.tree.map((n) => (
+                <div
+                  key={n.path}
+                  className="tree-row dir"
+                  style={{ paddingLeft: 10 + n.depth * 14 }}
+                >
+                  <Icon name="folder" size={11} />
+                  <span className="fn">{n.name}</span>
+                  <span className="meta">{n.count}</span>
+                </div>
+              ))
+            )}
           </div>
         </Card>
 
@@ -72,73 +133,112 @@ export function WikiPanel() {
           }
           flush
         >
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Tags</th>
-                <th>Category</th>
-                <th className="right">When</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((n) => (
-                <tr
-                  key={n.path}
-                  onClick={() => setSelected(n.path)}
-                  style={{ cursor: "pointer", background: selected === n.path ? "var(--bg-2)" : undefined }}
-                >
-                  <td>
-                    <div className="strong">{n.title}</div>
-                    <div className="mono muted" style={{ fontSize: 10 }}>{n.path}</div>
-                  </td>
-                  <td>
-                    <div className="row tight">
-                      {n.tags.map((t) => <Chip key={t}>#{t}</Chip>)}
-                    </div>
-                  </td>
-                  <td><Chip tone={n.cat === "inbox" ? "amber" : n.cat === "project" ? "accent" : ""}>{n.cat}</Chip></td>
-                  <td className="right mono muted">{n.at}</td>
+          {filtered.length === 0 ? (
+            <div className="empty"><h4>No notes</h4></div>
+          ) : (
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Tags</th>
+                  <th>Category</th>
+                  <th className="right">When</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.map((n) => (
+                  <tr
+                    key={n.filePath}
+                    onClick={() => setSelected(n.filePath)}
+                    style={{ cursor: "pointer", background: selected === n.filePath ? "var(--bg-2)" : undefined }}
+                  >
+                    <td>
+                      <div className="strong">{n.title}</div>
+                      <div className="mono muted" style={{ fontSize: 10 }}>{n.filePath}</div>
+                    </td>
+                    <td>
+                      <div className="row tight">
+                        {n.tags.map((t) => <Chip key={t}>#{t}</Chip>)}
+                      </div>
+                    </td>
+                    <td>
+                      <Chip tone={n.category === "inbox" ? "amber" : n.category === "projects" ? "accent" : ""}>
+                        {n.category}
+                      </Chip>
+                    </td>
+                    <td className="right mono muted">{formatTimestamp(n.lastModified)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </Card>
 
         <Card
-          title={current?.title}
-          sub={current?.path}
+          title={wikiNote ? (wikiNote.frontmatter.title as string) || wikiNote.path : "Select a note"}
+          sub={wikiNote?.path}
           tools={
             <div className="row tight">
               <Btn size="sm" variant="ghost" icon="copy" disabled>Copy link</Btn>
             </div>
           }
         >
-          <div className="inset" style={{ fontFamily: "var(--font-inter)", fontSize: 12, lineHeight: 1.55 }}>
-            <div className="muted mono" style={{ fontSize: 10.5, marginBottom: 8 }}>
-              ---<br />created: 2026-04-19<br />tags: [{current?.tags.join(", ")}]<br />category: {current?.cat}<br />---
-            </div>
-            <div className="strong" style={{ color: "var(--fg-0)", fontSize: 14, marginBottom: 6 }}>
-              {current?.title}
-            </div>
-            <div style={{ color: "var(--fg-1)" }}>
-              Preview content. The real vault will render note bodies from the daemon once the
-              wiki API is wired up.
-              <br />
-              <br />
-              Link examples: <span className="mono" style={{ color: "var(--accent)" }}>[[JWT Cookie Pattern]]</span>,{" "}
-              <span className="mono" style={{ color: "var(--accent)" }}>[[Exponential Backoff]]</span>
-            </div>
-          </div>
+          {noteError && (
+            <div style={{ color: "var(--danger, #c33)", fontSize: 11 }}>{noteError}</div>
+          )}
+          {!wikiNote && !noteError && (
+            <div className="muted" style={{ fontSize: 11 }}>No note selected.</div>
+          )}
+          {wikiNote && (
+            <>
+              <div className="inset" style={{ fontFamily: "var(--font-inter)", fontSize: 12, lineHeight: 1.55, maxHeight: 360, overflowY: "auto" }}>
+                {Object.keys(wikiNote.frontmatter).length > 0 && (
+                  <div className="muted mono" style={{ fontSize: 10.5, marginBottom: 8 }}>
+                    ---
+                    {Object.entries(wikiNote.frontmatter).map(([k, v]) => (
+                      <div key={k}>
+                        {k}: {Array.isArray(v) ? `[${v.join(", ")}]` : String(v)}
+                      </div>
+                    ))}
+                    ---
+                  </div>
+                )}
+                <div style={{ color: "var(--fg-1)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  {wikiNote.body}
+                </div>
+              </div>
 
-          <div className="divider" />
-          <div className="muted" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600, marginBottom: 6 }}>
-            Backlinks
-          </div>
-          <div className="vstack" style={{ gap: 4 }}>
-            <div className="mono" style={{ fontSize: 11, color: "var(--fg-1)" }}>projects/mink/sessions/2026-04-18.md</div>
-            <div className="mono" style={{ fontSize: 11, color: "var(--fg-1)" }}>patterns/retry-strategies.md</div>
-          </div>
+              <div className="divider" />
+              <div className="muted" style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600, marginBottom: 6 }}>
+                Backlinks ({wikiNote.backlinks.length})
+              </div>
+              <div className="vstack" style={{ gap: 4 }}>
+                {wikiNote.backlinks.length === 0 ? (
+                  <div className="muted" style={{ fontSize: 11 }}>No backlinks yet.</div>
+                ) : (
+                  wikiNote.backlinks.map((b) => (
+                    <button
+                      key={b.path}
+                      type="button"
+                      onClick={() => setSelected(b.path)}
+                      className="mono"
+                      style={{
+                        background: "transparent",
+                        border: 0,
+                        color: "var(--accent)",
+                        cursor: "pointer",
+                        fontSize: 11,
+                        textAlign: "left",
+                        padding: 0,
+                      }}
+                    >
+                      {b.title} <span className="muted">({b.path})</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </Card>
       </div>
     </div>

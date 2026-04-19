@@ -229,6 +229,27 @@ describe("dashboard server", () => {
     expect(data.success).toBe(true);
   });
 
+  test("GET /api/wiki returns an uninitialized shape when vault is absent", async () => {
+    const res = await fetch(srv.url + "/api/wiki");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(typeof data.initialized).toBe("boolean");
+    expect(typeof data.vaultPath).toBe("string");
+    expect(Array.isArray(data.recent)).toBe(true);
+    expect(Array.isArray(data.tags)).toBe(true);
+    expect(Array.isArray(data.tree)).toBe(true);
+  });
+
+  test("GET /api/wiki/note requires path parameter", async () => {
+    const res = await fetch(srv.url + "/api/wiki/note");
+    expect(res.status).toBe(400);
+  });
+
+  test("GET /api/wiki/note rejects path traversal", async () => {
+    const res = await fetch(srv.url + "/api/wiki/note?path=" + encodeURIComponent("../../etc/passwd"));
+    expect(res.status).toBe(404);
+  });
+
   test("POST /api/sync/pull returns error when sync not initialized", async () => {
     // Only run when sync is not initialized (i.e., typical test env).
     const statusRes = await fetch(srv.url + "/api/sync");

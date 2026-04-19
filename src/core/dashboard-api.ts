@@ -44,6 +44,11 @@ import {
 import { resolveConfigValue } from "./global-config";
 import { resolveVaultPath, isVaultInitialized } from "./vault";
 import type { ChannelPlatform } from "../types/channel";
+import { loadVaultIndex, getRecentNotes } from "./note-index";
+import { extractWikilinks } from "./note-linker";
+import { readdirSync, readFileSync as readFileSyncFS } from "fs";
+import { join, resolve, normalize, sep } from "path";
+import type { VaultIndexEntry, NoteCategory } from "../types/note";
 import { minkRoot } from "./paths";
 import { execSync } from "child_process";
 import { isValidConfigKey, CONFIG_KEYS } from "../types/config";
@@ -66,6 +71,9 @@ import type {
   SyncPendingChange,
   ChannelPanelPayload,
   ChannelLogLine,
+  WikiPanelPayload,
+  WikiNotePayload,
+  WikiTreeNode,
 } from "../types/dashboard";
 import { isDesignEvalReport } from "../types/design-eval";
 import type { DesignEvalReport } from "../types/design-eval";
@@ -439,6 +447,197 @@ export function loadChannelPanel(): ChannelPanelPayload {
     allowlist: parseAllowlist(allowlistRaw),
     logs,
   };
+}
+
+// ── Wiki Panel ─────────────────────────────────────────────────────────────
+
+const WIKI_TREE_MAX_DEPTH = 2;
+const WIKI_TREE_EXCLUDES = new Set([
+  ".obsidian",
+  ".git",
+  ".mink-vault.json",
+  ".mink-index.json",
+  "node_modules",
+]);
+const DEFAULT_RECENT_LIMIT = 25;
+
+function countMarkdownIn(dir: string): number {
+  let count = 0;
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (WIKI_TREE_EXCLUDES.has(entry.name) || entry.name.startsWith(".")) continue;
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        count += countMarkdownIn(fullPath);
+      } else if (entry.name.endsWith(".md") && !entry.name.startsWith("_")) {
+        count += 1;
+      }
+    }
+  } catch {
+    // Unreadable dir — return zero.
+  }
+  return count;
+}
+
+function buildVaultTree(root: string): WikiTreeNode[] {
+  const nodes: WikiTreeNode[] = [];
+  function walk(dir: string, depth: number) {
+    if (depth > WIKI_TREE_MAX_DEPTH) return;
+    let entries: { name: string; isDir: boolean }[] = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+        .filter((e) => !WIKI_TREE_EXCLUDES.has(e.name) && !e.name.startsWith("."))
+        .map((e) => ({ name: e.name, isDir: e.isDirectory() }));
+    } catch {
+      return;
+    }
+    entries.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const entry of entries) {
+      if (!entry.isDir) continue;
+      const fullPath = join(dir, entry.name);
+      const relPath = fullPath.slice(root.length + 1);
+      const count = countMarkdownIn(fullPath);
+      nodes.push({ name: entry.name, path: relPath, count, depth });
+      walk(fullPath, depth + 1);
+    }
+  }
+  walk(root, 0);
+  return nodes;
+}
+
+function tallyTags(entries: VaultIndexEntry[]): Array<[string, number]> {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    for (const tag of entry.tags) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+  return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+}
+
+interface WikiPanelOptions {
+  limit?: number;
+  category?: NoteCategory | "all";
+}
+
+export function loadWikiPanel(opts: WikiPanelOptions = {}): WikiPanelPayload {
+  const initialized = isVaultInitialized();
+  const vaultPath = resolveVaultPath();
+
+  if (!initialized) {
+    return {
+      initialized: false,
+      vaultPath,
+      totalNotes: 0,
+      inboxCount: 0,
+      recent: [],
+      tags: [],
+      tree: [],
+    };
+  }
+
+  const index = loadVaultIndex();
+  const allEntries = Object.values(index.entries);
+  const limit = Math.max(1, Math.min(opts.limit ?? DEFAULT_RECENT_LIMIT, 200));
+  let recent = getRecentNotes(limit);
+  if (opts.category && opts.category !== "all") {
+    recent = recent.filter((e) => e.category === opts.category);
+  }
+  const inboxCount = allEntries.filter((e) => e.category === "inbox").length;
+  const tags = tallyTags(allEntries);
+  const tree = buildVaultTree(vaultPath);
+
+  return {
+    initialized: true,
+    vaultPath,
+    totalNotes: index.totalNotes || allEntries.length,
+    inboxCount,
+    recent,
+    tags,
+    tree,
+  };
+}
+
+function parseFrontmatter(content: string): { frontmatter: Record<string, unknown>; body: string } {
+  if (!content.startsWith("---")) return { frontmatter: {}, body: content };
+  const end = content.indexOf("\n---", 3);
+  if (end === -1) return { frontmatter: {}, body: content };
+  const raw = content.slice(3, end).trim();
+  const body = content.slice(end + 4).replace(/^\n/, "");
+  const frontmatter: Record<string, unknown> = {};
+  // Minimal YAML parser — supports key: value and key: [a, b] — good enough for note FM.
+  for (const rawLine of raw.split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const colonIdx = line.indexOf(":");
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).trim();
+    const valRaw = line.slice(colonIdx + 1).trim();
+    if (valRaw.startsWith("[") && valRaw.endsWith("]")) {
+      frontmatter[key] = valRaw
+        .slice(1, -1)
+        .split(",")
+        .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+        .filter(Boolean);
+    } else {
+      frontmatter[key] = valRaw.replace(/^["']|["']$/g, "");
+    }
+  }
+  return { frontmatter, body };
+}
+
+function resolveVaultRelativePath(relPath: string): string | null {
+  if (!relPath || relPath.includes("\0")) return null;
+  const root = resolveVaultPath();
+  const absolute = resolve(root, relPath);
+  const normalizedRoot = normalize(root) + sep;
+  if (!absolute.startsWith(normalizedRoot) && absolute !== normalize(root)) {
+    return null;
+  }
+  return absolute;
+}
+
+export function loadWikiNote(relPath: string): WikiNotePayload | null {
+  const absolute = resolveVaultRelativePath(relPath);
+  if (!absolute) return null;
+  let content: string;
+  try {
+    content = readFileSyncFS(absolute, "utf-8");
+  } catch {
+    return null;
+  }
+  const { frontmatter, body } = parseFrontmatter(content);
+
+  // Backlinks: look for wikilinks referencing this note's title or filename.
+  const index = loadVaultIndex();
+  const thisEntry = index.entries[relPath];
+  const targetTitle = thisEntry?.title ?? relPath.replace(/\.md$/, "");
+  const targetBasename = relPath.replace(/\.md$/, "").split("/").pop() ?? "";
+
+  const backlinks: Array<{ path: string; title: string }> = [];
+  for (const entry of Object.values(index.entries)) {
+    if (entry.filePath === relPath) continue;
+    const absSource = resolveVaultRelativePath(entry.filePath);
+    if (!absSource) continue;
+    let sourceContent: string;
+    try {
+      sourceContent = readFileSyncFS(absSource, "utf-8");
+    } catch {
+      continue;
+    }
+    const links = extractWikilinks(sourceContent);
+    const matches = links.some(
+      (l) => l === targetTitle || l === targetBasename || l === relPath,
+    );
+    if (matches) {
+      backlinks.push({ path: entry.filePath, title: entry.title });
+    }
+  }
+
+  return { path: relPath, frontmatter, body, backlinks };
 }
 
 // ── Action Triggers ────────────────────────────────────────────────────────

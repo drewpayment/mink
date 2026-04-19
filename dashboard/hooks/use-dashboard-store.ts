@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, DesignImagePayload, ConfigPanelPayload, SyncPanelPayload, ChannelPanelPayload } from "@mink/types/dashboard";
+import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, DesignImagePayload, ConfigPanelPayload, SyncPanelPayload, ChannelPanelPayload, WikiPanelPayload, WikiNotePayload } from "@mink/types/dashboard";
 import type { LearningMemory } from "@mink/types/learning-memory";
 import type { BugEntry } from "@mink/types/bug-memory";
 import type { WasteFlag } from "@mink/types/waste-detection";
@@ -33,6 +33,8 @@ interface DashboardState {
   config: ConfigPanelPayload | null;
   sync: SyncPanelPayload | null;
   channel: ChannelPanelPayload | null;
+  wiki: WikiPanelPayload | null;
+  wikiNote: WikiNotePayload | null;
 
   setConnected: (v: boolean) => void;
   setProjects: (projects: RegisteredProject[], activeId: string) => void;
@@ -50,6 +52,8 @@ interface DashboardState {
   setConfig: (data: ConfigPanelPayload) => void;
   setSync: (data: SyncPanelPayload) => void;
   setChannel: (data: ChannelPanelPayload) => void;
+  setWiki: (data: WikiPanelPayload) => void;
+  setWikiNote: (data: WikiNotePayload | null) => void;
 }
 
 export const useDashboardStore = create<DashboardState>((set) => ({
@@ -71,6 +75,8 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   config: null,
   sync: null,
   channel: null,
+  wiki: null,
+  wikiNote: null,
 
   setConnected: (v) => set({ connected: v }),
   setProjects: (projects, activeId) => set({ projects, activeProjectId: activeId }),
@@ -103,4 +109,6 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   setConfig: (data) => set({ config: data }),
   setSync: (data) => set({ sync: data }),
   setChannel: (data) => set({ channel: data }),
+  setWiki: (data) => set({ wiki: data }),
+  setWikiNote: (data) => set({ wikiNote: data }),
 }));

@@ -4,12 +4,13 @@ import { useState } from "react";
 import { Card } from "@/components/ui/panel-card";
 import { Chip } from "@/components/ui/chip";
 import { Btn } from "@/components/ui/btn";
-import { MOCK_NOTES } from "@/lib/mock-dashboard-data";
+import { useDashboardStore } from "@/hooks/use-dashboard-store";
 
 type Mode = "quick" | "structured" | "daily" | "file";
 
 export function CapturePanel() {
   const [mode, setMode] = useState<Mode>("quick");
+  const tags = useDashboardStore((s) => s.wiki?.tags ?? []);
 
   return (
     <div className="page" style={{ maxWidth: 900 }}>
@@ -112,12 +113,16 @@ export function CapturePanel() {
 
       <Card title="Tag cloud" sub="top tags across the vault">
         <div className="row tight" style={{ flexWrap: "wrap", gap: 6 }}>
-          {MOCK_NOTES.tags.map(([t, c]) => (
-            <Chip key={t}>
-              <span>#{t}</span>
-              <span className="muted">{c}</span>
-            </Chip>
-          ))}
+          {tags.length === 0 ? (
+            <span className="muted" style={{ fontSize: 11 }}>No tags yet — capture a note to get started.</span>
+          ) : (
+            tags.slice(0, 40).map(([t, c]) => (
+              <Chip key={t}>
+                <span>#{t}</span>
+                <span className="muted">{c}</span>
+              </Chip>
+            ))
+          )}
         </div>
       </Card>
     </div>

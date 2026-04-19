@@ -1,4 +1,4 @@
-import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, SchedulerPayload, BugLogPayload, ActionLogPayload, ActionResult, DesignPayload, ConfigPanelPayload, SyncPanelPayload, ChannelPanelPayload } from "@mink/types/dashboard";
+import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, SchedulerPayload, BugLogPayload, ActionLogPayload, ActionResult, DesignPayload, ConfigPanelPayload, SyncPanelPayload, ChannelPanelPayload, WikiPanelPayload, WikiNotePayload } from "@mink/types/dashboard";
 import type { LearningMemory } from "@mink/types/learning-memory";
 import type { ProjectsResponse } from "@/types/project";
 
@@ -147,4 +147,16 @@ export async function triggerChannelStop(): Promise<ActionResult> {
 export async function triggerChannelRestart(): Promise<ActionResult> {
   const res = await fetch("/api/channel/restart", { method: "POST" });
   return res.json();
+}
+
+export function fetchWiki(options: { limit?: number; category?: string } = {}) {
+  const params = new URLSearchParams();
+  if (options.limit != null) params.set("limit", String(options.limit));
+  if (options.category) params.set("category", options.category);
+  const qs = params.toString();
+  return fetchApi<WikiPanelPayload>(`/api/wiki${qs ? `?${qs}` : ""}`);
+}
+
+export function fetchWikiNote(path: string) {
+  return fetchApi<WikiNotePayload>(`/api/wiki/note?path=${encodeURIComponent(path)}`);
 }

@@ -5,6 +5,7 @@ import type { BugEntry } from "./bug-memory";
 import type { LearningMemory } from "./learning-memory";
 import type { ParsedSession } from "./action-log";
 import type { TaskDefinition, TaskRunRecord, DeadLetterEntry } from "./scheduler";
+import type { VaultIndexEntry } from "./note";
 
 // ── State File Identifiers ─────────────────────────────────────────────────
 
@@ -23,7 +24,8 @@ export type StateFileId =
   | "config-changed"
   | "sync-status"
   | "channel-status"
-  | "channel-logs";
+  | "channel-logs"
+  | "vault-index";
 
 // ── SSE Event ──────────────────────────────────────────────────────────────
 
@@ -158,4 +160,28 @@ export interface ChannelPanelPayload {
   tokenMasked: string;
   allowlist: string[];
   logs: ChannelLogLine[];
+}
+
+export interface WikiTreeNode {
+  name: string;
+  path: string;
+  count: number;
+  depth: number;
+}
+
+export interface WikiPanelPayload {
+  initialized: boolean;
+  vaultPath: string;
+  totalNotes: number;
+  inboxCount: number;
+  recent: VaultIndexEntry[];
+  tags: Array<[string, number]>;
+  tree: WikiTreeNode[];
+}
+
+export interface WikiNotePayload {
+  path: string;
+  frontmatter: Record<string, unknown>;
+  body: string;
+  backlinks: Array<{ path: string; title: string }>;
 }
