@@ -63,7 +63,7 @@ describe("dashboard server", () => {
     const ct = res.headers.get("content-type") || "";
     expect(ct).toContain("text/html");
     const text = await res.text();
-    expect(text).toContain("Mink Dashboard");
+    expect(text).toContain("Mink — Command Center");
   });
 
   test("GET /api/overview returns valid JSON", async () => {
