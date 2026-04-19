@@ -661,6 +661,13 @@ var init_config = __esm(() => {
       scope: "local"
     },
     {
+      key: "channel.discord.allowlist",
+      default: "",
+      envVar: "MINK_CHANNEL_DISCORD_ALLOWLIST",
+      description: "Comma-separated list of Discord user IDs permitted to DM the bot",
+      scope: "local"
+    },
+    {
       key: "channel.default-platform",
       default: "discord",
       envVar: "MINK_CHANNEL_DEFAULT_PLATFORM",
@@ -5536,6 +5543,45 @@ function loadSyncPanel() {
     pending
   };
 }
+function parseChannelLogs(raw) {
+  if (!raw)
+    return [];
+  const lines = raw.split(`
+`).map((l) => l.replace(/\u001b\[[0-9;]*m/g, "").trim()).filter(Boolean);
+  const parsed = lines.map((line) => {
+    const match = line.match(TIMESTAMP_PREFIX);
+    if (match) {
+      return { t: match[1], m: line.slice(match[0].length) };
+    }
+    return { t: "", m: line };
+  });
+  return parsed.slice(-CHANNEL_LOG_LIMIT);
+}
+function parseAllowlist(raw) {
+  if (!raw)
+    return [];
+  return raw.split(",").map((entry) => entry.trim()).filter(Boolean);
+}
+function loadChannelPanel() {
+  const running = isChannelRunning();
+  const status2 = running ? getChannelStatus() : null;
+  const rawLogs = running ? getChannelLogs() : null;
+  const logs = parseChannelLogs(rawLogs);
+  const token = resolveConfigValue("channel.discord.bot-token").value;
+  const allowlistRaw = resolveConfigValue("channel.discord.allowlist").value;
+  const autoStart = resolveConfigValue("channel.discord.enabled").value === "true";
+  return {
+    status: running ? "running" : "stopped",
+    platform: status2?.platform ?? null,
+    session: status2?.session ?? "",
+    startedAt: status2?.startedAt ?? "",
+    uptimeSec: status2?.uptime ?? 0,
+    autoStart,
+    tokenMasked: maskSecret(token),
+    allowlist: parseAllowlist(allowlistRaw),
+    logs
+  };
+}
 async function triggerTask(cwd, taskId) {
   try {
     await executeTask(taskId, cwd);
@@ -5674,6 +5720,50 @@ async function triggerSyncPush() {
     };
   }
 }
+async function triggerChannelStart() {
+  try {
+    if (!isVaultInitialized()) {
+      return {
+        success: false,
+        error: "Vault is not initialized. Run `mink wiki init` first."
+      };
+    }
+    const platform2 = resolveConfigValue("channel.default-platform").value || "discord";
+    const token = resolveConfigValue("channel.discord.bot-token").value;
+    if (!token) {
+      return {
+        success: false,
+        error: "No bot token configured. Set channel.discord.bot-token first."
+      };
+    }
+    const skipPermissions = resolveConfigValue("channel.skip-permissions").value === "true";
+    const vaultPath = resolveVaultPath();
+    await startChannelProcess({ vaultPath, platform: platform2, token, skipPermissions });
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+async function triggerChannelStop() {
+  try {
+    await stopChannelProcess();
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+async function triggerChannelRestart() {
+  const stop = await triggerChannelStop();
+  if (!stop.success)
+    return stop;
+  return triggerChannelStart();
+}
 async function triggerSyncDisconnect() {
   try {
     disconnectSync();
@@ -5706,7 +5796,7 @@ async function triggerConfigReset(key, all) {
     };
   }
 }
-var SECRET_KEY_PATTERNS, BOOLEAN_VALUES, GROUP_LABELS;
+var SECRET_KEY_PATTERNS, BOOLEAN_VALUES, GROUP_LABELS, CHANNEL_LOG_LIMIT = 120, TIMESTAMP_PREFIX;
 var init_dashboard_api = __esm(() => {
   init_paths();
   init_fs_utils();
@@ -5719,6 +5809,9 @@ var init_dashboard_api = __esm(() => {
   init_task_registry();
   init_global_config();
   init_sync();
+  init_channel_process();
+  init_global_config();
+  init_vault();
   init_paths();
   init_config();
   init_design_eval();
@@ -5730,6 +5823,7 @@ var init_dashboard_api = __esm(() => {
     sync: "Sync",
     channel: "Channels"
   };
+  TIMESTAMP_PREFIX = /^\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?\s*/;
 });
 
 // src/core/project-registry.ts
@@ -6198,6 +6292,13 @@ retry: 3000
             return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);
           }
         }
+        if (pathname === "/api/channel") {
+          try {
+            return jsonResponse(loadChannelPanel());
+          } catch (err) {
+            return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);
+          }
+        }
         const resolvedCwd = resolveProjectCwd(url, activeCwd);
         if (resolvedCwd === null) {
           return jsonResponse({ error: "Project not found" }, 404);
@@ -6295,6 +6396,18 @@ retry: 3000
           } catch (err) {
             return jsonResponse({ success: false, error: err instanceof Error ? err.message : String(err) }, 500);
           }
+        }
+        if (pathname === "/api/channel/start" || pathname === "/api/channel/stop" || pathname === "/api/channel/restart") {
+          const action = pathname === "/api/channel/start" ? triggerChannelStart() : pathname === "/api/channel/stop" ? triggerChannelStop() : triggerChannelRestart();
+          return action.then((result) => {
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "channel-status",
+                timestamp: new Date().toISOString()
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          });
         }
         if (pathname === "/api/sync/pull" || pathname === "/api/sync/push" || pathname === "/api/sync/disconnect") {
           const action = pathname === "/api/sync/pull" ? triggerSyncPull() : pathname === "/api/sync/push" ? triggerSyncPush() : triggerSyncDisconnect();

@@ -207,6 +207,28 @@ describe("dashboard server", () => {
     expect(Array.isArray(data.pending)).toBe(true);
   });
 
+  test("GET /api/channel returns stopped status when not running", async () => {
+    const res = await fetch(srv.url + "/api/channel");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(["running", "stopped"]).toContain(data.status);
+    expect(Array.isArray(data.allowlist)).toBe(true);
+    expect(Array.isArray(data.logs)).toBe(true);
+    expect(typeof data.tokenMasked).toBe("string");
+    expect(typeof data.autoStart).toBe("boolean");
+  });
+
+  test("POST /api/channel/stop is a no-op when channel not running", async () => {
+    // Skip if a real channel PID file exists (don't stomp the dev env).
+    const { channelPidPath } = await import("../../src/core/paths");
+    if (existsSync(channelPidPath())) return;
+
+    const res = await fetch(srv.url + "/api/channel/stop", { method: "POST" });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+  });
+
   test("POST /api/sync/pull returns error when sync not initialized", async () => {
     // Only run when sync is not initialized (i.e., typical test env).
     const statusRes = await fetch(srv.url + "/api/sync");

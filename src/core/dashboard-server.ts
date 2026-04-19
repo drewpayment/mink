@@ -24,6 +24,10 @@ import {
   triggerSyncPull,
   triggerSyncPush,
   triggerSyncDisconnect,
+  loadChannelPanel,
+  triggerChannelStart,
+  triggerChannelStop,
+  triggerChannelRestart,
 } from "./dashboard-api";
 import { listRegisteredProjects, getProjectMeta } from "./project-registry";
 import { generateProjectId } from "./project-id";
@@ -444,6 +448,18 @@ export async function startDashboardServer(
           }
         }
 
+        // GET /api/channel — global channel status + logs (no project scoping)
+        if (pathname === "/api/channel") {
+          try {
+            return jsonResponse(loadChannelPanel());
+          } catch (err) {
+            return jsonResponse(
+              { error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
         // Resolve project cwd from ?project=<id> query param
         const resolvedCwd = resolveProjectCwd(url, activeCwd);
         if (resolvedCwd === null) {
@@ -573,6 +589,29 @@ export async function startDashboardServer(
               500,
             );
           }
+        }
+
+        // Channel controls — global (screen session is per-vault, not per-project).
+        if (
+          pathname === "/api/channel/start" ||
+          pathname === "/api/channel/stop" ||
+          pathname === "/api/channel/restart"
+        ) {
+          const action =
+            pathname === "/api/channel/start"
+              ? triggerChannelStart()
+              : pathname === "/api/channel/stop"
+                ? triggerChannelStop()
+                : triggerChannelRestart();
+          return action.then((result) => {
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "channel-status" as StateFileId,
+                timestamp: new Date().toISOString(),
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          });
         }
 
         // Sync controls — global (operate on ~/.mink/.git, not a project).

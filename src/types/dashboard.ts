@@ -21,7 +21,9 @@ export type StateFileId =
   | "project-switched"
   | "daemon-status"
   | "config-changed"
-  | "sync-status";
+  | "sync-status"
+  | "channel-status"
+  | "channel-logs";
 
 // ── SSE Event ──────────────────────────────────────────────────────────────
 
@@ -139,4 +141,21 @@ export interface SyncPanelPayload {
   lastPush: string;
   lastPull: string;
   pending: SyncPendingChange[];
+}
+
+export interface ChannelLogLine {
+  t: string;
+  m: string;
+}
+
+export interface ChannelPanelPayload {
+  status: "running" | "stopped";
+  platform: "discord" | "telegram" | null;
+  session: string;
+  startedAt: string;
+  uptimeSec: number;
+  autoStart: boolean;
+  tokenMasked: string;
+  allowlist: string[];
+  logs: ChannelLogLine[];
 }

@@ -1,4 +1,4 @@
-import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, SchedulerPayload, BugLogPayload, ActionLogPayload, ActionResult, DesignPayload, ConfigPanelPayload, SyncPanelPayload } from "@mink/types/dashboard";
+import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, SchedulerPayload, BugLogPayload, ActionLogPayload, ActionResult, DesignPayload, ConfigPanelPayload, SyncPanelPayload, ChannelPanelPayload } from "@mink/types/dashboard";
 import type { LearningMemory } from "@mink/types/learning-memory";
 import type { ProjectsResponse } from "@/types/project";
 
@@ -127,5 +127,24 @@ export async function triggerSyncPush(): Promise<ActionResult> {
 
 export async function triggerSyncDisconnect(): Promise<ActionResult> {
   const res = await fetch("/api/sync/disconnect", { method: "POST" });
+  return res.json();
+}
+
+export function fetchChannel() {
+  return fetchApi<ChannelPanelPayload>("/api/channel");
+}
+
+export async function triggerChannelStart(): Promise<ActionResult> {
+  const res = await fetch("/api/channel/start", { method: "POST" });
+  return res.json();
+}
+
+export async function triggerChannelStop(): Promise<ActionResult> {
+  const res = await fetch("/api/channel/stop", { method: "POST" });
+  return res.json();
+}
+
+export async function triggerChannelRestart(): Promise<ActionResult> {
+  const res = await fetch("/api/channel/restart", { method: "POST" });
   return res.json();
 }

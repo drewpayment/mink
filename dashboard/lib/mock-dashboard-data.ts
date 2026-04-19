@@ -17,11 +17,6 @@ export interface MockNote {
   at: string;
 }
 
-export interface MockDiscordLog {
-  t: string;
-  m: string;
-}
-
 export const MOCK_NOTES = {
   totalNotes: 214,
   inbox: 3,
@@ -38,22 +33,6 @@ export const MOCK_NOTES = {
     ["reliability", 5], ["ui", 22], ["design", 14], ["nextjs", 19],
     ["build", 8], ["pattern", 24], ["meeting", 6],
   ] as [string, number][],
-};
-
-export const MOCK_DISCORD = {
-  status: "running" as const,
-  bot: "mink-companion#1234",
-  uptime: "3d 04h",
-  messages: 42,
-  token: "••••••••••••••••",
-  allowlist: ["drew@1234", "sarah@5678"],
-  logs: [
-    { t: "11:58", m: "Received DM from drew: 'note jwt cookie pattern'" },
-    { t: "11:58", m: "Captured note → patterns/jwt-cookie.md" },
-    { t: "11:32", m: "Received DM from drew: 'search backoff'" },
-    { t: "11:32", m: "Returned 3 matches from patterns/" },
-    { t: "10:41", m: "Heartbeat OK" },
-  ] as MockDiscordLog[],
 };
 
 

@@ -14,6 +14,7 @@ import {
   fetchProjects,
   fetchConfig,
   fetchSync,
+  fetchChannel,
 } from "@/lib/api-client";
 import type { ActionLogPayload, SchedulerPayload } from "@mink/types/dashboard";
 
@@ -80,6 +81,7 @@ export function fetchAllData() {
     .catch(console.warn);
   fetchConfig().then(store.setConfig).catch(console.warn);
   fetchSync().then(store.setSync).catch(console.warn);
+  fetchChannel().then(store.setChannel).catch(console.warn);
 }
 
 function handleEvent(payload: { fileId?: string; type?: string; projectId?: string }) {
@@ -143,6 +145,10 @@ function handleEvent(payload: { fileId?: string; type?: string; projectId?: stri
       break;
     case "sync-status":
       fetchSync().then(store.setSync).catch(console.warn);
+      break;
+    case "channel-status":
+    case "channel-logs":
+      fetchChannel().then(store.setChannel).catch(console.warn);
       break;
     default:
       fetchAllData();

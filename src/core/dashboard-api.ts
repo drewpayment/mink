@@ -34,6 +34,16 @@ import {
   disconnectSync,
   isSyncInitialized,
 } from "./sync";
+import {
+  getChannelStatus,
+  getChannelLogs,
+  startChannelProcess,
+  stopChannelProcess,
+  isChannelRunning,
+} from "./channel-process";
+import { resolveConfigValue } from "./global-config";
+import { resolveVaultPath, isVaultInitialized } from "./vault";
+import type { ChannelPlatform } from "../types/channel";
 import { minkRoot } from "./paths";
 import { execSync } from "child_process";
 import { isValidConfigKey, CONFIG_KEYS } from "../types/config";
@@ -54,6 +64,8 @@ import type {
   ConfigValueType,
   SyncPanelPayload,
   SyncPendingChange,
+  ChannelPanelPayload,
+  ChannelLogLine,
 } from "../types/dashboard";
 import { isDesignEvalReport } from "../types/design-eval";
 import type { DesignEvalReport } from "../types/design-eval";
@@ -380,6 +392,55 @@ export function loadSyncPanel(): SyncPanelPayload {
   };
 }
 
+// ── Channel Panel ──────────────────────────────────────────────────────────
+
+const CHANNEL_LOG_LIMIT = 120;
+const TIMESTAMP_PREFIX = /^\[?(\d{1,2}:\d{2}(?::\d{2})?)\]?\s*/;
+
+function parseChannelLogs(raw: string | null): ChannelLogLine[] {
+  if (!raw) return [];
+  const lines = raw.split("\n").map((l) => l.replace(/\u001b\[[0-9;]*m/g, "").trim()).filter(Boolean);
+  const parsed: ChannelLogLine[] = lines.map((line) => {
+    const match = line.match(TIMESTAMP_PREFIX);
+    if (match) {
+      return { t: match[1], m: line.slice(match[0].length) };
+    }
+    return { t: "", m: line };
+  });
+  return parsed.slice(-CHANNEL_LOG_LIMIT);
+}
+
+function parseAllowlist(raw: string): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+export function loadChannelPanel(): ChannelPanelPayload {
+  const running = isChannelRunning();
+  const status = running ? getChannelStatus() : null;
+  const rawLogs = running ? getChannelLogs() : null;
+  const logs = parseChannelLogs(rawLogs);
+
+  const token = resolveConfigValue("channel.discord.bot-token").value;
+  const allowlistRaw = resolveConfigValue("channel.discord.allowlist").value;
+  const autoStart = resolveConfigValue("channel.discord.enabled").value === "true";
+
+  return {
+    status: running ? "running" : "stopped",
+    platform: status?.platform ?? null,
+    session: status?.session ?? "",
+    startedAt: status?.startedAt ?? "",
+    uptimeSec: status?.uptime ?? 0,
+    autoStart,
+    tokenMasked: maskSecret(token),
+    allowlist: parseAllowlist(allowlistRaw),
+    logs,
+  };
+}
+
 // ── Action Triggers ────────────────────────────────────────────────────────
 
 export async function triggerTask(
@@ -538,6 +599,52 @@ export async function triggerSyncPush(): Promise<ActionResult> {
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+export async function triggerChannelStart(): Promise<ActionResult> {
+  try {
+    if (!isVaultInitialized()) {
+      return {
+        success: false,
+        error: "Vault is not initialized. Run `mink wiki init` first.",
+      };
+    }
+    const platform = (resolveConfigValue("channel.default-platform").value as ChannelPlatform) || "discord";
+    const token = resolveConfigValue("channel.discord.bot-token").value;
+    if (!token) {
+      return {
+        success: false,
+        error: "No bot token configured. Set channel.discord.bot-token first.",
+      };
+    }
+    const skipPermissions = resolveConfigValue("channel.skip-permissions").value === "true";
+    const vaultPath = resolveVaultPath();
+    await startChannelProcess({ vaultPath, platform, token, skipPermissions });
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function triggerChannelStop(): Promise<ActionResult> {
+  try {
+    await stopChannelProcess();
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function triggerChannelRestart(): Promise<ActionResult> {
+  const stop = await triggerChannelStop();
+  if (!stop.success) return stop;
+  return triggerChannelStart();
 }
 
 export async function triggerSyncDisconnect(): Promise<ActionResult> {
