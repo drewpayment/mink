@@ -14,6 +14,9 @@ import {
   triggerTask,
   triggerDeadLetterRetry,
   triggerRescan,
+  triggerDaemonStart,
+  triggerDaemonStop,
+  triggerDaemonRestart,
 } from "./dashboard-api";
 import { listRegisteredProjects, getProjectMeta } from "./project-registry";
 import { generateProjectId } from "./project-id";
@@ -490,6 +493,31 @@ export async function startDashboardServer(
               500
             );
           }
+        }
+
+        // Daemon controls — global (operate on ~/.mink/ PID file, not a
+        // project state directory). Use activeCwd so the spawned daemon
+        // inherits the currently-active project.
+        if (
+          pathname === "/api/daemon/start" ||
+          pathname === "/api/daemon/stop" ||
+          pathname === "/api/daemon/restart"
+        ) {
+          const action =
+            pathname === "/api/daemon/start"
+              ? triggerDaemonStart(activeCwd)
+              : pathname === "/api/daemon/stop"
+                ? triggerDaemonStop()
+                : triggerDaemonRestart(activeCwd);
+          return action.then((result) => {
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "daemon-status" as StateFileId,
+                timestamp: new Date().toISOString(),
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          });
         }
 
         // Resolve project cwd for POST actions

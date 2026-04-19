@@ -18,7 +18,8 @@ export type StateFileId =
   | "session"
   | "project-meta"
   | "design-report"
-  | "project-switched";
+  | "project-switched"
+  | "daemon-status";
 
 // ── SSE Event ──────────────────────────────────────────────────────────────
 

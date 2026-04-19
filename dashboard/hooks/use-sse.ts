@@ -117,6 +117,7 @@ function handleEvent(payload: { fileId?: string; type?: string; projectId?: stri
         .catch(console.warn);
       break;
     case "session":
+    case "daemon-status":
       fetchOverview(pid)
         .then((data) => {
           store.setOverview(data);

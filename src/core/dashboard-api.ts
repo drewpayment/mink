@@ -18,7 +18,7 @@ import { loadLedger } from "./token-ledger";
 import { parseLearningMemory } from "./learning-memory";
 import { loadBugMemory } from "./bug-memory";
 import { safeReadLog, parseLogSessions } from "./action-log";
-import { getDaemonStatus } from "./daemon";
+import { getDaemonStatus, startDaemon, stopDaemon } from "./daemon";
 import { loadManifest, removeFromDeadLetter, saveManifest } from "./scheduler";
 import { getBuiltInTasks, executeTask } from "./task-registry";
 import type {
@@ -270,6 +270,43 @@ export async function triggerRescan(cwd: string): Promise<ActionResult> {
   try {
     const { scan } = await import("../commands/scan");
     scan(cwd, { check: false });
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function triggerDaemonStart(cwd: string): Promise<ActionResult> {
+  try {
+    startDaemon(cwd);
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function triggerDaemonStop(): Promise<ActionResult> {
+  try {
+    await stopDaemon();
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function triggerDaemonRestart(cwd: string): Promise<ActionResult> {
+  try {
+    await stopDaemon();
+    startDaemon(cwd);
     return { success: true };
   } catch (err) {
     return {

@@ -1,8 +1,9 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
 import { startDashboardServer, type DashboardServer } from "../../src/core/dashboard-server";
+import { schedulerPidPath } from "../../src/core/paths";
 
 // We need a real state directory for the server to read from.
 // We'll mock project paths by creating a temp dir with state files.
@@ -131,6 +132,27 @@ describe("dashboard server", () => {
 
   test("unknown route returns 404", async () => {
     const res = await fetch(srv.url + "/api/nonexistent");
+    expect(res.status).toBe(404);
+  });
+
+  test("POST /api/daemon/stop is a no-op when no daemon is running", async () => {
+    // Guard: only run when no real daemon PID file exists, otherwise this
+    // test would interfere with the developer's actual running daemon.
+    if (existsSync(schedulerPidPath())) return;
+
+    const res = await fetch(srv.url + "/api/daemon/stop", { method: "POST" });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+
+    // Overview should reflect a non-running daemon.
+    const overviewRes = await fetch(srv.url + "/api/overview");
+    const overview = await overviewRes.json();
+    expect(overview.daemon.running).toBe(false);
+  });
+
+  test("POST /api/daemon/unknown returns 404", async () => {
+    const res = await fetch(srv.url + "/api/daemon/unknown", { method: "POST" });
     expect(res.status).toBe(404);
   });
 

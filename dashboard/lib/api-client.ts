@@ -73,3 +73,18 @@ export async function triggerRescan(projectId?: string): Promise<ActionResult> {
   const res = await fetch(`/api/rescan${query}`, { method: "POST" });
   return res.json();
 }
+
+export async function triggerDaemonStart(): Promise<ActionResult> {
+  const res = await fetch("/api/daemon/start", { method: "POST" });
+  return res.json();
+}
+
+export async function triggerDaemonStop(): Promise<ActionResult> {
+  const res = await fetch("/api/daemon/stop", { method: "POST" });
+  return res.json();
+}
+
+export async function triggerDaemonRestart(): Promise<ActionResult> {
+  const res = await fetch("/api/daemon/restart", { method: "POST" });
+  return res.json();
+}

@@ -1,24 +1,45 @@
 "use client";
 
+import { useState } from "react";
 import { useDashboardStore } from "@/hooks/use-dashboard-store";
-import { usePreferences } from "@/hooks/use-preferences";
 import { Card } from "@/components/ui/panel-card";
 import { Chip } from "@/components/ui/chip";
 import { Btn } from "@/components/ui/btn";
 import { Toggle } from "@/components/ui/toggle";
 import { formatUptime } from "@/lib/format";
+import {
+  triggerDaemonStart,
+  triggerDaemonStop,
+  triggerDaemonRestart,
+} from "@/lib/api-client";
 
 export function DaemonPanel() {
   const overview = useDashboardStore((s) => s.overview);
   const health = useDashboardStore((s) => s.health);
-  const daemonOverride = usePreferences((s) => s.daemonOverride);
-  const setDaemonOverride = usePreferences((s) => s.setDaemonOverride);
+  const [busy, setBusy] = useState<"start" | "stop" | "restart" | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const realOnline = overview?.daemon?.running ?? false;
-  const online =
-    daemonOverride === "online" ? true : daemonOverride === "offline" ? false : realOnline;
+  const online = overview?.daemon?.running ?? false;
   const pid = overview?.daemon?.pid;
   const uptime = online && health?.uptimeMs ? formatUptime(health.uptimeMs) : "—";
+
+  async function runAction(
+    kind: "start" | "stop" | "restart",
+    fn: () => Promise<{ success: boolean; error?: string }>,
+  ) {
+    setBusy(kind);
+    setError(null);
+    try {
+      const result = await fn();
+      if (!result.success) {
+        setError(result.error ?? `Failed to ${kind} daemon`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   return (
     <div className="page" style={{ maxWidth: 1100 }}>
@@ -26,7 +47,6 @@ export function DaemonPanel() {
         <div>
           <h1 className="page-title row tight">
             <span>Daemon</span>
-            <Chip tone="amber">preview</Chip>
           </h1>
           <p className="page-sub">Background process — runs scheduled tasks, listens for hook events, pushes live updates</p>
         </div>
@@ -35,23 +55,30 @@ export function DaemonPanel() {
             <Btn
               icon="stop"
               variant="danger"
-              onClick={() => setDaemonOverride("offline")}
-              title="Preview toggle — run `mink daemon stop` in terminal to actually stop"
+              disabled={busy !== null}
+              onClick={() => runAction("stop", triggerDaemonStop)}
             >
-              Stop daemon
+              {busy === "stop" ? "Stopping…" : "Stop daemon"}
             </Btn>
           ) : (
             <Btn
               icon="play"
               variant="primary"
-              onClick={() => setDaemonOverride("online")}
-              title="Preview toggle — run `mink daemon start` in terminal to actually start"
+              disabled={busy !== null}
+              onClick={() => runAction("start", triggerDaemonStart)}
             >
-              Start daemon
+              {busy === "start" ? "Starting…" : "Start daemon"}
             </Btn>
           )}
         </div>
       </div>
+
+      {error && (
+        <div className="kpi" style={{ marginBottom: 14, borderColor: "var(--danger, #c33)" }}>
+          <div className="label" style={{ color: "var(--danger, #c33)" }}>Error</div>
+          <div className="value" style={{ fontSize: 13 }}>{error}</div>
+        </div>
+      )}
 
       <div className="grid g-4" style={{ marginBottom: 14 }}>
         <div className="kpi">
@@ -101,7 +128,14 @@ export function DaemonPanel() {
             </div>
             <div className="divider" />
             <div className="row tight" style={{ flexWrap: "wrap" }}>
-              <Btn size="sm" icon="refresh" disabled>Restart</Btn>
+              <Btn
+                size="sm"
+                icon="refresh"
+                disabled={busy !== null || !online}
+                onClick={() => runAction("restart", triggerDaemonRestart)}
+              >
+                {busy === "restart" ? "Restarting…" : "Restart"}
+              </Btn>
               <Btn size="sm" variant="ghost" icon="eye" disabled>Open log file</Btn>
               <Btn size="sm" variant="ghost" icon="download" disabled>Dump state</Btn>
             </div>

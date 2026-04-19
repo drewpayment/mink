@@ -5472,6 +5472,40 @@ async function triggerRescan(cwd) {
     };
   }
 }
+async function triggerDaemonStart(cwd) {
+  try {
+    startDaemon(cwd);
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+async function triggerDaemonStop() {
+  try {
+    await stopDaemon();
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+async function triggerDaemonRestart(cwd) {
+  try {
+    await stopDaemon();
+    startDaemon(cwd);
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
 var init_dashboard_api = __esm(() => {
   init_paths();
   init_fs_utils();
@@ -6001,6 +6035,18 @@ retry: 3000
           } catch (err) {
             return jsonResponse({ success: false, error: err instanceof Error ? err.message : String(err) }, 500);
           }
+        }
+        if (pathname === "/api/daemon/start" || pathname === "/api/daemon/stop" || pathname === "/api/daemon/restart") {
+          const action = pathname === "/api/daemon/start" ? triggerDaemonStart(activeCwd) : pathname === "/api/daemon/stop" ? triggerDaemonStop() : triggerDaemonRestart(activeCwd);
+          return action.then((result) => {
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "daemon-status",
+                timestamp: new Date().toISOString()
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          });
         }
         const resolvedCwd = resolveProjectCwd(url, activeCwd);
         if (resolvedCwd === null) {
@@ -71213,7 +71259,7 @@ var require_ffi_WASM_RELEASE_SYNC = __commonJS((exports) => {
 
 // node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js
 var require_emscripten_module_WASM_RELEASE_SYNC = __commonJS((exports, module) => {
-  var __dirname = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
+  var __dirname = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
   var QuickJSRaw = (() => {
     var _scriptDir = typeof document !== "undefined" && document.currentScript ? document.currentScript.src : undefined;
     if (typeof __filename !== "undefined")
