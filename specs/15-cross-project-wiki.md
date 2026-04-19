@@ -58,6 +58,37 @@ Over time, the wiki should enable:
 2. **Convention comparison** — Compare how different projects handle the same concern (e.g., error handling, auth, testing).
 3. **Bug pattern recognition** — Identify recurring bugs across projects (e.g., null checks, timeout handling).
 
+### Wiki Dashboard Surface
+
+The dashboard (spec 12) must be able to read from and write to the wiki through well-defined operations. All operations are global — they act on the single user-level vault, not on any one project.
+
+#### Reads
+
+1. **Vault summary** — Total note count, count of notes under `inbox/`, and the resolved vault path.
+2. **Recent notes** — Most recently modified notes, with title, path, tags, category, and a display timestamp. Pageable.
+3. **Tree** — The vault's top-level directory structure with a per-folder note count. Depth is bounded to keep the listing navigable.
+4. **Tags** — All tags across the vault with their frequencies, ordered by frequency descending.
+5. **Note body** — For a given note path, the raw markdown body, parsed frontmatter, and the list of inbound wikilinks (backlinks).
+6. **Search** — Substring match against titles, tags, and body with bounded result count.
+
+Category-based filtering must be supported on the recent-notes list.
+
+#### Writes
+
+1. **Quick capture** — Given free text, Mink classifies the category and tags and creates a new note in the appropriate folder. Returns the resulting note path.
+2. **Structured capture** — Given explicit title, category, tags, and body, create a new note in the named category folder. Returns the resulting note path.
+3. **Append to daily** — Append text to today's daily journal entry, creating the entry if it does not yet exist. Returns the entry's path.
+4. **Ingest file** — Given the path of an existing external file and a target category, copy or move its contents into the vault as a new note. Returns the resulting note path.
+
+Every write operation must:
+
+1. Update the vault index so subsequent reads reflect the new or changed note.
+2. Trigger the wiki-dashboard live-update event so open dashboard sessions refresh within 2 seconds.
+3. If git backup is enabled, participate in the sync flow described earlier in this spec.
+4. Return the new note's path and metadata in the response.
+
+Write actions must be idempotent enough that a retry after a network error does not create a duplicate note when the client replays an identical request.
+
 ### Configuration
 
 Mink maintains a global configuration directory at `~/.mink/` for user-level settings that span all projects.
@@ -197,6 +228,42 @@ GIVEN the user runs "mink config --reset wiki.path"
 WHEN the command completes
 THEN the wiki.path setting is removed from config
 AND subsequent operations use the default path ~/.mink/wiki/
+
+GIVEN the vault contains 214 notes across inbox, projects, patterns, and resources
+WHEN the wiki dashboard surface is queried for a summary
+THEN the response reports 214 total notes
+AND the count of inbox notes matches the actual inbox folder
+AND the resolved vault path is returned
+
+GIVEN the vault's recent notes list is queried with category = "pattern"
+WHEN the response is returned
+THEN only notes whose category is "pattern" are included
+AND each entry carries title, path, tags, category, and timestamp
+
+GIVEN the wiki dashboard surface receives a quick-capture request with free text
+WHEN the request completes
+THEN a new note exists under the appropriate category folder
+AND the response returns the note's path
+AND the wiki-index live-update event fires
+
+GIVEN the wiki dashboard surface receives a daily-append request
+WHEN today's daily entry does not yet exist
+THEN the entry is created with the appended text
+AND subsequent append requests extend the same entry
+
+GIVEN the wiki dashboard surface receives an ingest-file request for a non-existent source
+WHEN the request is processed
+THEN the response is a clear "source not found" error
+AND no note is created
+
+GIVEN a note path is requested for body plus backlinks
+WHEN the response is returned
+THEN the raw markdown body is included
+AND every page that links to the requested note is listed as a backlink
+
+GIVEN two identical capture requests arrive in rapid succession with the same deduplication marker
+WHEN both are processed
+THEN only one note is created
 ```
 
 ## Edge Cases
@@ -212,6 +279,10 @@ AND subsequent operations use the default path ~/.mink/wiki/
 - Git backup push times out (>10 seconds) — abort the push, preserve local commit, warn the user.
 - `~/.mink/config` file is corrupted — fall back to defaults for all settings, warn the user, do not overwrite the corrupted file (let them inspect it).
 - Cross-project pattern detection finds false similarities — threshold for similarity should be conservative; better to miss a pattern than create noise.
+- Dashboard capture while wiki is disabled — capture requests must fail fast with a clear "wiki disabled" error, not silently no-op.
+- Dashboard requests a note body for a path outside the vault — refuse with a clear error; never serve files from outside the vault root.
+- Concurrent captures from the dashboard and a companion channel — both succeed and produce distinct notes; neither corrupts the vault index.
+- Very large vault (5000+ notes) — summary and tree queries must remain responsive; body reads remain O(1) relative to vault size.
 
 ## Test Requirements
 
@@ -238,6 +309,9 @@ AND subsequent operations use the default path ~/.mink/wiki/
 - Git backup with remote conflict → push skipped, user warned, local commit preserved.
 - Git backup with network failure → local commit preserved, warning emitted, no hang.
 - `~/.mink/` directory creation on first config write.
+- Dashboard surface: summary, recent notes, tree, tags, and body reads all return consistent data for a seeded vault.
+- Dashboard surface: quick-capture, structured-capture, daily-append, and ingest-file writes each produce the expected note and emit the live-update event.
+- Dashboard surface: path traversal outside the vault root is refused.
 
 ### Edge Cases
 
