@@ -19,7 +19,8 @@ export type StateFileId =
   | "project-meta"
   | "design-report"
   | "project-switched"
-  | "daemon-status";
+  | "daemon-status"
+  | "config-changed";
 
 // ── SSE Event ──────────────────────────────────────────────────────────────
 
@@ -102,4 +103,22 @@ export interface DesignImagePayload {
 
 export interface DesignPayload {
   images: DesignImagePayload[];
+}
+
+export type ConfigValueSource = "default" | "shared" | "local" | "env";
+export type ConfigValueType = "string" | "boolean" | "number";
+
+export interface ConfigEntry {
+  key: string;
+  value: string;
+  source: ConfigValueSource;
+  type: ConfigValueType;
+  group: string;
+  scope: "shared" | "local";
+  description: string;
+  isSecret: boolean;
+}
+
+export interface ConfigPanelPayload {
+  entries: ConfigEntry[];
 }

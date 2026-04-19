@@ -5275,6 +5275,16 @@ var init_design_eval = __esm(() => {
 
 // src/core/dashboard-api.ts
 import { existsSync as existsSync15, readFileSync as readFileSync18 } from "fs";
+function isSecretKey(key) {
+  return SECRET_KEY_PATTERNS.some((re) => re.test(key));
+}
+function maskSecret(value, showLast = 4) {
+  if (!value)
+    return "";
+  if (value.length <= showLast)
+    return "••••";
+  return "••••" + value.slice(-showLast);
+}
 function checkJsonFile2(name, filePath, validator) {
   if (!existsSync15(filePath))
     return { name, status: "missing" };
@@ -5423,6 +5433,44 @@ function loadDesignPanel(cwd) {
     }))
   };
 }
+function groupFromKey(key) {
+  const prefix = key.split(".")[0] ?? "other";
+  return GROUP_LABELS[prefix] ?? prefix.charAt(0).toUpperCase() + prefix.slice(1);
+}
+function inferType(defaultValue, currentValue) {
+  const candidate = currentValue || defaultValue;
+  if (BOOLEAN_VALUES.has(candidate))
+    return "boolean";
+  if (candidate !== "" && !Number.isNaN(Number(candidate)) && /^-?\d+(\.\d+)?$/.test(candidate)) {
+    return "number";
+  }
+  return "string";
+}
+function mapSource(source, scope) {
+  if (source === "environment variable")
+    return "env";
+  if (source === "default")
+    return "default";
+  return scope;
+}
+function loadConfigPanel() {
+  const resolved = resolveAllConfig();
+  const entries = resolved.map((r) => {
+    const meta = CONFIG_KEYS.find((k) => k.key === r.key);
+    const isSecret = isSecretKey(r.key);
+    return {
+      key: r.key,
+      value: isSecret ? maskSecret(r.value) : r.value,
+      source: mapSource(r.source, r.scope),
+      type: inferType(meta.default, r.value),
+      group: groupFromKey(r.key),
+      scope: r.scope,
+      description: meta.description,
+      isSecret
+    };
+  });
+  return { entries };
+}
 async function triggerTask(cwd, taskId) {
   try {
     await executeTask(taskId, cwd);
@@ -5506,6 +5554,45 @@ async function triggerDaemonRestart(cwd) {
     };
   }
 }
+async function triggerConfigSet(key, value) {
+  try {
+    if (!isValidConfigKey(key)) {
+      return { success: false, error: `Unknown config key: ${key}` };
+    }
+    if (typeof value !== "string") {
+      return { success: false, error: "Config value must be a string" };
+    }
+    setConfigValue(key, value);
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+async function triggerConfigReset(key, all) {
+  try {
+    if (all) {
+      resetAllConfig();
+      return { success: true };
+    }
+    if (!key) {
+      return { success: false, error: "Missing key (or set all: true)" };
+    }
+    if (!isValidConfigKey(key)) {
+      return { success: false, error: `Unknown config key: ${key}` };
+    }
+    resetConfigKey(key);
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
+var SECRET_KEY_PATTERNS, BOOLEAN_VALUES, GROUP_LABELS;
 var init_dashboard_api = __esm(() => {
   init_paths();
   init_fs_utils();
@@ -5516,7 +5603,17 @@ var init_dashboard_api = __esm(() => {
   init_daemon();
   init_scheduler();
   init_task_registry();
+  init_global_config();
+  init_config();
   init_design_eval();
+  SECRET_KEY_PATTERNS = [/token/i, /secret/i, /password/i, /api[-_]?key/i];
+  BOOLEAN_VALUES = new Set(["true", "false"]);
+  GROUP_LABELS = {
+    wiki: "Wiki",
+    notes: "Notes",
+    sync: "Sync",
+    channel: "Channels"
+  };
 });
 
 // src/core/project-registry.ts
@@ -5971,6 +6068,13 @@ retry: 3000
         if (pathname === "/api/projects") {
           return jsonResponse(getProjectsList(cwd, activeCwd));
         }
+        if (pathname === "/api/config") {
+          try {
+            return jsonResponse(loadConfigPanel());
+          } catch (err) {
+            return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);
+          }
+        }
         const resolvedCwd = resolveProjectCwd(url, activeCwd);
         if (resolvedCwd === null) {
           return jsonResponse({ error: "Project not found" }, 404);
@@ -6032,6 +6136,39 @@ retry: 3000
               timestamp: new Date().toISOString()
             });
             return jsonResponse({ success: true });
+          } catch (err) {
+            return jsonResponse({ success: false, error: err instanceof Error ? err.message : String(err) }, 500);
+          }
+        }
+        if (pathname === "/api/config/set") {
+          try {
+            const body = await req.json();
+            if (!body.key || typeof body.value !== "string") {
+              return jsonResponse({ success: false, error: "Missing key or value" }, 400);
+            }
+            const result = await triggerConfigSet(body.key, body.value);
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "config-changed",
+                timestamp: new Date().toISOString()
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          } catch (err) {
+            return jsonResponse({ success: false, error: err instanceof Error ? err.message : String(err) }, 500);
+          }
+        }
+        if (pathname === "/api/config/reset") {
+          try {
+            const body = await req.json();
+            const result = await triggerConfigReset(body.key, body.all);
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "config-changed",
+                timestamp: new Date().toISOString()
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
           } catch (err) {
             return jsonResponse({ success: false, error: err instanceof Error ? err.message : String(err) }, 500);
           }

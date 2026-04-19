@@ -1,4 +1,4 @@
-import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, SchedulerPayload, BugLogPayload, ActionLogPayload, ActionResult, DesignPayload } from "@mink/types/dashboard";
+import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, SchedulerPayload, BugLogPayload, ActionLogPayload, ActionResult, DesignPayload, ConfigPanelPayload } from "@mink/types/dashboard";
 import type { LearningMemory } from "@mink/types/learning-memory";
 import type { ProjectsResponse } from "@/types/project";
 
@@ -86,5 +86,27 @@ export async function triggerDaemonStop(): Promise<ActionResult> {
 
 export async function triggerDaemonRestart(): Promise<ActionResult> {
   const res = await fetch("/api/daemon/restart", { method: "POST" });
+  return res.json();
+}
+
+export function fetchConfig() {
+  return fetchApi<ConfigPanelPayload>("/api/config");
+}
+
+export async function setConfigValue(key: string, value: string): Promise<ActionResult> {
+  const res = await fetch("/api/config/set", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, value }),
+  });
+  return res.json();
+}
+
+export async function resetConfigKey(key?: string, all?: boolean): Promise<ActionResult> {
+  const res = await fetch("/api/config/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, all }),
+  });
   return res.json();
 }

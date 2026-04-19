@@ -21,6 +21,14 @@ import { safeReadLog, parseLogSessions } from "./action-log";
 import { getDaemonStatus, startDaemon, stopDaemon } from "./daemon";
 import { loadManifest, removeFromDeadLetter, saveManifest } from "./scheduler";
 import { getBuiltInTasks, executeTask } from "./task-registry";
+import {
+  resolveAllConfig,
+  setConfigValue,
+  resetConfigKey,
+  resetAllConfig,
+} from "./global-config";
+import { isValidConfigKey, CONFIG_KEYS } from "../types/config";
+import type { ConfigKey } from "../types/config";
 import type {
   OverviewPayload,
   TokenLedgerPayload,
@@ -31,11 +39,29 @@ import type {
   ActionResult,
   FileStatus,
   DesignPayload,
+  ConfigPanelPayload,
+  ConfigEntry,
+  ConfigValueSource,
+  ConfigValueType,
 } from "../types/dashboard";
 import { isDesignEvalReport } from "../types/design-eval";
 import type { DesignEvalReport } from "../types/design-eval";
 import type { FileIndex, FileIndexEntry } from "../types/file-index";
 import type { LearningMemory } from "../types/learning-memory";
+
+// ── Secret Masking ─────────────────────────────────────────────────────────
+
+const SECRET_KEY_PATTERNS = [/token/i, /secret/i, /password/i, /api[-_]?key/i];
+
+export function isSecretKey(key: string): boolean {
+  return SECRET_KEY_PATTERNS.some((re) => re.test(key));
+}
+
+export function maskSecret(value: string, showLast: number = 4): string {
+  if (!value) return "";
+  if (value.length <= showLast) return "••••";
+  return "••••" + value.slice(-showLast);
+}
 
 // ── File Status Checks ─────────────────────────────────────────────────────
 
@@ -215,6 +241,60 @@ export function loadDesignPanel(cwd: string): DesignPayload {
   };
 }
 
+// ── Config Panel ───────────────────────────────────────────────────────────
+
+const BOOLEAN_VALUES = new Set(["true", "false"]);
+const GROUP_LABELS: Record<string, string> = {
+  wiki: "Wiki",
+  notes: "Notes",
+  sync: "Sync",
+  channel: "Channels",
+};
+
+function groupFromKey(key: string): string {
+  const prefix = key.split(".")[0] ?? "other";
+  return GROUP_LABELS[prefix] ?? prefix.charAt(0).toUpperCase() + prefix.slice(1);
+}
+
+function inferType(defaultValue: string, currentValue: string): ConfigValueType {
+  const candidate = currentValue || defaultValue;
+  if (BOOLEAN_VALUES.has(candidate)) return "boolean";
+  if (candidate !== "" && !Number.isNaN(Number(candidate)) && /^-?\d+(\.\d+)?$/.test(candidate)) {
+    return "number";
+  }
+  return "string";
+}
+
+function mapSource(
+  source: "default" | "config file" | "environment variable",
+  scope: "shared" | "local",
+): ConfigValueSource {
+  if (source === "environment variable") return "env";
+  if (source === "default") return "default";
+  return scope;
+}
+
+export function loadConfigPanel(): ConfigPanelPayload {
+  const resolved = resolveAllConfig();
+
+  const entries: ConfigEntry[] = resolved.map((r) => {
+    const meta = CONFIG_KEYS.find((k) => k.key === r.key)!;
+    const isSecret = isSecretKey(r.key);
+    return {
+      key: r.key,
+      value: isSecret ? maskSecret(r.value) : r.value,
+      source: mapSource(r.source, r.scope),
+      type: inferType(meta.default, r.value),
+      group: groupFromKey(r.key),
+      scope: r.scope,
+      description: meta.description,
+      isSecret,
+    };
+  });
+
+  return { entries };
+}
+
 // ── Action Triggers ────────────────────────────────────────────────────────
 
 export async function triggerTask(
@@ -307,6 +387,52 @@ export async function triggerDaemonRestart(cwd: string): Promise<ActionResult> {
   try {
     await stopDaemon();
     startDaemon(cwd);
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function triggerConfigSet(
+  key: string,
+  value: string,
+): Promise<ActionResult> {
+  try {
+    if (!isValidConfigKey(key)) {
+      return { success: false, error: `Unknown config key: ${key}` };
+    }
+    if (typeof value !== "string") {
+      return { success: false, error: "Config value must be a string" };
+    }
+    setConfigValue(key as ConfigKey, value);
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function triggerConfigReset(
+  key?: string,
+  all?: boolean,
+): Promise<ActionResult> {
+  try {
+    if (all) {
+      resetAllConfig();
+      return { success: true };
+    }
+    if (!key) {
+      return { success: false, error: "Missing key (or set all: true)" };
+    }
+    if (!isValidConfigKey(key)) {
+      return { success: false, error: `Unknown config key: ${key}` };
+    }
+    resetConfigKey(key as ConfigKey);
     return { success: true };
   } catch (err) {
     return {

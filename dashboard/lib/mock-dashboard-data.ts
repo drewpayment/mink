@@ -28,12 +28,6 @@ export interface MockDiscordLog {
   m: string;
 }
 
-export interface MockConfigEntry {
-  key: string;
-  value: string | boolean | number;
-  group: string;
-}
-
 export const MOCK_NOTES = {
   totalNotes: 214,
   inbox: 3,
@@ -81,20 +75,3 @@ export const MOCK_SYNC = {
   ] as MockSyncPending[],
 };
 
-export const MOCK_CONFIG: MockConfigEntry[] = [
-  { group: "Wiki",      key: "wiki.path",                value: "~/.mink/wiki" },
-  { group: "Wiki",      key: "wiki.enabled",             value: true },
-  { group: "Notes",     key: "notes.template",           value: "project" },
-  { group: "Notes",     key: "notes.auto-tag",           value: true },
-  { group: "Sync",      key: "sync.auto-pull",           value: true },
-  { group: "Sync",      key: "sync.auto-push",           value: true },
-  { group: "Sync",      key: "sync.timeout-ms",          value: 15000 },
-  { group: "Channels",  key: "channel.discord.enabled",  value: true },
-  { group: "Channels",  key: "channel.skip-permissions", value: false },
-  { group: "Daemon",    key: "daemon.heartbeat-seconds", value: 5 },
-  { group: "Daemon",    key: "daemon.auto-restart",      value: true },
-  { group: "Daemon",    key: "daemon.boot-on-login",     value: false },
-  { group: "Dashboard", key: "dashboard.port",           value: 4040 },
-  { group: "Logging",   key: "log.level",                value: "info" },
-  { group: "Runtime",   key: "runtime.prefer-bun",       value: true },
-];

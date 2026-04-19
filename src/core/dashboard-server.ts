@@ -17,6 +17,9 @@ import {
   triggerDaemonStart,
   triggerDaemonStop,
   triggerDaemonRestart,
+  loadConfigPanel,
+  triggerConfigSet,
+  triggerConfigReset,
 } from "./dashboard-api";
 import { listRegisteredProjects, getProjectMeta } from "./project-registry";
 import { generateProjectId } from "./project-id";
@@ -413,6 +416,18 @@ export async function startDashboardServer(
           return jsonResponse(getProjectsList(cwd, activeCwd));
         }
 
+        // GET /api/config — global config (no project scoping)
+        if (pathname === "/api/config") {
+          try {
+            return jsonResponse(loadConfigPanel());
+          } catch (err) {
+            return jsonResponse(
+              { error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
         // Resolve project cwd from ?project=<id> query param
         const resolvedCwd = resolveProjectCwd(url, activeCwd);
         if (resolvedCwd === null) {
@@ -491,6 +506,55 @@ export async function startDashboardServer(
             return jsonResponse(
               { success: false, error: err instanceof Error ? err.message : String(err) },
               500
+            );
+          }
+        }
+
+        // POST /api/config/set — write a config value
+        if (pathname === "/api/config/set") {
+          try {
+            const body = (await req.json()) as {
+              key?: string;
+              value?: string;
+            };
+            if (!body.key || typeof body.value !== "string") {
+              return jsonResponse(
+                { success: false, error: "Missing key or value" },
+                400,
+              );
+            }
+            const result = await triggerConfigSet(body.key, body.value);
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "config-changed" as StateFileId,
+                timestamp: new Date().toISOString(),
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          } catch (err) {
+            return jsonResponse(
+              { success: false, error: err instanceof Error ? err.message : String(err) },
+              500,
+            );
+          }
+        }
+
+        // POST /api/config/reset — clear one key (or all)
+        if (pathname === "/api/config/reset") {
+          try {
+            const body = (await req.json()) as { key?: string; all?: boolean };
+            const result = await triggerConfigReset(body.key, body.all);
+            if (result.success) {
+              sseManager.broadcast({
+                fileId: "config-changed" as StateFileId,
+                timestamp: new Date().toISOString(),
+              });
+            }
+            return jsonResponse(result, result.success ? 200 : 500);
+          } catch (err) {
+            return jsonResponse(
+              { success: false, error: err instanceof Error ? err.message : String(err) },
+              500,
             );
           }
         }

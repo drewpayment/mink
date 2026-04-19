@@ -156,6 +156,45 @@ describe("dashboard server", () => {
     expect(res.status).toBe(404);
   });
 
+  test("GET /api/config returns grouped entries with source chips", async () => {
+    const res = await fetch(srv.url + "/api/config");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data.entries)).toBe(true);
+    expect(data.entries.length).toBeGreaterThan(0);
+    const entry = data.entries[0];
+    expect(typeof entry.key).toBe("string");
+    expect(typeof entry.value).toBe("string");
+    expect(["default", "shared", "local", "env"]).toContain(entry.source);
+    expect(["string", "boolean", "number"]).toContain(entry.type);
+    expect(typeof entry.isSecret).toBe("boolean");
+    // Bot token must be masked in the response
+    const token = data.entries.find((e: { key: string }) => e.key === "channel.discord.bot-token");
+    expect(token?.isSecret).toBe(true);
+    expect(token?.value.includes(" ") || token?.value === "" || token?.value.startsWith("••••")).toBe(true);
+  });
+
+  test("POST /api/config/set rejects unknown keys", async () => {
+    const res = await fetch(srv.url + "/api/config/set", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "unknown.key", value: "x" }),
+    });
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+    expect(data.error).toContain("Unknown");
+  });
+
+  test("POST /api/config/set rejects missing fields", async () => {
+    const res = await fetch(srv.url + "/api/config/set", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "wiki.enabled" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   test("SSE endpoint is accessible", async () => {
     // Use AbortController to avoid hanging on the streaming response
     const controller = new AbortController();
