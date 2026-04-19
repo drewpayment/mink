@@ -1,84 +1,115 @@
 "use client";
 
+import { useState } from "react";
 import { useDashboardStore } from "@/hooks/use-dashboard-store";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Brain } from "lucide-react";
+import { Card } from "@/components/ui/panel-card";
+import { Btn } from "@/components/ui/btn";
+import { Icon } from "@/components/ui/icon";
+import type { SectionName } from "@mink/types/learning-memory";
 
-const SECTION_CONFIG = [
-  { key: "User Preferences" as const, label: "User Preferences" },
-  { key: "Key Learnings" as const, label: "Key Learnings" },
-  { key: "Do-Not-Repeat" as const, label: "Do-Not-Repeat" },
-  { key: "Decision Log" as const, label: "Decision Log" },
+interface SectionDef {
+  key: SectionName;
+  tabLabel: string;
+  title: string;
+  sub: string;
+}
+
+const SECTIONS: SectionDef[] = [
+  { key: "User Preferences", tabLabel: "Preferences",   title: "Preferences",    sub: "How the human likes to work" },
+  { key: "Key Learnings",    tabLabel: "Learnings",     title: "Learnings",      sub: "Facts discovered this project" },
+  { key: "Do-Not-Repeat",    tabLabel: "Do-not-repeat", title: "Do-not-repeat",  sub: "Mistakes already corrected" },
+  { key: "Decision Log",     tabLabel: "Decisions",     title: "Decision log",   sub: "Committed project decisions" },
 ];
 
 export function LearningPanel() {
-  const learningMemory = useDashboardStore((s) => s.learningMemory);
+  const learning = useDashboardStore((s) => s.learningMemory);
+  const [active, setActive] = useState<SectionName>("User Preferences");
 
-  if (!learningMemory) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-48" />
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-16" />
-        ))}
-      </div>
-    );
-  }
-
-  const sections = learningMemory.sections ?? {};
+  const sections = learning?.sections ?? ({} as Record<SectionName, string[]>);
+  const current = SECTIONS.find((s) => s.key === active) ?? SECTIONS[0];
+  const items = sections[current.key] ?? [];
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Brain className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm font-medium">
-          {learningMemory.projectName || "Unknown Project"}
-        </span>
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Learning memory</h1>
+          <p className="page-sub">
+            4-section knowledge store · {learning?.projectName || "—"}
+          </p>
+        </div>
+        <div className="page-actions">
+          <Btn icon="plus" variant="primary" disabled title="Write endpoint coming soon">Add rule</Btn>
+        </div>
       </div>
 
-      <Accordion type="multiple" defaultValue={SECTION_CONFIG.map((s) => s.key)}>
-        {SECTION_CONFIG.map((section) => {
-          const items = sections[section.key] ?? [];
+      <div className="grid g-4" style={{ marginBottom: 14 }}>
+        {SECTIONS.map((s) => {
+          const count = (sections[s.key] ?? []).length;
           return (
-            <AccordionItem key={section.key} value={section.key}>
-              <AccordionTrigger className="text-sm">
-                <div className="flex items-center gap-2">
-                  {section.label}
-                  <Badge variant="secondary" className="text-[10px]">
-                    {items.length}
-                  </Badge>
-                </div>
-              </AccordionTrigger>
-              <AccordionContent>
-                {items.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-2">
-                    No entries yet
-                  </p>
-                ) : (
-                  <ul className="space-y-1">
-                    {items.map((item, i) => (
-                      <li
-                        key={i}
-                        className="text-sm py-1 border-b border-border/50 last:border-0"
-                      >
-                        {item}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </AccordionContent>
-            </AccordionItem>
+            <button
+              key={s.key}
+              type="button"
+              className="kpi"
+              style={{ cursor: "pointer", borderColor: active === s.key ? "var(--accent)" : undefined, textAlign: "left" }}
+              onClick={() => setActive(s.key)}
+            >
+              <div className="label">{s.title}</div>
+              <div className="value mono">{count}</div>
+              <div className="delta">{s.sub}</div>
+            </button>
           );
         })}
-      </Accordion>
+      </div>
+
+      <Card
+        title={current.title}
+        sub={current.sub}
+        tools={
+          <div className="row tight">
+            <Btn size="sm" icon="search" variant="ghost" disabled>Search</Btn>
+            <Btn size="sm" icon="download" variant="ghost" disabled>Export</Btn>
+          </div>
+        }
+        flush
+      >
+        {items.length === 0 ? (
+          <div className="empty">
+            <h4>No entries yet</h4>
+            <span>rules will appear here as Claude learns from your sessions.</span>
+          </div>
+        ) : (
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Rule</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((rule, i) => (
+                <tr key={`${current.key}-${i}`}>
+                  <td className="mono muted" style={{ width: 40 }}>{i + 1}</td>
+                  <td>{rule}</td>
+                  <td className="right">
+                    <div className="row tight" style={{ justifyContent: "flex-end" }}>
+                      <button
+                        type="button"
+                        className="tb-icon-btn"
+                        aria-label="Preview rule"
+                        title="Preview"
+                      >
+                        <Icon name="eye" size={12} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
     </div>
   );
 }

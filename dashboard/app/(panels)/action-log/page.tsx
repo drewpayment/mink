@@ -1,7 +1,12 @@
 "use client";
 
-import { ActionLogPanel } from "@/components/panels/action-log-panel";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 export default function ActionLogPage() {
-  return <ActionLogPanel />;
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/activity");
+  }, [router]);
+  return null;
 }
