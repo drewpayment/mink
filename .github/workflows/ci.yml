@@ -19,5 +19,11 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      - name: Build dashboard
+        run: |
+          cd dashboard
+          bun install --frozen-lockfile
+          bun run build
+
       - name: Test
         run: bun test

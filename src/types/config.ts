@@ -11,6 +11,7 @@ export interface GlobalConfig {
   "sync.last-pull"?: string;
   "channel.discord.bot-token"?: string;
   "channel.discord.enabled"?: string;
+  "channel.discord.allowlist"?: string;
   "channel.default-platform"?: string;
   "channel.skip-permissions"?: string;
 }
@@ -42,7 +43,7 @@ export interface DeviceRegistry {
 export const CONFIG_KEYS: ConfigKeyMeta[] = [
   {
     key: "wiki.path",
-    default: "~/.mink/wiki/",
+    default: "~/.mink/wiki",
     envVar: "MINK_WIKI_PATH",
     description: "Wiki vault location",
     scope: "local",
@@ -122,6 +123,13 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     default: "false",
     envVar: "MINK_CHANNEL_DISCORD_ENABLED",
     description: "Auto-start Discord channel when daemon starts",
+    scope: "local",
+  },
+  {
+    key: "channel.discord.allowlist",
+    default: "",
+    envVar: "MINK_CHANNEL_DISCORD_ALLOWLIST",
+    description: "Comma-separated list of Discord user IDs permitted to DM the bot",
     scope: "local",
   },
   {

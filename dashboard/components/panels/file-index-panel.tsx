@@ -1,164 +1,198 @@
 "use client";
 
-import { useState, useMemo, useRef, useCallback } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useMemo, useState } from "react";
 import { useDashboardStore } from "@/hooks/use-dashboard-store";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
-import { formatNum, formatDateTime } from "@/lib/format";
-import { FolderOpen, Search } from "lucide-react";
+import { Card } from "@/components/ui/panel-card";
+import { Chip } from "@/components/ui/chip";
+import { Btn } from "@/components/ui/btn";
+import { Icon } from "@/components/ui/icon";
+import { triggerRescan } from "@/lib/api-client";
+import { formatDateTime, formatNum } from "@/lib/format";
 import type { FileIndexEntry } from "@mink/types/file-index";
+
+function ageStatus(iso: string): "hot" | "fresh" | "stale" | "cold" {
+  const t = new Date(iso).getTime();
+  if (!t) return "cold";
+  const delta = Date.now() - t;
+  const h = delta / (1000 * 60 * 60);
+  if (h < 1) return "hot";
+  if (h < 24) return "fresh";
+  if (h < 24 * 14) return "stale";
+  return "cold";
+}
+
+function ageLabel(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!t) return "—";
+  const delta = Date.now() - t;
+  const h = delta / (1000 * 60 * 60);
+  if (h < 1) return `${Math.round(delta / 60_000)}m`;
+  if (h < 24) return `${Math.round(h)}h`;
+  return `${Math.round(h / 24)}d`;
+}
+
+function sizeLabel(tokens: number): string {
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k tok`;
+  return `${tokens} tok`;
+}
+
+function toneFor(s: "hot" | "fresh" | "stale" | "cold"): "accent" | "" | "amber" | "red" {
+  return s === "hot" ? "accent" : s === "fresh" ? "" : s === "stale" ? "amber" : "red";
+}
 
 export function FileIndexPanel() {
   const fileIndex = useDashboardStore((s) => s.fileIndex);
+  const activeProjectId = useDashboardStore((s) => s.activeProjectId);
   const [query, setQuery] = useState("");
-  const [dirFilter, setDirFilter] = useState("");
-  const parentRef = useRef<HTMLDivElement>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [rescanning, setRescanning] = useState(false);
 
-  const searchFields = useCallback(
-    (item: FileIndexEntry) => [item.filePath, item.description],
-    []
-  );
-
-  const entries = fileIndex?.entries ?? [];
-
-  const directories = useMemo(() => {
-    const dirs = new Set<string>();
-    for (const entry of entries) {
-      const parts = entry.filePath.split("/");
-      if (parts.length > 1) {
-        dirs.add(parts.slice(0, -1).join("/"));
-      }
-    }
-    return Array.from(dirs).sort();
-  }, [entries]);
+  const entries = useMemo<FileIndexEntry[]>(() => {
+    const raw = fileIndex?.entries as unknown;
+    if (Array.isArray(raw)) return raw as FileIndexEntry[];
+    if (raw && typeof raw === "object") return Object.values(raw as Record<string, FileIndexEntry>);
+    return [];
+  }, [fileIndex]);
 
   const filtered = useMemo(() => {
-    let result = entries;
-    if (dirFilter) {
-      result = result.filter((e) => e.filePath.startsWith(dirFilter + "/") || e.filePath.startsWith(dirFilter));
-    }
-    if (query.trim()) {
-      const lower = query.toLowerCase();
-      result = result.filter((item) =>
-        searchFields(item).some((field) => field.toLowerCase().includes(lower))
-      );
-    }
-    return result;
-  }, [entries, query, dirFilter, searchFields]);
-
-  const virtualizer = useVirtualizer({
-    count: filtered.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 72,
-    overscan: 10,
-  });
-
-  if (!fileIndex) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-10" />
-        <Skeleton className="h-96" />
-      </div>
+    if (!query) return entries;
+    const q = query.toLowerCase();
+    return entries.filter(
+      (f) => f.filePath.toLowerCase().includes(q) || (f.description ?? "").toLowerCase().includes(q),
     );
+  }, [entries, query]);
+
+  const current = entries.find((f) => f.filePath === (selected ?? filtered[0]?.filePath));
+
+  async function doRescan() {
+    setRescanning(true);
+    try {
+      await triggerRescan(activeProjectId ?? undefined);
+    } finally {
+      setRescanning(false);
+    }
   }
 
-  const header = fileIndex.header;
-  const hitRate =
-    (header.lifetimeHits + header.lifetimeMisses) > 0
-      ? ((header.lifetimeHits / (header.lifetimeHits + header.lifetimeMisses)) * 100).toFixed(1)
-      : "\u2014";
-
   return (
-    <div className="space-y-4">
-      {/* Stats */}
-      <div className="flex flex-wrap gap-4 text-sm">
-        <div className="flex items-center gap-1">
-          <FolderOpen className="h-4 w-4 text-muted-foreground" />
-          <span className="text-muted-foreground">Indexed:</span>
-          <span className="font-medium">{formatNum(header.totalFiles)}</span>
-        </div>
+    <div className="page">
+      <div className="page-head">
         <div>
-          <span className="text-muted-foreground">Last Scan:</span>{" "}
-          <span className="font-medium">{formatDateTime(header.lastScanTimestamp)}</span>
+          <h1 className="page-title">File index</h1>
+          <p className="page-sub">
+            {entries.length} files indexed · last rescan{" "}
+            {fileIndex?.header?.lastScanTimestamp ? formatDateTime(fileIndex.header.lastScanTimestamp) : "—"}
+          </p>
         </div>
-        <div>
-          <span className="text-muted-foreground">Hit Ratio:</span>{" "}
-          <span className="font-medium">{hitRate}%</span>
+        <div className="page-actions">
+          <Btn icon="refresh" onClick={doRescan} disabled={rescanning}>
+            {rescanning ? "Rescanning…" : "Rescan"}
+          </Btn>
         </div>
       </div>
 
-      {/* Search & Filter */}
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search files..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-        <select
-          value={dirFilter}
-          onChange={(e) => setDirFilter(e.target.value)}
-          className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+      <div className="grid" style={{ gridTemplateColumns: "1fr 360px", gap: 14 }}>
+        <Card
+          title={
+            <div className="row" style={{ width: "100%" }}>
+              <span>All files</span>
+              <div className="row" style={{ marginLeft: 12, flex: 1, maxWidth: 300 }}>
+                <Icon name="search" size={12} className="muted" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Filter by path or description…"
+                  aria-label="Filter files"
+                  style={{
+                    flex: 1,
+                    background: "transparent",
+                    border: 0,
+                    color: "var(--fg-0)",
+                    fontSize: 11.5,
+                    outline: "none",
+                    fontFamily: "var(--font-mono), monospace",
+                  }}
+                />
+              </div>
+            </div>
+          }
+          flush
         >
-          <option value="">All directories</option>
-          {directories.map((dir) => (
-            <option key={dir} value={dir}>
-              {dir}
-            </option>
-          ))}
-        </select>
-      </div>
+          {filtered.length === 0 ? (
+            <div className="empty"><h4>No files match</h4></div>
+          ) : (
+            <div style={{ maxHeight: 560, overflow: "auto" }}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Path</th>
+                    <th>Description</th>
+                    <th className="right">Tokens</th>
+                    <th className="right">Seen</th>
+                    <th>State</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((f) => {
+                    const status = ageStatus(f.lastIndexed);
+                    const isSelected = (selected ?? filtered[0]?.filePath) === f.filePath;
+                    return (
+                      <tr
+                        key={f.filePath}
+                        onClick={() => setSelected(f.filePath)}
+                        style={{ cursor: "pointer", background: isSelected ? "var(--bg-2)" : undefined }}
+                      >
+                        <td className="mono" style={{ fontSize: 11 }}>{f.filePath}</td>
+                        <td
+                          className="muted"
+                          style={{ maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                        >
+                          {f.description || "—"}
+                        </td>
+                        <td className="right num muted">{sizeLabel(f.estimatedTokens)}</td>
+                        <td className="right num muted">{ageLabel(f.lastIndexed)}</td>
+                        <td><Chip tone={toneFor(status)}>{status}</Chip></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
 
-      <p className="text-xs text-muted-foreground">{filtered.length} files</p>
-
-      {/* Virtualized List */}
-      <div
-        ref={parentRef}
-        className="h-[500px] overflow-auto rounded-md border"
-      >
-        <div
-          style={{
-            height: `${virtualizer.getTotalSize()}px`,
-            width: "100%",
-            position: "relative",
-          }}
-        >
-          {virtualizer.getVirtualItems().map((virtualRow) => {
-            const entry = filtered[virtualRow.index];
-            return (
-              <div
-                key={virtualRow.key}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  height: `${virtualRow.size}px`,
-                  transform: `translateY(${virtualRow.start}px)`,
-                }}
-                className="flex items-center justify-between border-b px-4 py-2"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-mono truncate">{entry.filePath}</p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {entry.description}
-                  </p>
+        <Card title="File details" sub={current ? ageStatus(current.lastIndexed) : "—"}>
+          {current ? (
+            <div className="vstack" style={{ gap: 10 }}>
+              <div className="mono" style={{ fontSize: 12, color: "var(--fg-0)", wordBreak: "break-all" }}>
+                {current.filePath}
+              </div>
+              <div className="inset">
+                <div className="c">// description</div>
+                {current.description || "no description"}
+              </div>
+              <div className="grid g-2" style={{ gap: 8 }}>
+                <div>
+                  <div className="muted" style={{ fontSize: 10 }}>TOKENS</div>
+                  <div className="mono strong">{formatNum(current.estimatedTokens)}</div>
                 </div>
-                <div className="ml-4 shrink-0 text-right">
-                  <Badge variant="outline" className="text-[10px]">
-                    ~{formatNum(entry.estimatedTokens)} tok
-                  </Badge>
+                <div>
+                  <div className="muted" style={{ fontSize: 10 }}>LAST INDEXED</div>
+                  <div className="mono strong">{formatDateTime(current.lastIndexed)}</div>
+                </div>
+                <div>
+                  <div className="muted" style={{ fontSize: 10 }}>LAST MODIFIED</div>
+                  <div className="mono strong">{formatDateTime(current.lastModified)}</div>
+                </div>
+                <div>
+                  <div className="muted" style={{ fontSize: 10 }}>STATE</div>
+                  <Chip tone={toneFor(ageStatus(current.lastIndexed))}>{ageStatus(current.lastIndexed)}</Chip>
                 </div>
               </div>
-            );
-          })}
-        </div>
+            </div>
+          ) : (
+            <div className="empty"><div>Select a file to see details</div></div>
+          )}
+        </Card>
       </div>
     </div>
   );

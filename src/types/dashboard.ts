@@ -5,6 +5,7 @@ import type { BugEntry } from "./bug-memory";
 import type { LearningMemory } from "./learning-memory";
 import type { ParsedSession } from "./action-log";
 import type { TaskDefinition, TaskRunRecord, DeadLetterEntry } from "./scheduler";
+import type { VaultIndexEntry } from "./note";
 
 // ── State File Identifiers ─────────────────────────────────────────────────
 
@@ -18,7 +19,13 @@ export type StateFileId =
   | "session"
   | "project-meta"
   | "design-report"
-  | "project-switched";
+  | "project-switched"
+  | "daemon-status"
+  | "config-changed"
+  | "sync-status"
+  | "channel-status"
+  | "channel-logs"
+  | "vault-index";
 
 // ── SSE Event ──────────────────────────────────────────────────────────────
 
@@ -101,4 +108,80 @@ export interface DesignImagePayload {
 
 export interface DesignPayload {
   images: DesignImagePayload[];
+}
+
+export type ConfigValueSource = "default" | "shared" | "local" | "env";
+export type ConfigValueType = "string" | "boolean" | "number";
+
+export interface ConfigEntry {
+  key: string;
+  value: string;
+  source: ConfigValueSource;
+  type: ConfigValueType;
+  group: string;
+  scope: "shared" | "local";
+  description: string;
+  isSecret: boolean;
+}
+
+export interface ConfigPanelPayload {
+  entries: ConfigEntry[];
+}
+
+export interface SyncPendingChange {
+  op: "A" | "M" | "D" | "?";
+  file: string;
+}
+
+export interface SyncPanelPayload {
+  initialized: boolean;
+  enabled: boolean;
+  branch: string;
+  remote: string;
+  ahead: number;
+  behind: number;
+  lastPush: string;
+  lastPull: string;
+  pending: SyncPendingChange[];
+}
+
+export interface ChannelLogLine {
+  t: string;
+  m: string;
+}
+
+export interface ChannelPanelPayload {
+  status: "running" | "stopped";
+  platform: "discord" | "telegram" | null;
+  session: string;
+  startedAt: string;
+  uptimeSec: number;
+  autoStart: boolean;
+  tokenMasked: string;
+  allowlist: string[];
+  logs: ChannelLogLine[];
+}
+
+export interface WikiTreeNode {
+  name: string;
+  path: string;
+  count: number;
+  depth: number;
+}
+
+export interface WikiPanelPayload {
+  initialized: boolean;
+  vaultPath: string;
+  totalNotes: number;
+  inboxCount: number;
+  recent: VaultIndexEntry[];
+  tags: Array<[string, number]>;
+  tree: WikiTreeNode[];
+}
+
+export interface WikiNotePayload {
+  path: string;
+  frontmatter: Record<string, unknown>;
+  body: string;
+  backlinks: Array<{ path: string; title: string }>;
 }

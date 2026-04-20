@@ -46,15 +46,18 @@ export function runtimeFile(path: string): RuntimeFile {
 
 // ── Spawn helper ──────────────────────────────────────────────────────────
 
+export type SpawnStdio = "ignore" | "pipe" | number;
+
 export interface SpawnOptions {
   cwd?: string;
   env?: Record<string, string | undefined>;
-  stdout?: "ignore" | "pipe";
-  stderr?: "ignore" | "pipe";
+  stdout?: SpawnStdio;
+  stderr?: SpawnStdio;
   stdin?: "ignore";
 }
 
 export interface SpawnedProcess {
+  pid: number;
   unref(): void;
 }
 
@@ -74,7 +77,7 @@ export function runtimeSpawn(
       stderr: opts.stderr ?? "ignore",
       stdin: opts.stdin ?? "ignore",
     });
-    return { unref: () => proc.unref() };
+    return { pid: proc.pid, unref: () => proc.unref() };
   }
 
   const [bin, ...args] = cmd;
@@ -89,7 +92,7 @@ export function runtimeSpawn(
     detached: true,
   });
   proc.unref();
-  return { unref: () => {} };
+  return { pid: proc.pid ?? -1, unref: () => {} };
 }
 
 // ── HTTP Server ───────────────────────────────────────────────────────────

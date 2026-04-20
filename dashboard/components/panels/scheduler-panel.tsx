@@ -2,245 +2,199 @@
 
 import { useState } from "react";
 import { useDashboardStore } from "@/hooks/use-dashboard-store";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { triggerTaskRun, triggerDeadLetterRetry, triggerRescan } from "@/lib/api-client";
-import { formatDateTime, formatUptime } from "@/lib/format";
-import { Server, RefreshCw, Play, RotateCcw } from "lucide-react";
+import { Card } from "@/components/ui/panel-card";
+import { Chip } from "@/components/ui/chip";
+import { Btn } from "@/components/ui/btn";
+import { Toggle } from "@/components/ui/toggle";
+import { TabsLine } from "@/components/ui/tabs-line";
+import { triggerTaskRun, triggerDeadLetterRetry } from "@/lib/api-client";
+import { formatDateTime } from "@/lib/format";
 
-function statusBadgeVariant(status: string) {
-  switch (status) {
-    case "running":
-      return "default" as const;
-    case "dead-lettered":
-      return "destructive" as const;
-    case "retrying":
-      return "secondary" as const;
-    default:
-      return "outline" as const;
-  }
+type Tab = "tasks" | "dlq";
+
+function statusTone(status: string): "accent" | "amber" | "red" | "" {
+  if (status === "running") return "accent";
+  if (status === "retrying") return "amber";
+  if (status === "dead-lettered") return "red";
+  return "";
 }
 
 export function SchedulerPanel() {
   const taskDefinitions = useDashboardStore((s) => s.taskDefinitions);
   const tasks = useDashboardStore((s) => s.tasks);
   const deadLetters = useDashboardStore((s) => s.deadLetters);
-  const health = useDashboardStore((s) => s.health);
-  const overview = useDashboardStore((s) => s.overview);
   const activeProjectId = useDashboardStore((s) => s.activeProjectId);
-  const [loadingTasks, setLoadingTasks] = useState<Set<string>>(new Set());
 
-  const daemonRunning = overview?.daemon?.running ?? false;
-  const pid = activeProjectId ?? undefined;
+  const [tab, setTab] = useState<Tab>("tasks");
+  const [busy, setBusy] = useState<Set<string>>(new Set());
 
-  async function handleRunTask(taskId: string) {
-    setLoadingTasks((prev) => new Set(prev).add(taskId));
-    try {
-      await triggerTaskRun(taskId, pid);
-    } finally {
-      setLoadingTasks((prev) => {
+  function wrap(key: string, fn: () => Promise<unknown>) {
+    setBusy((prev) => new Set(prev).add(key));
+    fn().finally(() => {
+      setBusy((prev) => {
         const next = new Set(prev);
-        next.delete(taskId);
+        next.delete(key);
         return next;
       });
-    }
+    });
   }
 
-  async function handleRetryDeadLetter(taskId: string) {
-    setLoadingTasks((prev) => new Set(prev).add(`dl-${taskId}`));
-    try {
-      await triggerDeadLetterRetry(taskId, pid);
-    } finally {
-      setLoadingTasks((prev) => {
-        const next = new Set(prev);
-        next.delete(`dl-${taskId}`);
-        return next;
-      });
-    }
-  }
-
-  async function handleRescan() {
-    setLoadingTasks((prev) => new Set(prev).add("rescan"));
-    try {
-      await triggerRescan(pid);
-    } finally {
-      setLoadingTasks((prev) => {
-        const next = new Set(prev);
-        next.delete("rescan");
-        return next;
-      });
-    }
-  }
-
-  if (!overview) {
-    return (
-      <div className="space-y-6">
-        <Skeleton className="h-20" />
-        <Skeleton className="h-64" />
-      </div>
-    );
-  }
+  const nextRun = tasks
+    .map((t) => t.nextRunAt)
+    .filter(Boolean)
+    .sort()[0];
+  const successRate = (() => {
+    const total = tasks.length;
+    if (total === 0) return "—";
+    const ok = tasks.filter((t) => t.consecutiveFailures === 0).length;
+    return `${((ok / total) * 100).toFixed(1)}%`;
+  })();
 
   return (
-    <div className="space-y-6">
-      {/* Daemon Health */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-sm font-medium">
-            <div className="flex items-center gap-2">
-              <Server className="h-4 w-4" />
-              Daemon Health
-            </div>
-          </CardTitle>
-          <Badge variant={daemonRunning ? "default" : "destructive"}>
-            {daemonRunning ? "running" : "offline"}
-          </Badge>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            {daemonRunning && health
-              ? `Uptime: ${formatUptime(health.uptimeMs)}`
-              : "Daemon not running"}
-          </p>
-        </CardContent>
-      </Card>
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Scheduler</h1>
+          <p className="page-sub">Cron-based tasks · retry with exponential backoff · dead letter queue</p>
+        </div>
+        <div className="page-actions">
+          <Btn icon="plus" variant="primary" disabled title="Write endpoint coming soon">New task</Btn>
+        </div>
+      </div>
 
-      {/* Task Table */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-sm font-medium">Scheduled Tasks</CardTitle>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRescan}
-            disabled={loadingTasks.has("rescan")}
-          >
-            <RefreshCw className={`h-3 w-3 mr-1 ${loadingTasks.has("rescan") ? "animate-spin" : ""}`} />
-            Rescan Index
-          </Button>
-        </CardHeader>
-        <CardContent>
+      <div className="grid g-4" style={{ marginBottom: 14 }}>
+        <div className="kpi">
+          <div className="label">Tasks</div>
+          <div className="value mono">{taskDefinitions.length}</div>
+          <div className="delta">
+            {taskDefinitions.filter((d) => d.enabled).length} enabled
+          </div>
+        </div>
+        <div className="kpi">
+          <div className="label">Next run</div>
+          <div className="value mono" style={{ fontSize: 14 }}>
+            {nextRun ? formatDateTime(nextRun).split(" ")[1] ?? formatDateTime(nextRun) : "—"}
+          </div>
+        </div>
+        <div className="kpi">
+          <div className="label">Success rate</div>
+          <div className="value mono">{successRate}</div>
+          <div className="delta">consecutive-success based</div>
+        </div>
+        <div className="kpi">
+          <div className="label">Dead-letter</div>
+          <div className="value mono" style={{ color: deadLetters.length ? "var(--amber)" : undefined }}>
+            {deadLetters.length}
+          </div>
+          <div className="delta">retryable</div>
+        </div>
+      </div>
+
+      <TabsLine
+        tabs={[
+          { id: "tasks", label: "Tasks", count: taskDefinitions.length },
+          { id: "dlq", label: "Dead letter", count: deadLetters.length },
+        ]}
+        active={tab}
+        onChange={setTab}
+      />
+
+      {tab === "tasks" && (
+        <Card flush>
           {taskDefinitions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No tasks configured</p>
+            <div className="empty"><h4>No tasks configured</h4></div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Task</TableHead>
-                  <TableHead>Schedule</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Last Run</TableHead>
-                  <TableHead>Next Run</TableHead>
-                  <TableHead>Failures</TableHead>
-                  <TableHead className="w-20">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Name</th>
+                  <th>Schedule</th>
+                  <th>Last</th>
+                  <th>Next</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
                 {taskDefinitions.map((def) => {
-                  const record = tasks.find((r) => r.taskId === def.id);
-                  const status = record?.status ?? "idle";
+                  const rec = tasks.find((r) => r.taskId === def.id);
+                  const status = rec?.status ?? "idle";
+                  const busyRun = busy.has(def.id);
                   return (
-                    <TableRow key={def.id}>
-                      <TableCell>
-                        <div>
-                          <span className="font-medium text-sm">{def.name}</span>
-                          {def.description && (
-                            <p className="text-xs text-muted-foreground">{def.description}</p>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-xs font-mono">{def.schedule}</TableCell>
-                      <TableCell>
-                        <Badge variant={statusBadgeVariant(status)}>{status}</Badge>
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {formatDateTime(record?.lastRunAt ?? "")}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {formatDateTime(record?.nextRunAt ?? "")}
-                      </TableCell>
-                      <TableCell>{record?.consecutiveFailures ?? 0}</TableCell>
-                      <TableCell>
-                        <Button
+                    <tr key={def.id}>
+                      <td><Toggle on={def.enabled} className="" /></td>
+                      <td className="mono strong">{def.name}</td>
+                      <td className="mono muted">{def.schedule}</td>
+                      <td className="mono muted">{formatDateTime(rec?.lastRunAt ?? "")}</td>
+                      <td className="mono">{formatDateTime(rec?.nextRunAt ?? "")}</td>
+                      <td><Chip tone={statusTone(status)}>{status}</Chip></td>
+                      <td className="right">
+                        <Btn
+                          size="sm"
                           variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => handleRunTask(def.id)}
-                          disabled={loadingTasks.has(def.id)}
+                          icon={busyRun ? "refresh" : "play"}
+                          disabled={busyRun}
+                          onClick={() => wrap(def.id, () => triggerTaskRun(def.id, activeProjectId ?? undefined))}
                         >
-                          <Play className="h-3 w-3" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
+                          {busyRun ? "Running…" : "Run"}
+                        </Btn>
+                      </td>
+                    </tr>
                   );
                 })}
-              </TableBody>
-            </Table>
+              </tbody>
+            </table>
           )}
-        </CardContent>
-      </Card>
+        </Card>
+      )}
 
-      {/* Dead Letter Queue */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">
-            Dead Letter Queue
-            {deadLetters.length > 0 && (
-              <Badge variant="destructive" className="ml-2">{deadLetters.length}</Badge>
-            )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+      {tab === "dlq" && (
+        <Card title="Dead letter queue" sub={`${deadLetters.length} failed runs retained`} flush>
           {deadLetters.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No dead-lettered tasks</p>
+            <div className="empty"><h4>No dead-lettered tasks</h4></div>
           ) : (
-            <div className="space-y-3">
-              {deadLetters.map((dl) => (
-                <div
-                  key={dl.taskId}
-                  className="flex items-start justify-between rounded-md border p-3"
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm">{dl.taskId}</span>
-                      <Badge variant="destructive" className="text-[10px]">
-                        {dl.attemptCount} attempts
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Dead-lettered: {formatDateTime(dl.deadLetteredAt)}
-                    </p>
-                    {dl.errorMessages?.length > 0 && (
-                      <p className="text-xs text-destructive">
-                        {dl.errorMessages[dl.errorMessages.length - 1]}
-                      </p>
-                    )}
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleRetryDeadLetter(dl.taskId)}
-                    disabled={loadingTasks.has(`dl-${dl.taskId}`)}
-                  >
-                    <RotateCcw className="h-3 w-3 mr-1" />
-                    Retry
-                  </Button>
-                </div>
-              ))}
-            </div>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Last error</th>
+                  <th className="right">Attempts</th>
+                  <th>At</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {deadLetters.map((dl) => {
+                  const key = `dl-${dl.taskId}`;
+                  const busyDl = busy.has(key);
+                  const lastError = dl.errorMessages?.[dl.errorMessages.length - 1];
+                  return (
+                    <tr key={dl.taskId}>
+                      <td className="mono strong">{dl.taskId}</td>
+                      <td className="muted" style={{ maxWidth: 380, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {lastError ?? "—"}
+                      </td>
+                      <td className="right num">{dl.attemptCount}</td>
+                      <td className="mono muted">{formatDateTime(dl.deadLetteredAt)}</td>
+                      <td className="right">
+                        <Btn
+                          size="sm"
+                          icon="refresh"
+                          disabled={busyDl}
+                          onClick={() => wrap(key, () => triggerDeadLetterRetry(dl.taskId, activeProjectId ?? undefined))}
+                        >
+                          {busyDl ? "Retrying…" : "Retry"}
+                        </Btn>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           )}
-        </CardContent>
-      </Card>
+        </Card>
+      )}
     </div>
   );
 }

@@ -12,6 +12,10 @@ import {
   fetchBugs,
   fetchDesign,
   fetchProjects,
+  fetchConfig,
+  fetchSync,
+  fetchChannel,
+  fetchWiki,
 } from "@/lib/api-client";
 import type { ActionLogPayload, SchedulerPayload } from "@mink/types/dashboard";
 
@@ -76,6 +80,10 @@ export function fetchAllData() {
   fetchDesign(pid)
     .then((data) => store.setDesignImages(data.images))
     .catch(console.warn);
+  fetchConfig().then(store.setConfig).catch(console.warn);
+  fetchSync().then(store.setSync).catch(console.warn);
+  fetchChannel().then(store.setChannel).catch(console.warn);
+  fetchWiki().then(store.setWiki).catch(console.warn);
 }
 
 function handleEvent(payload: { fileId?: string; type?: string; projectId?: string }) {
@@ -117,6 +125,7 @@ function handleEvent(payload: { fileId?: string; type?: string; projectId?: stri
         .catch(console.warn);
       break;
     case "session":
+    case "daemon-status":
       fetchOverview(pid)
         .then((data) => {
           store.setOverview(data);
@@ -132,6 +141,19 @@ function handleEvent(payload: { fileId?: string; type?: string; projectId?: stri
       fetchDesign(pid)
         .then((data) => store.setDesignImages(data.images))
         .catch(console.warn);
+      break;
+    case "config-changed":
+      fetchConfig().then(store.setConfig).catch(console.warn);
+      break;
+    case "sync-status":
+      fetchSync().then(store.setSync).catch(console.warn);
+      break;
+    case "channel-status":
+    case "channel-logs":
+      fetchChannel().then(store.setChannel).catch(console.warn);
+      break;
+    case "vault-index":
+      fetchWiki().then(store.setWiki).catch(console.warn);
       break;
     default:
       fetchAllData();

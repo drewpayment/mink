@@ -80,7 +80,7 @@ describe("config integration", () => {
     setConfigValue("wiki.path", "/custom/wiki");
     resetConfigKey("wiki.path");
     const result = resolveConfigValue("wiki.path");
-    expect(result.value).toBe("~/.mink/wiki/");
+    expect(result.value).toBe("~/.mink/wiki");
     expect(result.source).toBe("default");
   });
 
@@ -95,7 +95,7 @@ describe("config integration", () => {
 
   test("resolveAllConfig shows all settings with defaults", () => {
     const all = resolveAllConfig();
-    expect(all.length).toBe(14);
+    expect(all.length).toBe(15);
     const byKey = Object.fromEntries(all.map((a) => [a.key, a]));
     expect(byKey["wiki.path"].source).toBe("default");
     expect(byKey["wiki.enabled"].value).toBe("true");
