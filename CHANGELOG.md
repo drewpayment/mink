@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.0](https://github.com/drewpayment/mink/compare/v0.5.1...v0.6.0) (2026-04-20)
+
+
+### Features
+
+* **dashboard:** chrome for the command-center GUI ([cbfc80d](https://github.com/drewpayment/mink/commit/cbfc80dfec3810238bfce79c6c20a45ea2d0fbea))
+* **dashboard:** preview panels — wiki, capture, discord, sync, daemon, config ([d0b6071](https://github.com/drewpayment/mink/commit/d0b607176086c37ecb745afd4ed0ca4c78db4344))
+* **dashboard:** rebuild as command-center GUI ([e933e0b](https://github.com/drewpayment/mink/commit/e933e0bf9c8cca7205e0c776b7574c6ce09a4cde))
+* **dashboard:** rewrite real-data panels in the new visual grammar ([e7a7b01](https://github.com/drewpayment/mink/commit/e7a7b015b9ecd5af921d74967dbab175e3b1aada))
+* **dashboard:** wire capture panel to note-writer + delete mock data layer ([0170847](https://github.com/drewpayment/mink/commit/0170847be287b5da8a7c6452a727809e3d6011f3))
+* **dashboard:** wire channel panel to channel-process start/stop/restart ([9243784](https://github.com/drewpayment/mink/commit/92437848cd362e0f01707f18f688c852eb034d7b))
+* **dashboard:** wire config panel to resolveAllConfig with live writes ([8b6e408](https://github.com/drewpayment/mink/commit/8b6e408f56af0e2083c7b14ac1eac6cf7adb28f3))
+* **dashboard:** wire daemon panel to real start/stop/restart endpoints ([c3f31a3](https://github.com/drewpayment/mink/commit/c3f31a3c3603cedbde554cbd68b71326370ad00f))
+* **dashboard:** wire daemon panel to real start/stop/restart endpoints ([62a19cb](https://github.com/drewpayment/mink/commit/62a19cb2cc0365d52f2483eb6f0fb773704d736b))
+* **dashboard:** wire sync panel to getSyncStatus with pull/push/disconnect ([3baaf99](https://github.com/drewpayment/mink/commit/3baaf99788b1817722e5b5062dd46d5d836f9f82))
+* **dashboard:** wire wiki vault to real read endpoints (panel + capture tags) ([ff57a3b](https://github.com/drewpayment/mink/commit/ff57a3b3e5e30363ffab0babb56828dc21496a00))
+
+
+### Bug Fixes
+
+* **cli:** make daemon + vault path usable from the installed Node bundle ([ab38e00](https://github.com/drewpayment/mink/commit/ab38e002da5f10d49bd0ba9fcb21e84515029225))
+* **dashboard:** stabilize capture-panel tags selector to avoid zustand infinite loop ([670fa11](https://github.com/drewpayment/mink/commit/670fa115f3027a74b2223028c0da3037aa0d1dd2))
+
 ## [0.5.1](https://github.com/drewpayment/mink/compare/v0.5.0...v0.5.1) (2026-04-18)
 
 
