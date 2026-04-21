@@ -89098,6 +89098,16 @@ import {
   lstatSync as lstatSync2
 } from "fs";
 function getSkillsSourceDir() {
+  let dir = dirname13(new URL(import.meta.url).pathname);
+  while (true) {
+    if (existsSync30(join28(dir, "package.json")) && existsSync30(join28(dir, "skills"))) {
+      return join28(dir, "skills");
+    }
+    const parent = dirname13(dir);
+    if (parent === dir)
+      break;
+    dir = parent;
+  }
   return resolve14(dirname13(new URL(import.meta.url).pathname), "../../skills");
 }
 function getAvailableSkills() {
