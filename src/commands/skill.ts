@@ -17,7 +17,23 @@ const AGENTS_SKILLS_DIR = join(homedir(), ".agents", "skills");
 const CLAUDE_SKILLS_DIR = join(homedir(), ".claude", "skills");
 
 function getSkillsSourceDir(): string {
-  // Skills live at repo-root/skills/ (the standard skills/{name}/SKILL.md layout)
+  // Skills live at <package-root>/skills/. Walk up from this file until we
+  // find a directory that contains both package.json and skills/ — this works
+  // whether we're running from src/commands/skill.ts (dev) or dist/cli.js
+  // (bundled, installed as a package).
+  let dir = dirname(new URL(import.meta.url).pathname);
+  while (true) {
+    if (
+      existsSync(join(dir, "package.json")) &&
+      existsSync(join(dir, "skills"))
+    ) {
+      return join(dir, "skills");
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Fallback: the old behavior, relative to this file's location.
   return resolve(
     dirname(new URL(import.meta.url).pathname),
     "../../skills"

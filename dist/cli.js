@@ -72413,7 +72413,7 @@ var require_ffi_WASM_RELEASE_SYNC = __commonJS((exports) => {
 
 // node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js
 var require_emscripten_module_WASM_RELEASE_SYNC = __commonJS((exports, module) => {
-  var __dirname = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
+  var __dirname = "/Users/scottpallas/Code/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/Users/scottpallas/Code/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
   var QuickJSRaw = (() => {
     var _scriptDir = typeof document !== "undefined" && document.currentScript ? document.currentScript.src : undefined;
     if (typeof __filename !== "undefined")
@@ -89098,6 +89098,16 @@ import {
   lstatSync as lstatSync2
 } from "fs";
 function getSkillsSourceDir() {
+  let dir = dirname13(new URL(import.meta.url).pathname);
+  while (true) {
+    if (existsSync30(join28(dir, "package.json")) && existsSync30(join28(dir, "skills"))) {
+      return join28(dir, "skills");
+    }
+    const parent = dirname13(dir);
+    if (parent === dir)
+      break;
+    dir = parent;
+  }
   return resolve14(dirname13(new URL(import.meta.url).pathname), "../../skills");
 }
 function getAvailableSkills() {
