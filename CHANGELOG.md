@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/drewpayment/mink/compare/v0.6.0...v0.6.1) (2026-04-21)
+
+
+### Bug Fixes
+
+* **cli:** resolve skills dir from package root, not relative depth ([1f20fd4](https://github.com/drewpayment/mink/commit/1f20fd4072b52cf05002d8beee4b4a83c6f03b1e))
+* **cli:** resolve skills dir from package root, not relative depth ([5a4d8a6](https://github.com/drewpayment/mink/commit/5a4d8a6a6a7639fd8de3989f77438d5a166152ea))
+
 ## [0.6.0](https://github.com/drewpayment/mink/compare/v0.5.1...v0.6.0) (2026-04-20)
 
 
