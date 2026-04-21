@@ -138,6 +138,20 @@ bun add -g @drewpayment/mink
 npm install -g @drewpayment/mink
 ```
 
+> **Bun users:** Bun blocks `postinstall` scripts by default for security. Mink's `postinstall` compiles the CLI binary, so you need to trust the package for it to run:
+>
+> ```bash
+> bun pm trust @drewpayment/mink
+> ```
+>
+> If you installed globally and `mink` isn't on your PATH, run `bun pm trust -g @drewpayment/mink` instead. You can also allowlist Mink permanently by adding it to `trustedDependencies` in your `package.json`:
+>
+> ```json
+> {
+>   "trustedDependencies": ["@drewpayment/mink"]
+> }
+> ```
+
 ### Initialize in a project
 
 From your project root:
