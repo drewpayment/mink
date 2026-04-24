@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "fs";
 import { startDaemon, stopDaemon } from "../core/daemon";
+import { installService, uninstallService } from "../core/daemon-service";
 import { schedulerLogPath } from "../core/paths";
 
 export async function daemon(cwd: string, args: string[]): Promise<void> {
@@ -36,11 +37,21 @@ export async function daemon(cwd: string, args: string[]): Promise<void> {
       break;
     }
 
+    case "install":
+      installService({ force: args.includes("--force") });
+      break;
+
+    case "uninstall":
+      uninstallService();
+      break;
+
     default:
       console.error(
         `[mink] unknown daemon subcommand: ${subcommand ?? "(none)"}`
       );
-      console.error("Usage: mink daemon <start|stop|restart|logs>");
+      console.error(
+        "Usage: mink daemon <start|stop|restart|logs|install|uninstall>"
+      );
       process.exit(1);
   }
 }
