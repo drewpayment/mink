@@ -90,6 +90,7 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 - **Wiki Vault** — Obsidian-compatible markdown vault that accumulates knowledge across all projects
 - **Note Capture** — `mink note` CLI captures notes from any directory into the vault
 - **Claude Code Skill** — `/mink:note` skill uses Claude as the AI brain for intelligent categorization, tagging, and wikilink insertion
+- **Mink Agent** — `mink agent` opens a Claude Code session with a dedicated mink-agent persona scoped to your vault
 - **Daily Notes** — `mink note --daily` creates or appends to daily journal entries
 - **Vault Index** — Token-efficient file index for the vault, with search and tag aggregation
 - **External Linking** — Symlink external notes directories into the vault for a unified Obsidian experience
@@ -247,6 +248,24 @@ Then in any Claude Code session:
 ```
 
 Claude will analyze the content, check existing notes for related topics and people, and run `mink note` with the right flags — placing the note in the correct category with tags and `[[wikilinks]]` to related notes.
+
+### Open the mink agent
+
+For longer conversations with your vault — capturing several notes in one sitting, asking what's stale, or running `mink` commands without leaving the chat — open a dedicated Claude Code session as the **mink agent**:
+
+```bash
+mink agent
+```
+
+This launches Claude Code in your mink home (`~/.mink`) with a persona that:
+- Captures and files notes into the right categories with tags and wikilinks
+- Surfaces orphans, untagged notes, and stale daily notes (with confirmation before fixing)
+- Runs `mink` commands on demand (`mink status`, `mink bug search`, `mink detect-waste`, etc.)
+- Reads everywhere under your mink root and vault, but only writes inside the vault
+
+The agent definition is auto-installed to `~/.claude/agents/mink-agent.md` and refreshed when you change `mink config wiki.path`. Pass `--no-update` to keep manual customizations, or `--reinstall` to force a refresh.
+
+Requires the `claude` CLI on PATH ([Claude Code](https://claude.com/claude-code)).
 
 ### Browse and search
 
