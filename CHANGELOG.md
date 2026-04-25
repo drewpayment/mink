@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.0](https://github.com/drewpayment/mink/compare/v0.6.1...v0.7.0) (2026-04-25)
+
+
+### Features
+
+* **agent:** add `mink agent` command with bundled persona ([2b749d7](https://github.com/drewpayment/mink/commit/2b749d756e075d4d0740e1c43b88c76ccbef53d4))
+* **agent:** add `mink agent` command with bundled persona ([3c9bfe6](https://github.com/drewpayment/mink/commit/3c9bfe6eb70627197904c69f5843a8bfe3b469ef))
+* **daemon:** add `install` / `uninstall` subcommands (systemd, launchd) ([7c7c048](https://github.com/drewpayment/mink/commit/7c7c048d3811ab3f2869ceff1fa459548dda1a4b))
+* **daemon:** add `install` / `uninstall` subcommands for systemd and launchd ([09ff7de](https://github.com/drewpayment/mink/commit/09ff7de27ba8a8999af6ac215f352c58604d3e33))
+
 ## [0.6.1](https://github.com/drewpayment/mink/compare/v0.6.0...v0.6.1) (2026-04-21)
 
 
