@@ -19,6 +19,7 @@
     "src/**/*.ts",
     "dist/cli.js",
     "skills/**/*",
+    "agents/**/*",
     "dashboard/out"
   ],
   "publishConfig": {

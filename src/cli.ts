@@ -143,6 +143,12 @@ switch (command) {
     break;
   }
 
+  case "agent": {
+    const { agent } = await import("./commands/agent");
+    await agent(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "sync": {
     const { sync } = await import("./commands/sync");
     await sync(process.argv.slice(3));
@@ -213,6 +219,7 @@ switch (command) {
     console.log("  note list [filters]     List notes (--category, --tag, --recent)");
     console.log("  note search <term>      Full-text search across the vault");
     console.log("  skill install           Install /mink:note skill for Claude Code");
+    console.log("  agent                   Open a Claude Code session with the mink-agent persona");
     console.log();
     console.log("Devices & Sync:");
     console.log("  device                  Show current device info");

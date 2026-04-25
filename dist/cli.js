@@ -89241,6 +89241,213 @@ var init_skill = __esm(() => {
   CLAUDE_SKILLS_DIR = join28(homedir5(), ".claude", "skills");
 });
 
+// src/commands/agent.ts
+var exports_agent = {};
+__export(exports_agent, {
+  agent: () => agent
+});
+import { join as join29, resolve as resolve15, dirname as dirname14 } from "path";
+import { homedir as homedir6 } from "os";
+import {
+  existsSync as existsSync31,
+  mkdirSync as mkdirSync14,
+  readFileSync as readFileSync28,
+  writeFileSync as writeFileSync9
+} from "fs";
+import { createHash as createHash2 } from "crypto";
+import { spawnSync as spawnSync5 } from "child_process";
+function getAgentTemplatePath() {
+  let dir = dirname14(new URL(import.meta.url).pathname);
+  while (true) {
+    if (existsSync31(join29(dir, "package.json")) && existsSync31(join29(dir, "agents", TEMPLATE_FILE))) {
+      return join29(dir, "agents", TEMPLATE_FILE);
+    }
+    const parent = dirname14(dir);
+    if (parent === dir)
+      break;
+    dir = parent;
+  }
+  return resolve15(dirname14(new URL(import.meta.url).pathname), "../../agents", TEMPLATE_FILE);
+}
+function getMinkVersion() {
+  let dir = dirname14(new URL(import.meta.url).pathname);
+  while (true) {
+    const pkgPath = join29(dir, "package.json");
+    if (existsSync31(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync28(pkgPath, "utf-8"));
+        if (pkg.name && pkg.version)
+          return pkg.version;
+      } catch {}
+    }
+    const parent = dirname14(dir);
+    if (parent === dir)
+      break;
+    dir = parent;
+  }
+  return "unknown";
+}
+function renderTemplate(template, vars) {
+  let out = template;
+  for (const [key, value] of Object.entries(vars)) {
+    out = out.split(`{{${key}}}`).join(value);
+  }
+  return out;
+}
+function sha256(text) {
+  return createHash2("sha256").update(text).digest("hex");
+}
+function claudeAgentsDir() {
+  return join29(homedir6(), ".claude", "agents");
+}
+function installedAgentPath() {
+  return join29(claudeAgentsDir(), INSTALLED_FILE);
+}
+function installAgentDefinition(opts) {
+  const templatePath = getAgentTemplatePath();
+  if (!existsSync31(templatePath)) {
+    throw new Error(`[mink agent] bundled agent template not found at ${templatePath}
+` + "  This usually means the package was installed without bundled assets.");
+  }
+  const installed = installedAgentPath();
+  if (opts.skip && existsSync31(installed)) {
+    return { action: "skipped", path: installed };
+  }
+  const template = readFileSync28(templatePath, "utf-8");
+  const rendered = renderTemplate(template, {
+    MINK_ROOT: minkRoot(),
+    VAULT_PATH: resolveVaultPath(),
+    MINK_VERSION: getMinkVersion()
+  });
+  const exists = existsSync31(installed);
+  if (!opts.force && exists) {
+    const current = readFileSync28(installed, "utf-8");
+    if (sha256(current) === sha256(rendered)) {
+      return { action: "unchanged", path: installed };
+    }
+  }
+  mkdirSync14(claudeAgentsDir(), { recursive: true });
+  writeFileSync9(installed, rendered);
+  return {
+    action: exists ? "updated" : "installed",
+    path: installed
+  };
+}
+function isClaudeOnPath() {
+  const result = spawnSync5("claude", ["--version"], {
+    stdio: "ignore"
+  });
+  return !result.error && result.status === 0;
+}
+function parseArgs2(args) {
+  const out = {
+    noUpdate: false,
+    reinstall: false,
+    passthrough: [],
+    showHelp: false
+  };
+  let inPassthrough = false;
+  for (const arg of args) {
+    if (inPassthrough) {
+      out.passthrough.push(arg);
+      continue;
+    }
+    if (arg === "--") {
+      inPassthrough = true;
+      continue;
+    }
+    if (arg === "--no-update") {
+      out.noUpdate = true;
+      continue;
+    }
+    if (arg === "--reinstall") {
+      out.reinstall = true;
+      continue;
+    }
+    if (arg === "--help" || arg === "-h") {
+      out.showHelp = true;
+      continue;
+    }
+    out.passthrough.push(arg);
+  }
+  return out;
+}
+function printHelp() {
+  console.log("Usage: mink agent [options] [-- <claude args...>]");
+  console.log();
+  console.log("Open an interactive Claude Code session in your mink home with");
+  console.log("the mink-agent persona — a proactive note/wiki assistant.");
+  console.log();
+  console.log("Options:");
+  console.log("  --no-update    Don't refresh ~/.claude/agents/mink-agent.md if it exists");
+  console.log("  --reinstall    Force overwrite the installed agent definition");
+  console.log("  -- <args>      Forward remaining arguments to `claude`");
+  console.log();
+  console.log("Environment:");
+  console.log("  MINK_AGENT_NO_UPDATE=1   Equivalent to --no-update");
+  console.log();
+  console.log("The agent is bound to your mink root and resolved vault path. Changing");
+  console.log("`mink config wiki.path` triggers a refresh on the next launch.");
+}
+async function agent(_cwd, rawArgs) {
+  const args = parseArgs2(rawArgs);
+  if (args.showHelp) {
+    printHelp();
+    return;
+  }
+  const skipUpdate = args.noUpdate || process.env.MINK_AGENT_NO_UPDATE === "1";
+  const root = minkRoot();
+  if (!existsSync31(root)) {
+    mkdirSync14(root, { recursive: true });
+  }
+  let result;
+  try {
+    result = installAgentDefinition({
+      force: args.reinstall,
+      skip: skipUpdate && !args.reinstall
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(msg);
+    process.exit(1);
+  }
+  switch (result.action) {
+    case "installed":
+      console.log(`[mink] installed mink-agent definition (v${getMinkVersion()}) -> ${result.path}`);
+      break;
+    case "updated":
+      console.log(`[mink] updated mink-agent definition -> ${result.path}`);
+      break;
+    case "unchanged":
+    case "skipped":
+      break;
+  }
+  if (!isClaudeOnPath()) {
+    console.error("[mink agent] `claude` (Claude Code CLI) was not found on PATH.");
+    console.error("  Install Claude Code: https://claude.com/claude-code");
+    process.exit(1);
+  }
+  const claudeArgs = ["--agent", AGENT_NAME, ...args.passthrough];
+  const child = spawnSync5("claude", claudeArgs, {
+    cwd: root,
+    stdio: "inherit"
+  });
+  if (child.error) {
+    console.error(`[mink agent] failed to launch claude: ${child.error.message}`);
+    process.exit(1);
+  }
+  if (typeof child.status === "number") {
+    process.exit(child.status);
+  }
+}
+var AGENT_NAME = "mink-agent", TEMPLATE_FILE, INSTALLED_FILE;
+var init_agent = __esm(() => {
+  init_paths();
+  init_vault();
+  TEMPLATE_FILE = `${AGENT_NAME}.md.tmpl`;
+  INSTALLED_FILE = `${AGENT_NAME}.md`;
+});
+
 // src/commands/sync.ts
 var exports_sync2 = {};
 __export(exports_sync2, {
@@ -89738,6 +89945,11 @@ switch (command2) {
     await skill2(process.argv.slice(3));
     break;
   }
+  case "agent": {
+    const { agent: agent2 } = await Promise.resolve().then(() => (init_agent(), exports_agent));
+    await agent2(cwd, process.argv.slice(3));
+    break;
+  }
   case "sync": {
     const { sync: sync2 } = await Promise.resolve().then(() => (init_sync3(), exports_sync2));
     await sync2(process.argv.slice(3));
@@ -89767,11 +89979,11 @@ switch (command2) {
   case "version":
   case "--version":
   case "-v": {
-    const { resolve: resolve15, dirname: dirname14 } = await import("path");
-    const cliPath = resolve15(dirname14(new URL(import.meta.url).pathname));
-    const { readFileSync: readFileSync28 } = await import("fs");
+    const { resolve: resolve16, dirname: dirname15 } = await import("path");
+    const cliPath = resolve16(dirname15(new URL(import.meta.url).pathname));
+    const { readFileSync: readFileSync29 } = await import("fs");
     try {
-      const pkg = JSON.parse(readFileSync28(resolve15(cliPath, "../package.json"), "utf-8"));
+      const pkg = JSON.parse(readFileSync29(resolve16(cliPath, "../package.json"), "utf-8"));
       console.log(`mink ${pkg.version}`);
     } catch {
       console.log("mink (unknown version)");
@@ -89799,6 +90011,7 @@ switch (command2) {
     console.log("  note list [filters]     List notes (--category, --tag, --recent)");
     console.log("  note search <term>      Full-text search across the vault");
     console.log("  skill install           Install /mink:note skill for Claude Code");
+    console.log("  agent                   Open a Claude Code session with the mink-agent persona");
     console.log();
     console.log("Devices & Sync:");
     console.log("  device                  Show current device info");
