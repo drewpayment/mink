@@ -2951,6 +2951,7 @@ var init_seed = __esm(() => {
 // src/commands/init.ts
 var exports_init = {};
 __export(exports_init, {
+  writeMinkRule: () => writeMinkRule,
   resolveCliPath: () => resolveCliPath,
   mergeHooksIntoSettings: () => mergeHooksIntoSettings,
   init: () => init,
@@ -3011,6 +3012,12 @@ function isMinkHook(entry) {
   }
   return false;
 }
+function writeMinkRule(cwd) {
+  const rulePath = resolve2(cwd, ".claude", "rules", "mink.md");
+  mkdirSync6(dirname4(rulePath), { recursive: true });
+  atomicWriteText(rulePath, MINK_RULE_CONTENT);
+  return rulePath;
+}
 function mergeHooksIntoSettings(settingsPath, newHooks) {
   mkdirSync6(dirname4(settingsPath), { recursive: true });
   const existing = safeReadJson(settingsPath) ?? {};
@@ -3043,6 +3050,7 @@ async function init(cwd) {
     console.log(`  backup: ${backupName}`);
   }
   mergeHooksIntoSettings(settingsPath, hooks);
+  const rulePath = writeMinkRule(cwd);
   mkdirSync6(dir, { recursive: true });
   const projectId = generateProjectId(cwd);
   const isNotesProject = isWikiEnabled() && isVaultInitialized() && isInsideVault(cwd);
@@ -3060,12 +3068,14 @@ async function init(cwd) {
     console.log(`[mink] upgrade complete`);
     console.log(`  project:  ${projectId}`);
     console.log(`  hooks:    ${settingsPath}`);
+    console.log(`  rule:     ${rulePath}`);
   } else {
     console.log(`[mink] initialized`);
     console.log(`  project:  ${projectId}`);
     console.log(`  state:    ${dir}`);
     console.log(`  runtime:  ${runtime}`);
     console.log(`  hooks:    ${settingsPath}`);
+    console.log(`  rule:     ${rulePath}`);
   }
   const { scan: scan2 } = await Promise.resolve().then(() => (init_scan(), exports_scan));
   scan2(cwd, { check: false });
@@ -3110,6 +3120,22 @@ async function init(cwd) {
     } catch {}
   }
 }
+var MINK_RULE_CONTENT = `---
+description: Mink context management — automatic via hooks
+---
+
+This project uses **Mink** (\`@drewpayment/mink\`) for cross-session context management.
+
+## How it works
+- Mink runs automatically through Claude Code hooks configured in \`.claude/settings.json\` (SessionStart, PreToolUse, PostToolUse, Stop).
+- All state lives in \`~/.mink/\` on the user's machine — **not** in this repository. Do not create or write to any in-repo state directory (no \`.wolf/\`, \`.mink/\`, etc.).
+- Read intelligence, write enforcement, bug memory, and the token ledger are handled by the hooks. You do not need to manually read or update any state files.
+
+## When to act on Mink
+- If the user asks to "save a note", "remember this", "log this to my wiki", or similar, use the \`mink-note\` skill — it captures into the user's \`~/.mink/\` vault.
+- If a hook surfaces a learning, past bug, or repeat-read warning, treat that as authoritative project memory and follow it.
+- The \`mink dashboard\` and \`mink agent\` commands are user tools — do not invoke them on the user's behalf.
+`;
 var init_init = __esm(() => {
   init_paths();
   init_project_id();

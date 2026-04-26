@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync
 import { join } from "path";
 import { tmpdir } from "os";
 import { safeReadJson } from "../../src/core/fs-utils";
-import { buildHooksConfig, mergeHooksIntoSettings, init } from "../../src/commands/init";
+import { buildHooksConfig, mergeHooksIntoSettings, writeMinkRule, init } from "../../src/commands/init";
 import { learningMemoryPath } from "../../src/core/paths";
 
 describe("buildHooksConfig", () => {
@@ -179,6 +179,45 @@ describe("mergeHooksIntoSettings", () => {
   });
 });
 
+describe("writeMinkRule", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mink-rule-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("writes .claude/rules/mink.md with the expected rule content", () => {
+    const path = writeMinkRule(dir);
+    expect(path).toBe(join(dir, ".claude", "rules", "mink.md"));
+    expect(existsSync(path)).toBe(true);
+    const content = readFileSync(path, "utf-8");
+    expect(content).toContain("description: Mink context management");
+    expect(content).toContain("@drewpayment/mink");
+    expect(content).toContain("`.claude/settings.json`");
+    expect(content).toContain("mink-note");
+  });
+
+  test("creates the .claude/rules directory if missing", () => {
+    expect(existsSync(join(dir, ".claude", "rules"))).toBe(false);
+    writeMinkRule(dir);
+    expect(existsSync(join(dir, ".claude", "rules"))).toBe(true);
+  });
+
+  test("overwrites an existing mink.md so the rule stays current", () => {
+    const path = join(dir, ".claude", "rules", "mink.md");
+    mkdirSync(join(dir, ".claude", "rules"), { recursive: true });
+    writeFileSync(path, "stale content");
+    writeMinkRule(dir);
+    const content = readFileSync(path, "utf-8");
+    expect(content).not.toContain("stale content");
+    expect(content).toContain("Mink");
+  });
+});
+
 describe("init", () => {
   let projectDir: string;
   let memPath: string;
@@ -214,6 +253,21 @@ describe("init", () => {
     expect(content).toContain("my-test-project");
     expect(content).toContain("React");
     expect(content).toContain("TypeScript");
+  });
+
+  test("writes .claude/rules/mink.md as part of init", async () => {
+    writeFileSync(
+      join(projectDir, "package.json"),
+      JSON.stringify({ name: "rule-init-project" })
+    );
+
+    await init(projectDir);
+
+    const rulePath = join(projectDir, ".claude", "rules", "mink.md");
+    expect(existsSync(rulePath)).toBe(true);
+    const content = readFileSync(rulePath, "utf-8");
+    expect(content).toContain("Mink");
+    expect(content).toContain("@drewpayment/mink");
   });
 
   test("does not overwrite existing learning-memory.md on re-init", async () => {
