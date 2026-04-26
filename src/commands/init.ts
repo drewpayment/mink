@@ -106,6 +106,30 @@ function isMinkHook(entry: HookEntry | Record<string, unknown>): boolean {
   return false;
 }
 
+const MINK_RULE_CONTENT = `---
+description: Mink context management — automatic via hooks
+---
+
+This project uses **Mink** (\`@drewpayment/mink\`) for cross-session context management.
+
+## How it works
+- Mink runs automatically through Claude Code hooks configured in \`.claude/settings.json\` (SessionStart, PreToolUse, PostToolUse, Stop).
+- All state lives in \`~/.mink/\` on the user's machine — **not** in this repository. Do not create or write to any in-repo state directory (no \`.wolf/\`, \`.mink/\`, etc.).
+- Read intelligence, write enforcement, bug memory, and the token ledger are handled by the hooks. You do not need to manually read or update any state files.
+
+## When to act on Mink
+- If the user asks to "save a note", "remember this", "log this to my wiki", or similar, use the \`mink-note\` skill — it captures into the user's \`~/.mink/\` vault.
+- If a hook surfaces a learning, past bug, or repeat-read warning, treat that as authoritative project memory and follow it.
+- The \`mink dashboard\` and \`mink agent\` commands are user tools — do not invoke them on the user's behalf.
+`;
+
+export function writeMinkRule(cwd: string): string {
+  const rulePath = resolve(cwd, ".claude", "rules", "mink.md");
+  mkdirSync(dirname(rulePath), { recursive: true });
+  atomicWriteText(rulePath, MINK_RULE_CONTENT);
+  return rulePath;
+}
+
 export function mergeHooksIntoSettings(
   settingsPath: string,
   newHooks: HooksConfig
@@ -148,6 +172,7 @@ export async function init(cwd: string): Promise<void> {
   }
 
   mergeHooksIntoSettings(settingsPath, hooks);
+  const rulePath = writeMinkRule(cwd);
 
   mkdirSync(dir, { recursive: true });
 
@@ -173,12 +198,14 @@ export async function init(cwd: string): Promise<void> {
     console.log(`[mink] upgrade complete`);
     console.log(`  project:  ${projectId}`);
     console.log(`  hooks:    ${settingsPath}`);
+    console.log(`  rule:     ${rulePath}`);
   } else {
     console.log(`[mink] initialized`);
     console.log(`  project:  ${projectId}`);
     console.log(`  state:    ${dir}`);
     console.log(`  runtime:  ${runtime}`);
     console.log(`  hooks:    ${settingsPath}`);
+    console.log(`  rule:     ${rulePath}`);
   }
 
   // Run initial scan
