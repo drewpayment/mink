@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0](https://github.com/drewpayment/mink/compare/v0.7.0...v0.8.0) (2026-04-26)
+
+
+### Features
+
+* **init:** write .claude/rules/mink.md during mink init ([564dcff](https://github.com/drewpayment/mink/commit/564dcff7d11dc03bbc273a0438c2a888fce7ccff))
+* **init:** write .claude/rules/mink.md so the project tells Claude it uses Mink ([1f82577](https://github.com/drewpayment/mink/commit/1f82577a173f36a4845a75a47033e1a719e6c0e6))
+
 ## [0.7.0](https://github.com/drewpayment/mink/compare/v0.6.1...v0.7.0) (2026-04-25)
 
 
