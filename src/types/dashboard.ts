@@ -2,7 +2,12 @@ import type { LifetimeCounters, LedgerSession } from "./token-ledger";
 import type { WasteFlag } from "./waste-detection";
 import type { FileIndexHeader, FileIndexEntry } from "./file-index";
 import type { BugEntry } from "./bug-memory";
-import type { LearningMemory } from "./learning-memory";
+import type {
+  LearningMemory,
+  RuleMeta,
+  SectionName,
+  SuggestedRule,
+} from "./learning-memory";
 import type { ParsedSession } from "./action-log";
 import type { TaskDefinition, TaskRunRecord, DeadLetterEntry } from "./scheduler";
 import type { VaultIndexEntry } from "./note";
@@ -82,6 +87,45 @@ export interface SchedulerPayload {
   tasks: SchedulerTaskPayload[];
   deadLetterQueue: DeadLetterEntry[];
   lastHeartbeat: string | null;
+}
+
+export interface LearningEntryPayload {
+  section: SectionName;
+  index: number;
+  text: string;
+  meta?: RuleMeta;
+}
+
+export interface LearningMemoryPayload extends LearningMemory {
+  entries: LearningEntryPayload[];
+  suggestionCount: number;
+  ai: {
+    enabled: boolean;
+    scheduledMining: boolean;
+    manualTriggers: boolean;
+    autoAcceptThreshold: number;
+  };
+}
+
+export interface SuggestionsPayload {
+  pending: SuggestedRule[];
+  completed: SuggestedRule[];
+}
+
+export type LearningSuggestionsPayload = SuggestionsPayload;
+
+export interface RefineRulePayload {
+  refinedText: string;
+  rationale: string;
+  confidence: number;
+}
+
+export interface ProposeRulesResult {
+  ok: boolean;
+  autoAccepted: number;
+  queued: number;
+  total: number;
+  message?: string;
 }
 
 export interface BugLogPayload {

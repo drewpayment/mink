@@ -103,10 +103,10 @@ describe("dead letter queue operations", () => {
 // ── Initial Manifest ────────────────────────────────────────────────────────
 
 describe("createInitialManifest", () => {
-  test("creates manifest with all 5 built-in tasks", () => {
+  test("creates manifest with all 7 built-in tasks", () => {
     const now = new Date("2026-04-11T10:00:00.000Z");
     const manifest = createInitialManifest(now);
-    expect(manifest.tasks.length).toBe(5);
+    expect(manifest.tasks.length).toBe(7);
     expect(manifest.deadLetterQueue.length).toBe(0);
     expect(manifest.lastHeartbeat).toBe(now.toISOString());
   });

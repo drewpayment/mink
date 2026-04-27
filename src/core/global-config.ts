@@ -103,6 +103,60 @@ export function resetAllConfig(): void {
   saveLocalConfig({});
 }
 
+// ── Typed config groups ───────────────────────────────────────────────────
+
+export interface LearningMemoryAiConfig {
+  enabled: boolean;
+  scheduledMining: boolean;
+  manualTriggers: boolean;
+  autoAcceptThreshold: number;
+  maxRulesPerRun: number;
+  actionLogBytes: number;
+}
+
+function parseBool(raw: string, fallback: boolean): boolean {
+  const v = raw.trim().toLowerCase();
+  if (v === "true" || v === "1" || v === "yes" || v === "on") return true;
+  if (v === "false" || v === "0" || v === "no" || v === "off") return false;
+  return fallback;
+}
+
+function parseFloatClamped(raw: string, fallback: number, min: number, max: number): number {
+  const n = Number.parseFloat(raw);
+  if (!Number.isFinite(n)) return fallback;
+  if (n < min) return min;
+  if (n > max) return max;
+  return n;
+}
+
+function parseIntPositive(raw: string, fallback: number): number {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return n;
+}
+
+export function resolveLearningMemoryAi(): LearningMemoryAiConfig {
+  return {
+    enabled: parseBool(resolveConfigValue("learning.ai.enabled").value, true),
+    scheduledMining: parseBool(resolveConfigValue("learning.ai.scheduled-mining").value, true),
+    manualTriggers: parseBool(resolveConfigValue("learning.ai.manual-triggers").value, true),
+    autoAcceptThreshold: parseFloatClamped(
+      resolveConfigValue("learning.ai.auto-accept-threshold").value,
+      0.85,
+      0,
+      1
+    ),
+    maxRulesPerRun: parseIntPositive(
+      resolveConfigValue("learning.ai.max-rules-per-run").value,
+      8
+    ),
+    actionLogBytes: parseIntPositive(
+      resolveConfigValue("learning.ai.action-log-bytes").value,
+      32_000
+    ),
+  };
+}
+
 // ── Migration ─────────────────────────────────────────────────────────────
 
 let migrationRan = false;

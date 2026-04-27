@@ -1,6 +1,17 @@
 import { create } from "zustand";
-import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, DesignImagePayload, ConfigPanelPayload, SyncPanelPayload, ChannelPanelPayload, WikiPanelPayload, WikiNotePayload } from "@mink/types/dashboard";
-import type { LearningMemory } from "@mink/types/learning-memory";
+import type {
+  OverviewPayload,
+  TokenLedgerPayload,
+  FileIndexPayload,
+  DesignImagePayload,
+  ConfigPanelPayload,
+  SyncPanelPayload,
+  ChannelPanelPayload,
+  WikiPanelPayload,
+  WikiNotePayload,
+  LearningMemoryPayload,
+  LearningSuggestionsPayload,
+} from "@mink/types/dashboard";
 import type { BugEntry } from "@mink/types/bug-memory";
 import type { WasteFlag } from "@mink/types/waste-detection";
 import type { TaskRunRecord, TaskDefinition, DeadLetterEntry } from "@mink/types/scheduler";
@@ -25,7 +36,8 @@ interface DashboardState {
   taskDefinitions: TaskDefinition[];
   deadLetters: DeadLetterEntry[];
   health: { uptimeMs: number } | null;
-  learningMemory: LearningMemory | null;
+  learningMemory: LearningMemoryPayload | null;
+  learningSuggestions: LearningSuggestionsPayload | null;
   actionLog: ActionLogRow[];
   bugs: BugEntry[];
   wasteFlags: WasteFlag[];
@@ -44,7 +56,8 @@ interface DashboardState {
   setFileIndex: (data: FileIndexPayload) => void;
   setScheduler: (tasks: TaskRunRecord[], definitions: TaskDefinition[], deadLetters: DeadLetterEntry[]) => void;
   setHealth: (health: { uptimeMs: number } | null) => void;
-  setLearningMemory: (data: LearningMemory) => void;
+  setLearningMemory: (data: LearningMemoryPayload) => void;
+  setLearningSuggestions: (data: LearningSuggestionsPayload) => void;
   setActionLog: (entries: ActionLogRow[]) => void;
   setBugs: (entries: BugEntry[]) => void;
   setWasteFlags: (flags: WasteFlag[]) => void;
@@ -68,6 +81,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   deadLetters: [],
   health: null,
   learningMemory: null,
+  learningSuggestions: null,
   actionLog: [],
   bugs: [],
   wasteFlags: [],
@@ -91,6 +105,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
       deadLetters: [],
       health: null,
       learningMemory: null,
+      learningSuggestions: null,
       actionLog: [],
       bugs: [],
       wasteFlags: [],
@@ -102,6 +117,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   setScheduler: (tasks, definitions, deadLetters) => set({ tasks, taskDefinitions: definitions, deadLetters }),
   setHealth: (health) => set({ health }),
   setLearningMemory: (data) => set({ learningMemory: data }),
+  setLearningSuggestions: (data) => set({ learningSuggestions: data }),
   setActionLog: (entries) => set({ actionLog: entries }),
   setBugs: (entries) => set({ bugs: entries }),
   setWasteFlags: (flags) => set({ wasteFlags: flags }),

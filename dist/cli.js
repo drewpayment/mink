@@ -190,7 +190,9 @@ __export(exports_paths, {
   projectDir: () => projectDir,
   minkRoot: () => minkRoot,
   localConfigPath: () => localConfigPath,
+  learningSuggestionsPath: () => learningSuggestionsPath,
   learningMemoryPath: () => learningMemoryPath,
+  learningMemoryMetaPath: () => learningMemoryMetaPath,
   globalConfigPath: () => globalConfigPath,
   frameworkAdvisorPath: () => frameworkAdvisorPath,
   frameworkAdvisorJsonPath: () => frameworkAdvisorJsonPath,
@@ -226,6 +228,12 @@ function configPath(cwd) {
 }
 function learningMemoryPath(cwd) {
   return join(projectDir(cwd), "learning-memory.md");
+}
+function learningMemoryMetaPath(cwd) {
+  return join(projectDir(cwd), "learning-memory.meta.json");
+}
+function learningSuggestionsPath(cwd) {
+  return join(projectDir(cwd), "learning-memory.suggestions.json");
 }
 function tokenLedgerPath(cwd) {
   return join(projectDir(cwd), "token-ledger.json");
@@ -680,6 +688,48 @@ var init_config = __esm(() => {
       envVar: "MINK_CHANNEL_SKIP_PERMISSIONS",
       description: "Pass --dangerously-skip-permissions so the channel can run without terminal prompts",
       scope: "shared"
+    },
+    {
+      key: "learning.ai.enabled",
+      default: "true",
+      envVar: "MINK_LEARNING_AI_ENABLED",
+      description: "Master switch for LLM-powered learning memory enhancements",
+      scope: "shared"
+    },
+    {
+      key: "learning.ai.scheduled-mining",
+      default: "true",
+      envVar: "MINK_LEARNING_AI_SCHEDULED_MINING",
+      description: "Allow background scheduler to mine the action log for new rules",
+      scope: "shared"
+    },
+    {
+      key: "learning.ai.manual-triggers",
+      default: "true",
+      envVar: "MINK_LEARNING_AI_MANUAL_TRIGGERS",
+      description: "Allow manual UI-triggered refine/propose calls",
+      scope: "shared"
+    },
+    {
+      key: "learning.ai.auto-accept-threshold",
+      default: "0.85",
+      envVar: "MINK_LEARNING_AI_AUTO_ACCEPT_THRESHOLD",
+      description: "Confidence ≥ this value writes directly; below lands in suggestions",
+      scope: "shared"
+    },
+    {
+      key: "learning.ai.max-rules-per-run",
+      default: "8",
+      envVar: "MINK_LEARNING_AI_MAX_RULES_PER_RUN",
+      description: "Cap on rules proposed per mining run",
+      scope: "shared"
+    },
+    {
+      key: "learning.ai.action-log-bytes",
+      default: "32000",
+      envVar: "MINK_LEARNING_AI_ACTION_LOG_BYTES",
+      description: "Trailing bytes of action-log.md fed to the AI for proposals",
+      scope: "shared"
     }
   ];
   VALID_KEYS = new Set(CONFIG_KEYS.map((k) => k.key));
@@ -691,6 +741,7 @@ __export(exports_global_config, {
   setConfigValue: () => setConfigValue,
   saveLocalConfig: () => saveLocalConfig,
   saveGlobalConfig: () => saveGlobalConfig,
+  resolveLearningMemoryAi: () => resolveLearningMemoryAi,
   resolveConfigValue: () => resolveConfigValue,
   resolveAllConfig: () => resolveAllConfig,
   resetConfigKey: () => resetConfigKey,
@@ -770,6 +821,40 @@ function resetConfigKey(key) {
 function resetAllConfig() {
   saveGlobalConfig({});
   saveLocalConfig({});
+}
+function parseBool(raw, fallback) {
+  const v = raw.trim().toLowerCase();
+  if (v === "true" || v === "1" || v === "yes" || v === "on")
+    return true;
+  if (v === "false" || v === "0" || v === "no" || v === "off")
+    return false;
+  return fallback;
+}
+function parseFloatClamped(raw, fallback, min, max) {
+  const n = Number.parseFloat(raw);
+  if (!Number.isFinite(n))
+    return fallback;
+  if (n < min)
+    return min;
+  if (n > max)
+    return max;
+  return n;
+}
+function parseIntPositive(raw, fallback) {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0)
+    return fallback;
+  return n;
+}
+function resolveLearningMemoryAi() {
+  return {
+    enabled: parseBool(resolveConfigValue("learning.ai.enabled").value, true),
+    scheduledMining: parseBool(resolveConfigValue("learning.ai.scheduled-mining").value, true),
+    manualTriggers: parseBool(resolveConfigValue("learning.ai.manual-triggers").value, true),
+    autoAcceptThreshold: parseFloatClamped(resolveConfigValue("learning.ai.auto-accept-threshold").value, 0.85, 0, 1),
+    maxRulesPerRun: parseIntPositive(resolveConfigValue("learning.ai.max-rules-per-run").value, 8),
+    actionLogBytes: parseIntPositive(resolveConfigValue("learning.ai.action-log-bytes").value, 32000)
+  };
 }
 function migrateConfigIfNeeded() {
   if (migrationRan)
@@ -2130,7 +2215,9 @@ __export(exports_paths2, {
   projectDir: () => projectDir2,
   minkRoot: () => minkRoot2,
   localConfigPath: () => localConfigPath2,
+  learningSuggestionsPath: () => learningSuggestionsPath2,
   learningMemoryPath: () => learningMemoryPath2,
+  learningMemoryMetaPath: () => learningMemoryMetaPath2,
   globalConfigPath: () => globalConfigPath2,
   frameworkAdvisorPath: () => frameworkAdvisorPath2,
   frameworkAdvisorJsonPath: () => frameworkAdvisorJsonPath2,
@@ -2166,6 +2253,12 @@ function configPath2(cwd) {
 }
 function learningMemoryPath2(cwd) {
   return join7(projectDir2(cwd), "learning-memory.md");
+}
+function learningMemoryMetaPath2(cwd) {
+  return join7(projectDir2(cwd), "learning-memory.meta.json");
+}
+function learningSuggestionsPath2(cwd) {
+  return join7(projectDir2(cwd), "learning-memory.suggestions.json");
 }
 function tokenLedgerPath2(cwd) {
   return join7(projectDir2(cwd), "token-ledger.json");
@@ -4763,6 +4856,98 @@ function isInCurrentPeriod(schedule, lastRun, now) {
   return now.getTime() < next.getTime();
 }
 
+// src/core/llm-runner.ts
+async function executeAiCli(prompt, timeoutMs) {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && !API_KEY_ENV_VARS.includes(key)) {
+      env[key] = value;
+    }
+  }
+  const proc = Bun.spawn(["claude", "--print", prompt], {
+    env,
+    stdout: "pipe",
+    stderr: "pipe"
+  });
+  const timer = setTimeout(() => {
+    proc.kill();
+  }, timeoutMs);
+  try {
+    const exitCode = await proc.exited;
+    clearTimeout(timer);
+    if (exitCode !== 0) {
+      const stderr = await new Response(proc.stderr).text();
+      throw new Error(`AI CLI exited with code ${exitCode}: ${stderr}`);
+    }
+    return await new Response(proc.stdout).text();
+  } catch (err) {
+    clearTimeout(timer);
+    if (err instanceof Error && err.message.includes("ENOENT")) {
+      throw new Error("AI CLI (claude) is not available. Install it or ensure it is on PATH.");
+    }
+    throw err;
+  }
+}
+function safeJsonExtract(raw) {
+  if (!raw)
+    return null;
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced ? fenced[1].trim() : trimmed;
+  try {
+    return JSON.parse(candidate);
+  } catch {}
+  const firstBrace = candidate.search(/[{[]/);
+  if (firstBrace === -1)
+    return null;
+  const open = candidate[firstBrace];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = firstBrace;i < candidate.length; i++) {
+    const ch = candidate[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString)
+      continue;
+    if (ch === open)
+      depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) {
+        const slice = candidate.slice(firstBrace, i + 1);
+        try {
+          return JSON.parse(slice);
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+var API_KEY_ENV_VARS;
+var init_llm_runner = __esm(() => {
+  API_KEY_ENV_VARS = [
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENAI_KEY",
+    "AI_API_KEY"
+  ];
+});
+
 // src/commands/detect-waste.ts
 var exports_detect_waste2 = {};
 __export(exports_detect_waste2, {
@@ -4820,43 +5005,425 @@ var init_detect_waste2 = __esm(() => {
   init_waste_detection();
 });
 
+// src/core/learning-memory-meta.ts
+import { createHash as createHash2, randomUUID as randomUUID2 } from "crypto";
+function emptyMeta() {
+  return { version: 1, entries: {} };
+}
+function isMeta(value) {
+  if (value === null || typeof value !== "object")
+    return false;
+  const obj = value;
+  return obj.version === 1 && typeof obj.entries === "object" && obj.entries !== null;
+}
+function entryKey(section, text) {
+  const normalized = `${section}::${text.toLowerCase().trim()}`;
+  return createHash2("sha1").update(normalized).digest("hex").slice(0, 16);
+}
+function loadMeta(cwd) {
+  const raw = safeReadJson(learningMemoryMetaPath(cwd));
+  if (raw && isMeta(raw))
+    return raw;
+  return emptyMeta();
+}
+function saveMeta(cwd, meta) {
+  atomicWriteJson(learningMemoryMetaPath(cwd), meta);
+}
+function getMetaForEntry(meta, section, text) {
+  return meta.entries[entryKey(section, text)];
+}
+function setMetaForEntry(meta, section, text, partial) {
+  const key = entryKey(section, text);
+  const existing = meta.entries[key];
+  const record = existing ? { ...existing, ...partial } : {
+    id: randomUUID2(),
+    createdAt: new Date().toISOString(),
+    ...partial
+  };
+  meta.entries[key] = record;
+  return record;
+}
+function removeMetaForEntry(meta, section, text) {
+  delete meta.entries[entryKey(section, text)];
+}
+function pruneOrphans(meta, mem) {
+  const live = new Set;
+  for (const section of Object.keys(mem.sections)) {
+    for (const text of mem.sections[section]) {
+      live.add(entryKey(section, text));
+    }
+  }
+  const pruned = {};
+  for (const [k, v] of Object.entries(meta.entries)) {
+    if (live.has(k))
+      pruned[k] = v;
+  }
+  return { version: 1, entries: pruned };
+}
+var init_learning_memory_meta = __esm(() => {
+  init_fs_utils();
+  init_paths();
+});
+
+// src/core/learning-suggestions.ts
+import { randomUUID as randomUUID3 } from "crypto";
+import { existsSync as existsSync15, readFileSync as readFileSync18 } from "fs";
+function emptyStore() {
+  return { version: 1, suggestions: [] };
+}
+function isStore(value) {
+  if (value === null || typeof value !== "object")
+    return false;
+  const obj = value;
+  return obj.version === 1 && Array.isArray(obj.suggestions);
+}
+function loadSuggestions(cwd) {
+  const raw = safeReadJson(learningSuggestionsPath(cwd));
+  if (raw && isStore(raw))
+    return raw;
+  return emptyStore();
+}
+function saveSuggestions(cwd, store) {
+  atomicWriteJson(learningSuggestionsPath(cwd), store);
+}
+function newSuggestion(fields) {
+  return {
+    ...fields,
+    id: randomUUID3(),
+    createdAt: new Date().toISOString(),
+    status: "pending"
+  };
+}
+function addSuggestions(cwd, items) {
+  const store = loadSuggestions(cwd);
+  const seenKeys = new Set(store.suggestions.filter((s) => s.status === "pending").map((s) => entryKey(s.section, s.text)));
+  const added = [];
+  for (const item of items) {
+    const key = entryKey(item.section, item.text);
+    if (seenKeys.has(key))
+      continue;
+    seenKeys.add(key);
+    const record = newSuggestion(item);
+    store.suggestions.push(record);
+    added.push(record);
+  }
+  saveSuggestions(cwd, store);
+  return added;
+}
+function findSuggestion(store, id) {
+  return store.suggestions.find((s) => s.id === id);
+}
+function loadMemoryForWrite(cwd) {
+  const memPath = learningMemoryPath(cwd);
+  if (!existsSync15(memPath))
+    return createEmptyLearningMemory("unknown");
+  try {
+    return parseLearningMemory(readFileSync18(memPath, "utf-8"));
+  } catch {
+    return createEmptyLearningMemory("unknown");
+  }
+}
+function acceptSuggestion(cwd, id, edits) {
+  const store = loadSuggestions(cwd);
+  const target = findSuggestion(store, id);
+  if (!target || target.status !== "pending")
+    return null;
+  const section = edits?.section ?? target.section;
+  const text = edits?.text ?? target.text;
+  const memory = loadMemoryForWrite(cwd);
+  addEntry(memory, section, text);
+  atomicWriteText(learningMemoryPath(cwd), serializeLearningMemory(memory));
+  const meta = loadMeta(cwd);
+  const record = setMetaForEntry(meta, section, text, {
+    source: edits ? "llm:refined" : target.source,
+    confidence: target.confidence,
+    rationale: target.rationale,
+    sourceSessionIds: target.sourceSessionIds
+  });
+  saveMeta(cwd, meta);
+  target.status = "accepted";
+  saveSuggestions(cwd, store);
+  return { meta: record, section, text };
+}
+function rejectSuggestion(cwd, id) {
+  const store = loadSuggestions(cwd);
+  const target = findSuggestion(store, id);
+  if (!target)
+    return false;
+  if (target.status !== "pending")
+    return true;
+  target.status = "rejected";
+  saveSuggestions(cwd, store);
+  return true;
+}
+function pendingCount(store) {
+  return store.suggestions.filter((s) => s.status === "pending").length;
+}
+var init_learning_suggestions = __esm(() => {
+  init_fs_utils();
+  init_paths();
+  init_learning_memory();
+  init_learning_memory_meta();
+});
+
+// src/core/llm-rules.ts
+var exports_llm_rules = {};
+__export(exports_llm_rules, {
+  runMine: () => runMine,
+  runCurate: () => runCurate,
+  routeProposed: () => routeProposed,
+  refineRule: () => refineRule,
+  proposeRulesFromActionLog: () => proposeRulesFromActionLog,
+  curateAndDedupe: () => curateAndDedupe
+});
+import { existsSync as existsSync16, readFileSync as readFileSync19, statSync as statSync8, openSync as openSync2, readSync, closeSync } from "fs";
+function isValidSection(value) {
+  return typeof value === "string" && VALID_SECTIONS.includes(value);
+}
+function clampConfidence(value) {
+  if (typeof value !== "number" || Number.isNaN(value))
+    return 0;
+  if (value < 0)
+    return 0;
+  if (value > 1)
+    return 1;
+  return value;
+}
+function proposePrompt(actionLogTail, maxRules) {
+  return JSON_ONLY_PREFIX + `Schema: { "rules": [{ "section": ${SECTION_LIST}, "text": string, "confidence": number 0..1, "rationale": string, "sourceSessionIds": string[] }] }
+
+` + `Task: read the recent Mink action log below and propose at most ${maxRules} new learning rules.
+` + `Rules must be concrete, generalizable, and supported by recurring evidence. Reject one-shot anomalies. Each "text" must be a single imperative sentence under 200 characters. Section choices: User Preferences (workflow style), Key Learnings (project facts), Do-Not-Repeat (mistakes corrected), Decision Log (committed decisions). Set "confidence" to your honest 0..1 belief the rule will hold next session.
+
+` + `--- ACTION LOG ---
+${actionLogTail}
+--- END ---`;
+}
+function refinePrompt(section, text) {
+  return JSON_ONLY_PREFIX + `Schema: { "refinedText": string, "rationale": string, "confidence": number 0..1 }
+
+` + `Refine the user's draft learning rule. Tighten phrasing into a single imperative sentence under 200 characters. Preserve user intent. Do not invent constraints not implied by the draft. If the draft is already optimal, return it verbatim with high confidence.
+
+` + `Section: ${section}
+Draft: ${JSON.stringify(text)}`;
+}
+function curatePrompt(memorySnapshot) {
+  return JSON_ONLY_PREFIX + `Schema: { "removeKeys": string[], "mergeOps": [{ "keep": string, "dropKeys": string[] }] }
+
+` + `Identify only semantic duplicates or directly contradicted rules. Leave ambiguous pairs alone. Keys are the entry hashes provided alongside each entry. "removeKeys" deletes entries; "mergeOps.keep" is the surviving key, "dropKeys" are merged into it (keep's text wins).
+
+` + `--- MEMORY ---
+${memorySnapshot}
+--- END ---`;
+}
+function readActionLogTail(cwd, maxBytes) {
+  const path = actionLogPath(cwd);
+  if (!existsSync16(path))
+    return "";
+  try {
+    const stat2 = statSync8(path);
+    if (stat2.size <= maxBytes)
+      return readFileSync19(path, "utf-8");
+    const fd = openSync2(path, "r");
+    try {
+      const buf = Buffer.alloc(maxBytes);
+      readSync(fd, buf, 0, maxBytes, stat2.size - maxBytes);
+      return buf.toString("utf-8");
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
+async function proposeRulesFromActionLog(cwd, opts = {}) {
+  const tail = readActionLogTail(cwd, opts.maxBytes ?? 32000);
+  if (!tail.trim())
+    return [];
+  const prompt = proposePrompt(tail, opts.maxRules ?? 8);
+  let raw;
+  try {
+    raw = await executeAiCli(prompt, opts.timeoutMs ?? 180000);
+  } catch (err) {
+    console.warn(`[mink] propose-rules: AI CLI failed: ${err.message}`);
+    return [];
+  }
+  const parsed = safeJsonExtract(raw);
+  if (!parsed || !Array.isArray(parsed.rules)) {
+    console.warn("[mink] propose-rules: could not parse JSON from AI CLI output");
+    return [];
+  }
+  const rules = [];
+  for (const item of parsed.rules) {
+    if (!item || typeof item !== "object")
+      continue;
+    const r = item;
+    if (!isValidSection(r.section))
+      continue;
+    if (typeof r.text !== "string" || r.text.trim() === "")
+      continue;
+    rules.push({
+      section: r.section,
+      text: r.text.trim(),
+      confidence: clampConfidence(r.confidence),
+      rationale: typeof r.rationale === "string" ? r.rationale : "",
+      sourceSessionIds: Array.isArray(r.sourceSessionIds) ? r.sourceSessionIds.filter((s) => typeof s === "string") : []
+    });
+  }
+  return rules;
+}
+async function refineRule(section, text, timeoutMs = 60000) {
+  const prompt = refinePrompt(section, text);
+  const raw = await executeAiCli(prompt, timeoutMs);
+  const parsed = safeJsonExtract(raw);
+  if (!parsed) {
+    return { refinedText: text, rationale: "AI output unparseable; returned input verbatim", confidence: 0 };
+  }
+  return {
+    refinedText: typeof parsed.refinedText === "string" && parsed.refinedText.trim() !== "" ? parsed.refinedText.trim() : text,
+    rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
+    confidence: clampConfidence(parsed.confidence)
+  };
+}
+async function curateAndDedupe(cwd, timeoutMs = 180000) {
+  const memPath = learningMemoryPath(cwd);
+  if (!existsSync16(memPath))
+    return { removed: 0, merged: 0 };
+  const mem = parseLearningMemory(readFileSync19(memPath, "utf-8"));
+  const meta = loadMeta(cwd);
+  const snapshot = [];
+  for (const section of VALID_SECTIONS) {
+    for (const text of mem.sections[section]) {
+      snapshot.push({ key: entryKey(section, text), section, text });
+    }
+  }
+  if (snapshot.length === 0)
+    return { removed: 0, merged: 0 };
+  const memorySnapshot = JSON.stringify(snapshot, null, 2);
+  let raw;
+  try {
+    raw = await executeAiCli(curatePrompt(memorySnapshot), timeoutMs);
+  } catch (err) {
+    console.warn(`[mink] curate-rules: AI CLI failed: ${err.message}`);
+    return { removed: 0, merged: 0 };
+  }
+  const parsed = safeJsonExtract(raw);
+  if (!parsed)
+    return { removed: 0, merged: 0 };
+  const removeKeys = new Set(Array.isArray(parsed.removeKeys) ? parsed.removeKeys.filter((k) => typeof k === "string") : []);
+  if (Array.isArray(parsed.mergeOps)) {
+    for (const op of parsed.mergeOps) {
+      if (!op || typeof op !== "object")
+        continue;
+      const drops = op.dropKeys;
+      if (!Array.isArray(drops))
+        continue;
+      for (const k of drops) {
+        if (typeof k === "string")
+          removeKeys.add(k);
+      }
+    }
+  }
+  if (removeKeys.size === 0)
+    return { removed: 0, merged: 0 };
+  const next = createEmptyLearningMemory(mem.projectName);
+  let removed = 0;
+  for (const section of VALID_SECTIONS) {
+    for (const text of mem.sections[section]) {
+      if (removeKeys.has(entryKey(section, text))) {
+        removed++;
+        continue;
+      }
+      addEntry(next, section, text);
+    }
+  }
+  atomicWriteText(memPath, serializeLearningMemory(next));
+  const prunedMeta = pruneOrphans(meta, next);
+  saveMeta(cwd, prunedMeta);
+  return { removed, merged: 0 };
+}
+function routeProposed(cwd, rules, threshold, source = "llm:auto") {
+  if (rules.length === 0)
+    return { autoAccepted: 0, queued: 0 };
+  const memPath = learningMemoryPath(cwd);
+  const mem = existsSync16(memPath) ? parseLearningMemory(readFileSync19(memPath, "utf-8")) : createEmptyLearningMemory("unknown");
+  const meta = loadMeta(cwd);
+  let autoAccepted = 0;
+  const toQueue = [];
+  for (const rule of rules) {
+    if (rule.confidence >= threshold) {
+      const existing = mem.sections[rule.section];
+      if (existing.includes(rule.text))
+        continue;
+      addEntry(mem, rule.section, rule.text);
+      setMetaForEntry(meta, rule.section, rule.text, {
+        source,
+        confidence: rule.confidence,
+        rationale: rule.rationale,
+        sourceSessionIds: rule.sourceSessionIds
+      });
+      autoAccepted++;
+    } else {
+      toQueue.push({
+        section: rule.section,
+        text: rule.text,
+        confidence: rule.confidence,
+        rationale: rule.rationale,
+        source,
+        sourceSessionIds: rule.sourceSessionIds
+      });
+    }
+  }
+  if (autoAccepted > 0) {
+    atomicWriteText(memPath, serializeLearningMemory(mem));
+    saveMeta(cwd, meta);
+  }
+  const queued = toQueue.length > 0 ? addSuggestions(cwd, toQueue).length : 0;
+  return { autoAccepted, queued };
+}
+async function runMine(cwd, timeoutMs) {
+  const config = resolveLearningMemoryAi();
+  if (!config.enabled || !config.scheduledMining) {
+    return { autoAccepted: 0, queued: 0 };
+  }
+  const rules = await proposeRulesFromActionLog(cwd, {
+    timeoutMs,
+    maxRules: config.maxRulesPerRun
+  });
+  return routeProposed(cwd, rules, config.autoAcceptThreshold);
+}
+async function runCurate(cwd, timeoutMs) {
+  const config = resolveLearningMemoryAi();
+  if (!config.enabled)
+    return { removed: 0, merged: 0 };
+  return curateAndDedupe(cwd, timeoutMs);
+}
+var VALID_SECTIONS, JSON_ONLY_PREFIX = `Output ONLY a JSON object matching the schema. No prose, no fences, no explanation.
+
+`, SECTION_LIST;
+var init_llm_rules = __esm(() => {
+  init_learning_memory();
+  init_fs_utils();
+  init_llm_runner();
+  init_paths();
+  init_learning_memory_meta();
+  init_learning_suggestions();
+  init_global_config();
+  VALID_SECTIONS = [
+    "User Preferences",
+    "Key Learnings",
+    "Do-Not-Repeat",
+    "Decision Log"
+  ];
+  SECTION_LIST = VALID_SECTIONS.map((s) => `"${s}"`).join(", ");
+});
+
 // src/core/task-registry.ts
 function getBuiltInTasks() {
   return BUILT_IN_TASKS;
 }
 function getTaskById(id) {
   return BUILT_IN_TASKS.find((t) => t.id === id);
-}
-async function executeAiCli(prompt, timeoutMs) {
-  const env = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !API_KEY_ENV_VARS.includes(key)) {
-      env[key] = value;
-    }
-  }
-  const proc = Bun.spawn(["claude", "--print", prompt], {
-    env,
-    stdout: "pipe",
-    stderr: "pipe"
-  });
-  const timer = setTimeout(() => {
-    proc.kill();
-  }, timeoutMs);
-  try {
-    const exitCode = await proc.exited;
-    clearTimeout(timer);
-    if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text();
-      throw new Error(`AI CLI exited with code ${exitCode}: ${stderr}`);
-    }
-    return await new Response(proc.stdout).text();
-  } catch (err) {
-    clearTimeout(timer);
-    if (err instanceof Error && err.message.includes("ENOENT")) {
-      throw new Error("AI CLI (claude) is not available. Install it or ensure it is on PATH.");
-    }
-    throw err;
-  }
 }
 async function executeTask(taskId, projectCwd) {
   const task = getTaskById(taskId);
@@ -4889,10 +5456,10 @@ async function executeTask(taskId, projectCwd) {
       if (task.actionType === "ai-cli") {
         try {
           const { learningMemoryPath: learningMemoryPath4 } = await Promise.resolve().then(() => (init_paths(), exports_paths));
-          const { readFileSync: readFileSync18 } = await import("fs");
+          const { readFileSync: readFileSync20 } = await import("fs");
           let memoryContent;
           try {
-            memoryContent = readFileSync18(learningMemoryPath4(projectCwd), "utf-8");
+            memoryContent = readFileSync20(learningMemoryPath4(projectCwd), "utf-8");
           } catch {
             console.log("[mink] no learning memory found, skipping reflection");
             return;
@@ -4914,12 +5481,23 @@ ${memoryContent}`;
       console.log("[mink] project-suggestions: not yet implemented — skipping");
       break;
     }
+    case "learning-rules-mine": {
+      const { runMine: runMine2 } = await Promise.resolve().then(() => (init_llm_rules(), exports_llm_rules));
+      await runMine2(projectCwd, task.timeoutMs);
+      break;
+    }
+    case "learning-rules-curate": {
+      const { runCurate: runCurate2 } = await Promise.resolve().then(() => (init_llm_rules(), exports_llm_rules));
+      await runCurate2(projectCwd, task.timeoutMs);
+      break;
+    }
     default:
       throw new Error(`No executor defined for task: ${taskId}`);
   }
 }
-var BUILT_IN_TASKS, API_KEY_ENV_VARS;
+var BUILT_IN_TASKS;
 var init_task_registry = __esm(() => {
+  init_llm_runner();
   BUILT_IN_TASKS = [
     {
       id: "file-index-rescan",
@@ -4970,14 +5548,27 @@ var init_task_registry = __esm(() => {
       enabled: true,
       retryPolicy: { maxAttempts: 3, baseDelayMs: 60000 },
       timeoutMs: 300000
+    },
+    {
+      id: "learning-rules-mine",
+      name: "Learning Rules — Mine",
+      description: "Mine the action log for new learning rules via the AI CLI",
+      schedule: "30 3 * * *",
+      actionType: "ai-cli",
+      enabled: true,
+      retryPolicy: { maxAttempts: 2, baseDelayMs: 60000 },
+      timeoutMs: 300000
+    },
+    {
+      id: "learning-rules-curate",
+      name: "Learning Rules — Curate",
+      description: "AI-driven dedupe and contradiction sweep over the learning memory",
+      schedule: "0 4 * * 1",
+      actionType: "ai-cli",
+      enabled: true,
+      retryPolicy: { maxAttempts: 2, baseDelayMs: 60000 },
+      timeoutMs: 300000
     }
-  ];
-  API_KEY_ENV_VARS = [
-    "ANTHROPIC_API_KEY",
-    "CLAUDE_API_KEY",
-    "OPENAI_API_KEY",
-    "OPENAI_KEY",
-    "AI_API_KEY"
   ];
 });
 
@@ -5430,7 +6021,7 @@ var init_cron = __esm(() => {
 
 // src/core/note-linker.ts
 import { join as join16 } from "path";
-import { existsSync as existsSync15, readFileSync as readFileSync18, readdirSync as readdirSync4, statSync as statSync8 } from "fs";
+import { existsSync as existsSync17, readFileSync as readFileSync20, readdirSync as readdirSync4, statSync as statSync9 } from "fs";
 function extractWikilinks(content) {
   const links = [];
   let match;
@@ -5462,7 +6053,7 @@ function updateMasterIndex(vaultRootPath) {
   ];
   for (const cat of categories) {
     const dirPath = join16(vaultRootPath, cat.dir);
-    if (!existsSync15(dirPath))
+    if (!existsSync17(dirPath))
       continue;
     const files = collectMarkdownFiles(dirPath, vaultRootPath);
     if (files.length === 0 && cat.dir !== "inbox")
@@ -5495,7 +6086,7 @@ function collectMarkdownFiles(dirPath, rootPath) {
       if (entry.isDirectory()) {
         files.push(...collectMarkdownFiles(fullPath, rootPath));
       } else if (entry.name.endsWith(".md") && !entry.name.startsWith("_")) {
-        const stat2 = statSync8(fullPath);
+        const stat2 = statSync9(fullPath);
         const title = entry.name.replace(/\.md$/, "");
         const relativePath = fullPath.slice(rootPath.length + 1);
         files.push({ title, relativePath, mtime: stat2.mtimeMs });
@@ -5513,12 +6104,12 @@ var init_note_linker = __esm(() => {
 
 // src/core/vault-templates.ts
 import { join as join17 } from "path";
-import { existsSync as existsSync16, writeFileSync as writeFileSync8, readFileSync as readFileSync19, mkdirSync as mkdirSync10 } from "fs";
+import { existsSync as existsSync18, writeFileSync as writeFileSync8, readFileSync as readFileSync21, mkdirSync as mkdirSync10 } from "fs";
 function seedTemplates(templatesDir) {
   mkdirSync10(templatesDir, { recursive: true });
   for (const [name, content] of Object.entries(DEFAULT_TEMPLATES)) {
     const filePath = join17(templatesDir, `${name}.md`);
-    if (!existsSync16(filePath)) {
+    if (!existsSync18(filePath)) {
       writeFileSync8(filePath, content);
     }
   }
@@ -5526,8 +6117,8 @@ function seedTemplates(templatesDir) {
 function loadTemplate(templatesDir, templateName, vars) {
   const filePath = join17(templatesDir, `${templateName}.md`);
   let content;
-  if (existsSync16(filePath)) {
-    content = readFileSync19(filePath, "utf-8");
+  if (existsSync18(filePath)) {
+    content = readFileSync21(filePath, "utf-8");
   } else if (DEFAULT_TEMPLATES[templateName]) {
     content = DEFAULT_TEMPLATES[templateName];
   } else {
@@ -5681,7 +6272,7 @@ category: resources
 
 // src/core/note-writer.ts
 import { join as join18 } from "path";
-import { existsSync as existsSync17, readFileSync as readFileSync20 } from "fs";
+import { existsSync as existsSync19, readFileSync as readFileSync22 } from "fs";
 function slugifyTitle(title) {
   return title.toLowerCase().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80);
 }
@@ -5749,8 +6340,8 @@ ${meta.body}
 function appendToDaily(date, content) {
   const dir = vaultDailyDir();
   const filePath = join18(dir, `${date}.md`);
-  if (existsSync17(filePath)) {
-    const existing = readFileSync20(filePath, "utf-8");
+  if (existsSync19(filePath)) {
+    const existing = readFileSync22(filePath, "utf-8");
     const timestamp = new Date().toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
@@ -5788,7 +6379,7 @@ ${content}
   return filePath;
 }
 function ingestFile(sourcePath, meta) {
-  const raw = readFileSync20(sourcePath, "utf-8");
+  const raw = readFileSync22(sourcePath, "utf-8");
   const now = new Date().toISOString();
   const headingMatch = raw.match(/^#\s+(.+)$/m);
   const title = headingMatch?.[1] ?? sourcePath.split("/").pop().replace(/\.md$/, "");
@@ -5858,7 +6449,7 @@ var init_design_eval = __esm(() => {
 });
 
 // src/core/dashboard-api.ts
-import { existsSync as existsSync18, readFileSync as readFileSync21 } from "fs";
+import { existsSync as existsSync20, readFileSync as readFileSync23 } from "fs";
 import { readdirSync as readdirSync5, readFileSync as readFileSyncFS, existsSync as fsExistsSync } from "fs";
 import { join as join19, resolve as resolve4, normalize, sep } from "path";
 import { execSync as execSync3 } from "child_process";
@@ -5873,7 +6464,7 @@ function maskSecret(value, showLast = 4) {
   return "••••" + value.slice(-showLast);
 }
 function checkJsonFile2(name, filePath, validator) {
-  if (!existsSync18(filePath))
+  if (!existsSync20(filePath))
     return { name, status: "missing" };
   const data = safeReadJson(filePath);
   if (data === null)
@@ -5883,10 +6474,10 @@ function checkJsonFile2(name, filePath, validator) {
   return { name, status: "ok" };
 }
 function checkTextFile2(name, filePath) {
-  if (!existsSync18(filePath))
+  if (!existsSync20(filePath))
     return { name, status: "missing" };
   try {
-    readFileSync21(filePath, "utf-8");
+    readFileSync23(filePath, "utf-8");
     return { name, status: "ok" };
   } catch {
     return { name, status: "corrupt" };
@@ -5967,31 +6558,168 @@ function loadSchedulerPanel(cwd) {
     lastHeartbeat: manifest?.lastHeartbeat ?? null
   };
 }
-function loadLearningMemoryPanel(cwd) {
+function readLearningMemory(cwd) {
   const memPath = learningMemoryPath(cwd);
-  if (!existsSync18(memPath)) {
+  if (!existsSync20(memPath)) {
+    return createEmptyLearningMemory("unknown");
+  }
+  try {
+    return parseLearningMemory(readFileSync23(memPath, "utf-8"));
+  } catch {
+    return createEmptyLearningMemory("unknown");
+  }
+}
+function writeLearningMemory(cwd, mem) {
+  atomicWriteText(learningMemoryPath(cwd), serializeLearningMemory(mem));
+}
+function isValidSectionName(value) {
+  return typeof value === "string" && SECTION_LIST2.includes(value);
+}
+function loadLearningMemoryPanel(cwd) {
+  const mem = readLearningMemory(cwd);
+  const meta = loadMeta(cwd);
+  const suggestions = loadSuggestions(cwd);
+  const ai = resolveLearningMemoryAi();
+  const entries = [];
+  for (const section of SECTION_LIST2) {
+    const list = mem.sections[section] ?? [];
+    list.forEach((text, index) => {
+      const recorded = getMetaForEntry(meta, section, text);
+      entries.push({ section, index, text, meta: recorded });
+    });
+  }
+  return {
+    ...mem,
+    entries,
+    suggestionCount: pendingCount(suggestions),
+    ai: {
+      enabled: ai.enabled,
+      scheduledMining: ai.scheduledMining,
+      manualTriggers: ai.manualTriggers,
+      autoAcceptThreshold: ai.autoAcceptThreshold
+    }
+  };
+}
+function addLearningEntry(cwd, section, text, source = "user") {
+  if (!isValidSectionName(section)) {
+    return { ok: false, error: "invalid section" };
+  }
+  if (typeof text !== "string" || text.trim() === "") {
+    return { ok: false, error: "text required" };
+  }
+  const cleaned = text.trim();
+  const mem = readLearningMemory(cwd);
+  if (mem.sections[section].includes(cleaned)) {
+    return { ok: false, error: "duplicate entry" };
+  }
+  addEntry(mem, section, cleaned);
+  writeLearningMemory(cwd, mem);
+  const meta = loadMeta(cwd);
+  const ruleSource = source === "llm:auto" || source === "llm:refined" || source === "reflection" ? source : "user";
+  setMetaForEntry(meta, section, cleaned, { source: ruleSource });
+  saveMeta(cwd, meta);
+  return { ok: true, section, index: mem.sections[section].length - 1 };
+}
+function deleteLearningEntry(cwd, section, index) {
+  if (!isValidSectionName(section)) {
+    return { ok: false, error: "invalid section" };
+  }
+  if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+    return { ok: false, error: "invalid index" };
+  }
+  const mem = readLearningMemory(cwd);
+  const list = mem.sections[section];
+  if (index >= list.length) {
+    return { ok: false, error: "index out of range" };
+  }
+  const removedText = list[index];
+  removeEntry(mem, section, index);
+  writeLearningMemory(cwd, mem);
+  const meta = loadMeta(cwd);
+  removeMetaForEntry(meta, section, removedText);
+  saveMeta(cwd, meta);
+  return { ok: true };
+}
+function loadLearningSuggestionsPanel(cwd) {
+  const store = loadSuggestions(cwd);
+  return {
+    pending: store.suggestions.filter((s) => s.status === "pending"),
+    completed: store.suggestions.filter((s) => s.status !== "pending")
+  };
+}
+function triggerAcceptSuggestion(cwd, id, edits) {
+  const safeEdits = {};
+  if (edits?.section !== undefined) {
+    if (!isValidSectionName(edits.section)) {
+      return { ok: false, error: "invalid section" };
+    }
+    safeEdits.section = edits.section;
+  }
+  if (edits?.text !== undefined) {
+    if (typeof edits.text !== "string" || edits.text.trim() === "") {
+      return { ok: false, error: "invalid text" };
+    }
+    safeEdits.text = edits.text.trim();
+  }
+  const result = acceptSuggestion(cwd, id, safeEdits);
+  if (!result) {
+    return { ok: false, error: "suggestion not found or already resolved" };
+  }
+  return { ok: true };
+}
+function triggerRejectSuggestion(cwd, id) {
+  const ok = rejectSuggestion(cwd, id);
+  if (!ok)
+    return { ok: false, error: "suggestion not found" };
+  return { ok: true };
+}
+async function triggerRefineRule(cwd, section, text) {
+  if (!isValidSectionName(section))
+    return { error: "invalid section" };
+  if (typeof text !== "string" || text.trim() === "") {
+    return { error: "text required" };
+  }
+  const ai = resolveLearningMemoryAi();
+  if (!ai.enabled || !ai.manualTriggers) {
+    return { error: "Manual AI triggers are disabled" };
+  }
+  try {
+    const result = await refineRule(section, text.trim());
+    return result;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+async function triggerProposeRules(cwd, _window) {
+  const ai = resolveLearningMemoryAi();
+  if (!ai.enabled || !ai.manualTriggers) {
     return {
-      projectName: "unknown",
-      sections: {
-        "User Preferences": [],
-        "Key Learnings": [],
-        "Do-Not-Repeat": [],
-        "Decision Log": []
-      }
+      ok: false,
+      autoAccepted: 0,
+      queued: 0,
+      total: 0,
+      message: "Manual AI triggers are disabled"
     };
   }
   try {
-    const content = readFileSync21(memPath, "utf-8");
-    return parseLearningMemory(content);
-  } catch {
+    const proposed = await proposeRulesFromActionLog(cwd, {
+      maxBytes: ai.actionLogBytes,
+      maxRules: ai.maxRulesPerRun
+    });
+    const result = routeProposed(cwd, proposed, ai.autoAcceptThreshold);
     return {
-      projectName: "unknown",
-      sections: {
-        "User Preferences": [],
-        "Key Learnings": [],
-        "Do-Not-Repeat": [],
-        "Decision Log": []
-      }
+      ok: true,
+      autoAccepted: result.autoAccepted,
+      queued: result.queued,
+      total: proposed.length
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      autoAccepted: 0,
+      queued: 0,
+      total: 0,
+      message: err instanceof Error ? err.message : String(err)
     };
   }
 }
@@ -6658,12 +7386,17 @@ async function triggerConfigReset(key, all) {
     };
   }
 }
-var SECRET_KEY_PATTERNS, BOOLEAN_VALUES, GROUP_LABELS, CHANNEL_LOG_LIMIT = 120, TIMESTAMP_PREFIX, WIKI_TREE_MAX_DEPTH = 2, WIKI_TREE_EXCLUDES, DEFAULT_RECENT_LIMIT = 25, VALID_CATEGORIES, DEDUP_TTL_MS = 600000, dedupCache;
+var SECRET_KEY_PATTERNS, SECTION_LIST2, BOOLEAN_VALUES, GROUP_LABELS, CHANNEL_LOG_LIMIT = 120, TIMESTAMP_PREFIX, WIKI_TREE_MAX_DEPTH = 2, WIKI_TREE_EXCLUDES, DEFAULT_RECENT_LIMIT = 25, VALID_CATEGORIES, DEDUP_TTL_MS = 600000, dedupCache;
 var init_dashboard_api = __esm(() => {
   init_paths();
   init_fs_utils();
   init_token_ledger();
   init_learning_memory();
+  init_learning_memory_meta();
+  init_learning_suggestions();
+  init_global_config();
+  init_llm_rules();
+  init_fs_utils();
   init_bug_memory();
   init_action_log();
   init_daemon();
@@ -6681,6 +7414,12 @@ var init_dashboard_api = __esm(() => {
   init_config();
   init_design_eval();
   SECRET_KEY_PATTERNS = [/token/i, /secret/i, /password/i, /api[-_]?key/i];
+  SECTION_LIST2 = [
+    "User Preferences",
+    "Key Learnings",
+    "Do-Not-Repeat",
+    "Decision Log"
+  ];
   BOOLEAN_VALUES = new Set(["true", "false"]);
   GROUP_LABELS = {
     wiki: "Wiki",
@@ -6701,7 +7440,7 @@ var init_dashboard_api = __esm(() => {
 });
 
 // src/core/project-registry.ts
-import { readdirSync as readdirSync6, existsSync as existsSync19 } from "fs";
+import { readdirSync as readdirSync6, existsSync as existsSync21 } from "fs";
 import { join as join20 } from "path";
 function getProjectMeta(projDir) {
   const metaPath = join20(projDir, "project-meta.json");
@@ -6722,7 +7461,7 @@ function getProjectMeta(projDir) {
 }
 function listRegisteredProjects() {
   const projectsDir = join20(minkRoot(), "projects");
-  if (!existsSync19(projectsDir))
+  if (!existsSync21(projectsDir))
     return [];
   const entries = readdirSync6(projectsDir, { withFileTypes: true });
   const projects = [];
@@ -6753,7 +7492,7 @@ __export(exports_dashboard_server, {
   startDashboardServer: () => startDashboardServer
 });
 import { watch } from "fs";
-import { existsSync as existsSync20 } from "fs";
+import { existsSync as existsSync22 } from "fs";
 import { basename as basename7, dirname as dirname7, join as join21, extname as extname2 } from "path";
 
 class SSEManager {
@@ -6930,12 +7669,12 @@ async function startDashboardServer(cwd, options = {}) {
   const __dir = dirname7(new URL(import.meta.url).pathname);
   let pkgRoot = __dir;
   while (pkgRoot !== dirname7(pkgRoot)) {
-    if (existsSync20(join21(pkgRoot, "package.json")))
+    if (existsSync22(join21(pkgRoot, "package.json")))
       break;
     pkgRoot = dirname7(pkgRoot);
   }
   const dashboardOutDir = join21(pkgRoot, "dashboard", "out");
-  const dashboardBuilt = existsSync20(join21(dashboardOutDir, "index.html"));
+  const dashboardBuilt = existsSync22(join21(dashboardOutDir, "index.html"));
   let clientIdCounter = 0;
   if (!dashboardBuilt) {
     console.warn("[mink] dashboard not built. Run: cd dashboard && bun run build");
@@ -7077,6 +7816,8 @@ retry: 3000
               return jsonResponse(loadSchedulerPanel(resolvedCwd));
             case "/api/learning-memory":
               return jsonResponse(loadLearningMemoryPanel(resolvedCwd));
+            case "/api/learning-memory/suggestions":
+              return jsonResponse(loadLearningSuggestionsPanel(resolvedCwd));
             case "/api/action-log":
               return jsonResponse(loadActionLogPanel(resolvedCwd));
             case "/api/bugs":
@@ -7251,13 +7992,120 @@ retry: 3000
         if (pathname === "/api/rescan") {
           return triggerRescan(resolvedCwd).then((result) => jsonResponse(result, result.success ? 200 : 500));
         }
+        if (pathname === "/api/learning-memory/entries") {
+          try {
+            const body = await req.json();
+            const result = addLearningEntry(resolvedCwd, body.section, body.text, body.source);
+            if (result.ok) {
+              sseManager.broadcast({
+                fileId: "learning-memory",
+                timestamp: new Date().toISOString()
+              });
+              return jsonResponse(result, 200);
+            }
+            return jsonResponse(result, 400);
+          } catch (err) {
+            return jsonResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+          }
+        }
+        if (pathname.startsWith("/api/learning-memory/suggestions/")) {
+          const tail = pathname.slice("/api/learning-memory/suggestions/".length);
+          const acceptMatch = tail.match(/^([^/]+)\/accept$/);
+          const rejectMatch = tail.match(/^([^/]+)\/reject$/);
+          if (acceptMatch) {
+            try {
+              const body = await req.json().catch(() => ({}));
+              const result = triggerAcceptSuggestion(resolvedCwd, acceptMatch[1], {
+                section: body.section,
+                text: body.text
+              });
+              if (result.ok) {
+                sseManager.broadcast({
+                  fileId: "learning-memory",
+                  timestamp: new Date().toISOString()
+                });
+                return jsonResponse(result, 200);
+              }
+              return jsonResponse(result, 400);
+            } catch (err) {
+              return jsonResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+          }
+          if (rejectMatch) {
+            const result = triggerRejectSuggestion(resolvedCwd, rejectMatch[1]);
+            if (result.ok) {
+              sseManager.broadcast({
+                fileId: "learning-memory",
+                timestamp: new Date().toISOString()
+              });
+              return jsonResponse(result, 200);
+            }
+            return jsonResponse(result, 400);
+          }
+        }
+        if (pathname === "/api/learning-memory/refine") {
+          try {
+            const body = await req.json();
+            const result = await triggerRefineRule(resolvedCwd, body.section, body.text);
+            if ("error" in result) {
+              return jsonResponse(result, 400);
+            }
+            return jsonResponse(result, 200);
+          } catch (err) {
+            return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);
+          }
+        }
+        if (pathname === "/api/learning-memory/propose") {
+          try {
+            const body = await req.json().catch(() => ({}));
+            const win = typeof body.window === "string" ? body.window : undefined;
+            const result = await triggerProposeRules(resolvedCwd, win);
+            if (result.ok) {
+              sseManager.broadcast({
+                fileId: "learning-memory",
+                timestamp: new Date().toISOString()
+              });
+            }
+            return jsonResponse(result, result.ok ? 200 : 400);
+          } catch (err) {
+            return jsonResponse({
+              ok: false,
+              autoAccepted: 0,
+              queued: 0,
+              total: 0,
+              message: err instanceof Error ? err.message : String(err)
+            }, 500);
+          }
+        }
+      }
+      if (method === "DELETE") {
+        const resolvedCwd = resolveProjectCwd(url, activeCwd);
+        if (resolvedCwd === null) {
+          return jsonResponse({ error: "Project not found" }, 404);
+        }
+        if (pathname === "/api/learning-memory/entries") {
+          try {
+            const body = await req.json();
+            const result = deleteLearningEntry(resolvedCwd, body.section, body.index);
+            if (result.ok) {
+              sseManager.broadcast({
+                fileId: "learning-memory",
+                timestamp: new Date().toISOString()
+              });
+              return jsonResponse(result, 200);
+            }
+            return jsonResponse(result, 400);
+          } catch (err) {
+            return jsonResponse({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+          }
+        }
       }
       if (method === "OPTIONS") {
         return new Response(null, {
           status: 204,
           headers: {
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type"
           }
         });
@@ -7323,9 +8171,9 @@ var exports_dashboard = {};
 __export(exports_dashboard, {
   dashboard: () => dashboard
 });
-import { existsSync as existsSync21 } from "fs";
+import { existsSync as existsSync23 } from "fs";
 async function dashboard(cwd, args) {
-  if (!existsSync21(projectDir(cwd))) {
+  if (!existsSync23(projectDir(cwd))) {
     console.error("[mink] project not initialized. Run: mink init");
     process.exit(1);
   }
@@ -7344,7 +8192,7 @@ var init_dashboard = __esm(() => {
 
 // src/commands/init.ts
 import { execSync as execSync4 } from "child_process";
-import { mkdirSync as mkdirSync11, existsSync as existsSync22 } from "fs";
+import { mkdirSync as mkdirSync11, existsSync as existsSync24 } from "fs";
 import { resolve as resolve5, dirname as dirname8, basename as basename8, join as join22 } from "path";
 function detectRuntime2() {
   try {
@@ -7362,7 +8210,7 @@ function resolveCliPath2() {
   }
   const projectRoot = resolve5(selfDir, "../..");
   const distPath = join22(projectRoot, "dist", "cli.js");
-  if (existsSync22(distPath))
+  if (existsSync24(distPath))
     return distPath;
   return resolve5(selfDir, "../cli.ts");
 }
@@ -7418,7 +8266,7 @@ var init_init2 = __esm(() => {
 
 // src/core/daemon-service.ts
 import { execSync as execSync5 } from "child_process";
-import { existsSync as existsSync23, mkdirSync as mkdirSync12, unlinkSync as unlinkSync4, writeFileSync as writeFileSync9 } from "fs";
+import { existsSync as existsSync25, mkdirSync as mkdirSync12, unlinkSync as unlinkSync4, writeFileSync as writeFileSync9 } from "fs";
 import { homedir as homedir4 } from "os";
 import { dirname as dirname9, join as join23 } from "path";
 function detectPlatform() {
@@ -7430,7 +8278,7 @@ function detectPlatform() {
 }
 function resolveServiceInvocation() {
   const entry = process.argv[1];
-  if (entry && !/\.(js|ts|mjs|cjs)$/.test(entry) && existsSync23(entry)) {
+  if (entry && !/\.(js|ts|mjs|cjs)$/.test(entry) && existsSync25(entry)) {
     return {
       executable: entry,
       args: ["daemon", "start"],
@@ -7526,7 +8374,7 @@ function installService(options = {}) {
     process.exit(1);
   }
   const paths = servicePaths(platform2);
-  if (existsSync23(paths.unitFile) && !options.force) {
+  if (existsSync25(paths.unitFile) && !options.force) {
     console.error(`[mink] unit file already exists: ${paths.unitFile}`);
     console.error("       re-run with --force to overwrite, or run `mink daemon uninstall` first");
     process.exit(1);
@@ -7559,7 +8407,7 @@ function uninstallService() {
     process.exit(1);
   }
   const paths = servicePaths(platform2);
-  if (!existsSync23(paths.unitFile)) {
+  if (!existsSync25(paths.unitFile)) {
     console.log(`[mink] no unit file at ${paths.unitFile} — nothing to uninstall`);
     return;
   }
@@ -7591,7 +8439,7 @@ var exports_daemon = {};
 __export(exports_daemon, {
   daemon: () => daemon
 });
-import { readFileSync as readFileSync22, existsSync as existsSync24 } from "fs";
+import { readFileSync as readFileSync24, existsSync as existsSync26 } from "fs";
 async function daemon(cwd, args) {
   const subcommand = args[0];
   switch (subcommand) {
@@ -7607,12 +8455,12 @@ async function daemon(cwd, args) {
       break;
     case "logs": {
       const logPath = schedulerLogPath();
-      if (!existsSync24(logPath)) {
+      if (!existsSync26(logPath)) {
         console.log("[mink] no log file found");
         return;
       }
       try {
-        const content = readFileSync22(logPath, "utf-8");
+        const content = readFileSync24(logPath, "utf-8");
         const lines = content.split(`
 `);
         const tail = lines.slice(-50).join(`
@@ -8077,7 +8925,7 @@ var init_restore = __esm(() => {
 });
 
 // src/core/design-eval/server-detect.ts
-import { readFileSync as readFileSync23 } from "fs";
+import { readFileSync as readFileSync25 } from "fs";
 import { join as join24 } from "path";
 async function probePort(port) {
   try {
@@ -8100,7 +8948,7 @@ async function findRunningServer(ports = DEFAULT_PROBE_PORTS) {
 }
 function detectDevCommand(cwd) {
   try {
-    const raw = readFileSync23(join24(cwd, "package.json"), "utf-8");
+    const raw = readFileSync25(join24(cwd, "package.json"), "utf-8");
     const pkg = JSON.parse(raw);
     const scripts = pkg.scripts;
     if (!scripts || typeof scripts !== "object")
@@ -8120,10 +8968,10 @@ var init_server_detect = __esm(() => {
 });
 
 // src/core/design-eval/route-detect.ts
-import { existsSync as existsSync25, readdirSync as readdirSync7, statSync as statSync9 } from "fs";
+import { existsSync as existsSync27, readdirSync as readdirSync7, statSync as statSync10 } from "fs";
 import { join as join25, relative as relative6, sep as sep2 } from "path";
 function detectFramework(cwd) {
-  const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync25(join25(cwd, `${name}.${ext}`))) || existsSync25(join25(cwd, name));
+  const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync27(join25(cwd, `${name}.${ext}`))) || existsSync27(join25(cwd, name));
   if (has("next.config"))
     return "nextjs";
   if (has("svelte.config"))
@@ -8149,7 +8997,7 @@ function detectRoutes(cwd) {
 function detectNextRoutes(cwd) {
   const routes = [];
   const appDir = join25(cwd, "app");
-  if (existsSync25(appDir)) {
+  if (existsSync27(appDir)) {
     const pageFiles = findFiles(appDir, /^page\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
       const rel = relative6(appDir, file);
@@ -8161,7 +9009,7 @@ function detectNextRoutes(cwd) {
     }
   }
   const pagesDir = join25(cwd, "pages");
-  if (existsSync25(pagesDir)) {
+  if (existsSync27(pagesDir)) {
     const pageFiles = findFiles(pagesDir, /\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
       const rel = relative6(pagesDir, file);
@@ -8181,7 +9029,7 @@ function detectNextRoutes(cwd) {
 }
 function detectSvelteKitRoutes(cwd) {
   const routesDir = join25(cwd, "src", "routes");
-  if (!existsSync25(routesDir))
+  if (!existsSync27(routesDir))
     return ["/"];
   const routes = [];
   const pageFiles = findFiles(routesDir, /^\+page\.svelte$/);
@@ -8197,7 +9045,7 @@ function detectSvelteKitRoutes(cwd) {
 }
 function detectNuxtRoutes(cwd) {
   const pagesDir = join25(cwd, "pages");
-  if (!existsSync25(pagesDir))
+  if (!existsSync27(pagesDir))
     return ["/"];
   const routes = [];
   const vueFiles = findFiles(pagesDir, /\.vue$/);
@@ -8225,7 +9073,7 @@ function findFiles(dir, pattern) {
         continue;
       const full = join25(current, entry);
       try {
-        const stat2 = statSync9(full);
+        const stat2 = statSync10(full);
         if (stat2.isDirectory()) {
           walk(full);
         } else if (pattern.test(entry)) {
@@ -46308,7 +47156,7 @@ var require_websocket = __commonJS((exports, module) => {
   var http = __require("http");
   var net = __require("net");
   var tls = __require("tls");
-  var { randomBytes: randomBytes2, createHash: createHash2 } = __require("crypto");
+  var { randomBytes: randomBytes2, createHash: createHash3 } = __require("crypto");
   var { Duplex, Readable } = __require("stream");
   var { URL: URL2 } = __require("url");
   var PerMessageDeflate = require_permessage_deflate();
@@ -46847,7 +47695,7 @@ var require_websocket = __commonJS((exports, module) => {
         abortHandshake(websocket, socket, "Invalid Upgrade header");
         return;
       }
-      const digest = createHash2("sha1").update(key + GUID).digest("base64");
+      const digest = createHash3("sha1").update(key + GUID).digest("base64");
       if (res.headers["sec-websocket-accept"] !== digest) {
         abortHandshake(websocket, socket, "Invalid Sec-WebSocket-Accept header");
         return;
@@ -47220,7 +48068,7 @@ var require_websocket_server = __commonJS((exports, module) => {
   var EventEmitter3 = __require("events");
   var http = __require("http");
   var { Duplex } = __require("stream");
-  var { createHash: createHash2 } = __require("crypto");
+  var { createHash: createHash3 } = __require("crypto");
   var extension = require_extension();
   var PerMessageDeflate = require_permessage_deflate();
   var subprotocol = require_subprotocol();
@@ -47433,7 +48281,7 @@ var require_websocket_server = __commonJS((exports, module) => {
       }
       if (this._state > RUNNING)
         return abortHandshake(socket, 503);
-      const digest = createHash2("sha1").update(key + GUID).digest("base64");
+      const digest = createHash3("sha1").update(key + GUID).digest("base64");
       const headers = [
         "HTTP/1.1 101 Switching Protocols",
         "Upgrade: websocket",
@@ -72628,7 +73476,7 @@ var require_ffi_WASM_RELEASE_SYNC = __commonJS((exports) => {
 
 // node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js
 var require_emscripten_module_WASM_RELEASE_SYNC = __commonJS((exports, module) => {
-  var __dirname = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
+  var __dirname = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
   var QuickJSRaw = (() => {
     var _scriptDir = typeof document !== "undefined" && document.currentScript ? document.currentScript.src : undefined;
     if (typeof __filename !== "undefined")
@@ -80469,7 +81317,7 @@ var init_fileUtil = __esm(() => {
 // node_modules/@puppeteer/browsers/lib/esm/install.js
 import assert2 from "node:assert";
 import { spawnSync as spawnSync3 } from "node:child_process";
-import { existsSync as existsSync26, readFileSync as readFileSync24 } from "node:fs";
+import { existsSync as existsSync28, readFileSync as readFileSync26 } from "node:fs";
 import { mkdir as mkdir2, unlink } from "node:fs/promises";
 import os5 from "node:os";
 import path8 from "node:path";
@@ -80522,7 +81370,7 @@ async function installWithProviders(options) {
         continue;
       }
       debugInstall(`Successfully got URL from ${provider.getName()}: ${url}`);
-      if (!existsSync26(browserRoot)) {
+      if (!existsSync28(browserRoot)) {
         await mkdir2(browserRoot, { recursive: true });
       }
       return await installUrl(url, options, provider);
@@ -80555,11 +81403,11 @@ async function installDeps(installedBrowser) {
     return;
   }
   const depsPath = path8.join(path8.dirname(installedBrowser.executablePath), "deb.deps");
-  if (!existsSync26(depsPath)) {
+  if (!existsSync28(depsPath)) {
     debugInstall(`deb.deps file was not found at ${depsPath}`);
     return;
   }
-  const data = readFileSync24(depsPath, "utf-8").split(`
+  const data = readFileSync26(depsPath, "utf-8").split(`
 `).join(",");
   if (process.getuid?.() !== 0) {
     throw new Error("Installing system dependencies requires root privileges");
@@ -80597,11 +81445,11 @@ async function installUrl(url, options, provider) {
   const cache = new Cache(options.cacheDir);
   const browserRoot = cache.browserRoot(options.browser);
   const archivePath = path8.join(browserRoot, `${options.buildId}-${fileName}`);
-  if (!existsSync26(browserRoot)) {
+  if (!existsSync28(browserRoot)) {
     await mkdir2(browserRoot, { recursive: true });
   }
   if (!options.unpack) {
-    if (existsSync26(archivePath)) {
+    if (existsSync28(archivePath)) {
       return archivePath;
     }
     debugInstall(`Downloading binary from ${url}`);
@@ -80622,8 +81470,8 @@ async function installUrl(url, options, provider) {
     cache.writeExecutablePath(options.browser, options.platform, options.buildId, relativeExecutablePath6);
   }
   try {
-    if (existsSync26(outputPath)) {
-      if (!existsSync26(installedBrowser.executablePath)) {
+    if (existsSync28(outputPath)) {
+      if (!existsSync28(installedBrowser.executablePath)) {
         throw new Error(`The browser folder (${outputPath}) exists but the executable (${installedBrowser.executablePath}) is missing`);
       }
       await runSetup(installedBrowser);
@@ -80632,7 +81480,7 @@ async function installUrl(url, options, provider) {
       }
       return installedBrowser;
     }
-    if (!existsSync26(archivePath)) {
+    if (!existsSync28(archivePath)) {
       debugInstall(`Downloading binary from ${url}`);
       try {
         debugTime("download");
@@ -80661,7 +81509,7 @@ async function installUrl(url, options, provider) {
     }
     return installedBrowser;
   } finally {
-    if (existsSync26(archivePath)) {
+    if (existsSync28(archivePath)) {
       await unlink(archivePath);
     }
   }
@@ -80672,7 +81520,7 @@ async function runSetup(installedBrowser) {
       debugTime("permissions");
       const browserDir = path8.dirname(installedBrowser.executablePath);
       const setupExePath = path8.join(browserDir, "setup.exe");
-      if (!existsSync26(setupExePath)) {
+      if (!existsSync28(setupExePath)) {
         return;
       }
       spawnSync3(path8.join(browserDir, "setup.exe"), [`--configure-browser-in-directory=` + browserDir], {
@@ -81054,10 +81902,10 @@ var init_cliui = __esm(() => {
 
 // node_modules/escalade/sync/index.mjs
 import { dirname as dirname11, resolve as resolve9 } from "path";
-import { readdirSync as readdirSync8, statSync as statSync10 } from "fs";
+import { readdirSync as readdirSync8, statSync as statSync11 } from "fs";
 function sync_default(start, callback) {
   let dir = resolve9(".", start);
-  let tmp, stats = statSync10(dir);
+  let tmp, stats = statSync11(dir);
   if (!stats.isDirectory()) {
     dir = dirname11(dir);
   }
@@ -82085,21 +82933,21 @@ var init_yerror = __esm(() => {
 });
 
 // node_modules/y18n/build/lib/platform-shims/node.js
-import { readFileSync as readFileSync25, statSync as statSync11, writeFile } from "fs";
+import { readFileSync as readFileSync27, statSync as statSync12, writeFile } from "fs";
 import { format as format2 } from "util";
 import { resolve as resolve11 } from "path";
 var node_default;
 var init_node = __esm(() => {
   node_default = {
     fs: {
-      readFileSync: readFileSync25,
+      readFileSync: readFileSync27,
       writeFile
     },
     format: format2,
     resolve: resolve11,
     exists: (file) => {
       try {
-        return statSync11(file).isFile();
+        return statSync12(file).isFile();
       } catch (err) {
         return false;
       }
@@ -82277,7 +83125,7 @@ var init_y18n = __esm(() => {
 // node_modules/yargs/lib/platform-shims/esm.mjs
 import { notStrictEqual, strictEqual } from "assert";
 import { inspect } from "util";
-import { readFileSync as readFileSync26 } from "fs";
+import { readFileSync as readFileSync28 } from "fs";
 import { fileURLToPath } from "url";
 import { basename as basename10, dirname as dirname12, extname as extname3, relative as relative7, resolve as resolve12 } from "path";
 var REQUIRE_ERROR = "require is not supported by ESM", REQUIRE_DIRECTORY_ERROR = "loading a directory of commands is not supported yet for ESM", __dirname2, mainFilename, esm_default;
@@ -82326,7 +83174,7 @@ var init_esm = __esm(() => {
       nextTick: process.nextTick,
       stdColumns: typeof process.stdout.columns !== "undefined" ? process.stdout.columns : null
     },
-    readFileSync: readFileSync26,
+    readFileSync: readFileSync28,
     require: () => {
       throw new YError(REQUIRE_ERROR);
     },
@@ -86251,7 +87099,7 @@ var init_PipeTransport = __esm(() => {
 });
 
 // node_modules/puppeteer-core/lib/esm/puppeteer/node/BrowserLauncher.js
-import { existsSync as existsSync27 } from "node:fs";
+import { existsSync as existsSync29 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join27 } from "node:path";
 
@@ -86278,7 +87126,7 @@ class BrowserLauncher {
       ...options,
       protocol
     });
-    if (!existsSync27(launchArgs.executablePath)) {
+    if (!existsSync29(launchArgs.executablePath)) {
       throw new Error(`Browser was not found at the configured executablePath (${launchArgs.executablePath})`);
     }
     const usePipe = launchArgs.args.includes("--remote-debugging-pipe");
@@ -86353,7 +87201,7 @@ class BrowserLauncher {
       browserCloseCallback();
       const logs = browserProcess.getRecentLogs().join(`
 `);
-      if (logs.includes("Failed to create a ProcessSingleton for your profile directory") || process.platform === "win32" && existsSync27(join27(launchArgs.userDataDir, "lockfile"))) {
+      if (logs.includes("Failed to create a ProcessSingleton for your profile directory") || process.platform === "win32" && existsSync29(join27(launchArgs.userDataDir, "lockfile"))) {
         throw new Error(`The browser is already running for ${launchArgs.userDataDir}. Use a different \`userDataDir\` or stop the running browser first.`);
       }
       if (logs.includes("Missing X server") && options.headless === false) {
@@ -86448,7 +87296,7 @@ class BrowserLauncher {
   resolveExecutablePath(headless, validatePath = true) {
     let executablePath = this.puppeteer.configuration.executablePath;
     if (executablePath) {
-      if (validatePath && !existsSync27(executablePath)) {
+      if (validatePath && !existsSync29(executablePath)) {
         throw new Error(`Tried to find the browser at the configured path (${executablePath}), but no executable was found.`);
       }
       return executablePath;
@@ -86471,7 +87319,7 @@ class BrowserLauncher {
       browser: browserType,
       buildId: this.puppeteer.browserVersion
     });
-    if (validatePath && !existsSync27(executablePath)) {
+    if (validatePath && !existsSync29(executablePath)) {
       const configVersion = this.puppeteer.configuration?.[this.browser]?.version;
       if (configVersion) {
         throw new Error(`Tried to find the browser at the configured path (${executablePath}) for version ${configVersion}, but no executable was found.`);
@@ -87286,17 +88134,17 @@ var init_puppeteer_core = __esm(() => {
 });
 
 // src/core/design-eval/capture.ts
-import { mkdirSync as mkdirSync13, statSync as statSync12, existsSync as existsSync28 } from "fs";
+import { mkdirSync as mkdirSync13, statSync as statSync13, existsSync as existsSync30 } from "fs";
 import { join as join28 } from "path";
 function findBrowser() {
   const platform2 = process.platform;
   const paths = CHROME_PATHS[platform2] ?? [];
   for (const p of paths) {
-    if (existsSync28(p))
+    if (existsSync30(p))
       return p;
   }
   const minkBrowsers = join28(minkRoot(), "browsers");
-  if (existsSync28(minkBrowsers)) {
+  if (existsSync30(minkBrowsers)) {
     const found = findChromeInDir(minkBrowsers);
     if (found)
       return found;
@@ -87313,13 +88161,13 @@ function findBrowser() {
 `));
 }
 function findChromeInDir(dir) {
-  const { readdirSync: readdirSync9, statSync: statSync13 } = __require("fs");
+  const { readdirSync: readdirSync9, statSync: statSync14 } = __require("fs");
   try {
     const entries = readdirSync9(dir);
     for (const entry of entries) {
       const full = join28(dir, entry);
       try {
-        const stat2 = statSync13(full);
+        const stat2 = statSync14(full);
         if (stat2.isDirectory()) {
           const found = findChromeInDir(full);
           if (found)
@@ -87379,7 +88227,7 @@ async function captureRoute(page, route, baseUrl, viewport, options) {
     });
     let fileSize = 0;
     try {
-      fileSize = statSync12(filePath).size;
+      fileSize = statSync13(filePath).size;
     } catch {}
     results.push({
       route,
@@ -88829,7 +89677,7 @@ var exports_wiki = {};
 __export(exports_wiki, {
   wiki: () => wiki
 });
-import { existsSync as existsSync29, statSync as statSync13 } from "fs";
+import { existsSync as existsSync31, statSync as statSync14 } from "fs";
 import { resolve as resolve13 } from "path";
 import { homedir as homedir5 } from "os";
 async function wiki(_cwd, args) {
@@ -88885,7 +89733,7 @@ async function wikiInit(args) {
     console.log(`[mink] initializing vault at ${targetPath}`);
     console.log("  (set a custom path with: mink wiki init /path/to/vault)");
   }
-  const isExisting = existsSync29(targetPath) && statSync13(targetPath).isDirectory();
+  const isExisting = existsSync31(targetPath) && statSync14(targetPath).isDirectory();
   setConfigValue("wiki.path", targetPath);
   ensureVaultStructure();
   seedTemplates(vaultTemplates());
@@ -89108,7 +89956,7 @@ __export(exports_note, {
   note: () => note
 });
 import { resolve as resolve14 } from "path";
-import { existsSync as existsSync30, readFileSync as readFileSync27 } from "fs";
+import { existsSync as existsSync32, readFileSync as readFileSync29 } from "fs";
 async function note(cwd, args) {
   if (!isWikiEnabled()) {
     console.error("[mink] wiki feature is disabled");
@@ -89133,13 +89981,13 @@ async function note(cwd, args) {
     const date = new Date().toISOString().split("T")[0];
     const content = parsed.positional || parsed.body || "";
     const filePath = appendToDaily(date, content);
-    updateVaultIndexForFile(filePath, readFileSync27(filePath, "utf-8"));
+    updateVaultIndexForFile(filePath, readFileSync29(filePath, "utf-8"));
     console.log(`[mink] daily note: ${filePath}`);
     return;
   }
   if (parsed.file) {
     const sourcePath = resolve14(cwd, parsed.file);
-    if (!existsSync30(sourcePath)) {
+    if (!existsSync32(sourcePath)) {
       console.error(`[mink] file not found: ${sourcePath}`);
       process.exit(1);
     }
@@ -89303,7 +90151,7 @@ __export(exports_skill, {
 import { join as join29, resolve as resolve15, dirname as dirname14 } from "path";
 import { homedir as homedir6 } from "os";
 import {
-  existsSync as existsSync31,
+  existsSync as existsSync33,
   mkdirSync as mkdirSync14,
   copyFileSync,
   unlinkSync as unlinkSync5,
@@ -89315,7 +90163,7 @@ import {
 function getSkillsSourceDir() {
   let dir = dirname14(new URL(import.meta.url).pathname);
   while (true) {
-    if (existsSync31(join29(dir, "package.json")) && existsSync31(join29(dir, "skills"))) {
+    if (existsSync33(join29(dir, "package.json")) && existsSync33(join29(dir, "skills"))) {
       return join29(dir, "skills");
     }
     const parent = dirname14(dir);
@@ -89327,12 +90175,12 @@ function getSkillsSourceDir() {
 }
 function getAvailableSkills() {
   const dir = getSkillsSourceDir();
-  if (!existsSync31(dir))
+  if (!existsSync33(dir))
     return [];
-  return readdirSync9(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync31(join29(dir, d.name, "SKILL.md"))).map((d) => d.name);
+  return readdirSync9(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync33(join29(dir, d.name, "SKILL.md"))).map((d) => d.name);
 }
 function isInstalled(skillName) {
-  return existsSync31(join29(AGENTS_SKILLS_DIR, skillName, "SKILL.md"));
+  return existsSync33(join29(AGENTS_SKILLS_DIR, skillName, "SKILL.md"));
 }
 async function skill(args) {
   const sub = args[0];
@@ -89371,7 +90219,7 @@ function skillInstall(name) {
     const srcDir = join29(sourceDir, skillName);
     const srcFile = join29(srcDir, "SKILL.md");
     const destDir = join29(AGENTS_SKILLS_DIR, skillName);
-    if (!existsSync31(srcFile)) {
+    if (!existsSync33(srcFile)) {
       console.error(`[mink] skill not found: ${skillName}`);
       continue;
     }
@@ -89380,7 +90228,7 @@ function skillInstall(name) {
     mkdirSync14(CLAUDE_SKILLS_DIR, { recursive: true });
     const symlink = join29(CLAUDE_SKILLS_DIR, skillName);
     try {
-      if (existsSync31(symlink)) {
+      if (existsSync33(symlink)) {
         if (lstatSync2(symlink).isSymbolicLink() || lstatSync2(symlink).isFile()) {
           unlinkSync5(symlink);
         } else {
@@ -89399,14 +90247,14 @@ function skillUninstall(name) {
   const skills = name ? [name] : getAvailableSkills();
   for (const skillName of skills) {
     const destDir = join29(AGENTS_SKILLS_DIR, skillName);
-    if (!existsSync31(destDir)) {
+    if (!existsSync33(destDir)) {
       console.log(`[mink] not installed: ${skillName}`);
       continue;
     }
     rmSync(destDir, { recursive: true, force: true });
     const symlink = join29(CLAUDE_SKILLS_DIR, skillName);
     try {
-      if (existsSync31(symlink))
+      if (existsSync33(symlink))
         unlinkSync5(symlink);
     } catch {}
     console.log(`[mink] uninstalled: ${skillName}`);
@@ -89464,17 +90312,17 @@ __export(exports_agent, {
 import { join as join30, resolve as resolve16, dirname as dirname15 } from "path";
 import { homedir as homedir7 } from "os";
 import {
-  existsSync as existsSync32,
+  existsSync as existsSync34,
   mkdirSync as mkdirSync15,
-  readFileSync as readFileSync28,
+  readFileSync as readFileSync30,
   writeFileSync as writeFileSync10
 } from "fs";
-import { createHash as createHash2 } from "crypto";
+import { createHash as createHash3 } from "crypto";
 import { spawnSync as spawnSync5 } from "child_process";
 function getAgentTemplatePath() {
   let dir = dirname15(new URL(import.meta.url).pathname);
   while (true) {
-    if (existsSync32(join30(dir, "package.json")) && existsSync32(join30(dir, "agents", TEMPLATE_FILE))) {
+    if (existsSync34(join30(dir, "package.json")) && existsSync34(join30(dir, "agents", TEMPLATE_FILE))) {
       return join30(dir, "agents", TEMPLATE_FILE);
     }
     const parent = dirname15(dir);
@@ -89488,9 +90336,9 @@ function getMinkVersion() {
   let dir = dirname15(new URL(import.meta.url).pathname);
   while (true) {
     const pkgPath = join30(dir, "package.json");
-    if (existsSync32(pkgPath)) {
+    if (existsSync34(pkgPath)) {
       try {
-        const pkg = JSON.parse(readFileSync28(pkgPath, "utf-8"));
+        const pkg = JSON.parse(readFileSync30(pkgPath, "utf-8"));
         if (pkg.name && pkg.version)
           return pkg.version;
       } catch {}
@@ -89510,7 +90358,7 @@ function renderTemplate(template, vars) {
   return out;
 }
 function sha256(text) {
-  return createHash2("sha256").update(text).digest("hex");
+  return createHash3("sha256").update(text).digest("hex");
 }
 function claudeAgentsDir() {
   return join30(homedir7(), ".claude", "agents");
@@ -89520,23 +90368,23 @@ function installedAgentPath() {
 }
 function installAgentDefinition(opts) {
   const templatePath = getAgentTemplatePath();
-  if (!existsSync32(templatePath)) {
+  if (!existsSync34(templatePath)) {
     throw new Error(`[mink agent] bundled agent template not found at ${templatePath}
 ` + "  This usually means the package was installed without bundled assets.");
   }
   const installed = installedAgentPath();
-  if (opts.skip && existsSync32(installed)) {
+  if (opts.skip && existsSync34(installed)) {
     return { action: "skipped", path: installed };
   }
-  const template = readFileSync28(templatePath, "utf-8");
+  const template = readFileSync30(templatePath, "utf-8");
   const rendered = renderTemplate(template, {
     MINK_ROOT: minkRoot(),
     VAULT_PATH: resolveVaultPath(),
     MINK_VERSION: getMinkVersion()
   });
-  const exists = existsSync32(installed);
+  const exists = existsSync34(installed);
   if (!opts.force && exists) {
-    const current = readFileSync28(installed, "utf-8");
+    const current = readFileSync30(installed, "utf-8");
     if (sha256(current) === sha256(rendered)) {
       return { action: "unchanged", path: installed };
     }
@@ -89612,7 +90460,7 @@ async function agent(_cwd, rawArgs) {
   }
   const skipUpdate = args.noUpdate || process.env.MINK_AGENT_NO_UPDATE === "1";
   const root = minkRoot();
-  if (!existsSync32(root)) {
+  if (!existsSync34(root)) {
     mkdirSync15(root, { recursive: true });
   }
   let result;
@@ -90196,9 +91044,9 @@ switch (command2) {
   case "-v": {
     const { resolve: resolve17, dirname: dirname16 } = await import("path");
     const cliPath = resolve17(dirname16(new URL(import.meta.url).pathname));
-    const { readFileSync: readFileSync29 } = await import("fs");
+    const { readFileSync: readFileSync31 } = await import("fs");
     try {
-      const pkg = JSON.parse(readFileSync29(resolve17(cliPath, "../package.json"), "utf-8"));
+      const pkg = JSON.parse(readFileSync31(resolve17(cliPath, "../package.json"), "utf-8"));
       console.log(`mink ${pkg.version}`);
     } catch {
       console.log("mink (unknown version)");

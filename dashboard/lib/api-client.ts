@@ -1,5 +1,23 @@
-import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, SchedulerPayload, BugLogPayload, ActionLogPayload, ActionResult, DesignPayload, ConfigPanelPayload, SyncPanelPayload, ChannelPanelPayload, WikiPanelPayload, WikiNotePayload } from "@mink/types/dashboard";
-import type { LearningMemory } from "@mink/types/learning-memory";
+import type {
+  OverviewPayload,
+  TokenLedgerPayload,
+  FileIndexPayload,
+  SchedulerPayload,
+  BugLogPayload,
+  ActionLogPayload,
+  ActionResult,
+  DesignPayload,
+  ConfigPanelPayload,
+  SyncPanelPayload,
+  ChannelPanelPayload,
+  WikiPanelPayload,
+  WikiNotePayload,
+  LearningMemoryPayload,
+  LearningSuggestionsPayload,
+  RefineRulePayload,
+  ProposeRulesResult,
+} from "@mink/types/dashboard";
+import type { SectionName } from "@mink/types/learning-memory";
 import type { ProjectsResponse } from "@/types/project";
 
 async function fetchApi<T>(path: string, projectId?: string): Promise<T> {
@@ -32,7 +50,99 @@ export function fetchScheduler(projectId?: string) {
 }
 
 export function fetchLearningMemory(projectId?: string) {
-  return fetchApi<LearningMemory>("/api/learning-memory", projectId);
+  return fetchApi<LearningMemoryPayload>("/api/learning-memory", projectId);
+}
+
+export function fetchLearningSuggestions(projectId?: string) {
+  return fetchApi<LearningSuggestionsPayload>(
+    "/api/learning-memory/suggestions",
+    projectId
+  );
+}
+
+function projectQuery(projectId?: string): string {
+  return projectId ? `?project=${encodeURIComponent(projectId)}` : "";
+}
+
+export interface AddLearningEntryResult extends ActionResult {
+  ok?: boolean;
+  section?: SectionName;
+  index?: number;
+}
+
+export async function addLearningEntry(
+  args: { section: SectionName; text: string; source?: string },
+  projectId?: string
+): Promise<AddLearningEntryResult> {
+  const res = await fetch(`/api/learning-memory/entries${projectQuery(projectId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  return res.json();
+}
+
+export async function deleteLearningEntry(
+  args: { section: SectionName; index: number },
+  projectId?: string
+): Promise<ActionResult & { ok?: boolean }> {
+  const res = await fetch(`/api/learning-memory/entries${projectQuery(projectId)}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  return res.json();
+}
+
+export async function acceptLearningSuggestion(
+  id: string,
+  edits?: { section?: SectionName; text?: string },
+  projectId?: string
+): Promise<ActionResult & { ok?: boolean }> {
+  const res = await fetch(
+    `/api/learning-memory/suggestions/${encodeURIComponent(id)}/accept${projectQuery(projectId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(edits ?? {}),
+    }
+  );
+  return res.json();
+}
+
+export async function rejectLearningSuggestion(
+  id: string,
+  projectId?: string
+): Promise<ActionResult & { ok?: boolean }> {
+  const res = await fetch(
+    `/api/learning-memory/suggestions/${encodeURIComponent(id)}/reject${projectQuery(projectId)}`,
+    { method: "POST" }
+  );
+  return res.json();
+}
+
+export async function refineLearningRule(
+  args: { section: SectionName; text: string },
+  projectId?: string
+): Promise<RefineRulePayload | { error: string }> {
+  const res = await fetch(`/api/learning-memory/refine${projectQuery(projectId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  return res.json();
+}
+
+export async function proposeLearningRules(
+  window?: "last-session" | "today",
+  projectId?: string
+): Promise<ProposeRulesResult> {
+  const res = await fetch(`/api/learning-memory/propose${projectQuery(projectId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(window ? { window } : {}),
+  });
+  return res.json();
 }
 
 export function fetchActionLog(projectId?: string) {

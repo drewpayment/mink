@@ -8,6 +8,13 @@ import {
   loadFileIndexPanel,
   loadSchedulerPanel,
   loadLearningMemoryPanel,
+  loadLearningSuggestionsPanel,
+  addLearningEntry,
+  deleteLearningEntry,
+  triggerAcceptSuggestion,
+  triggerRejectSuggestion,
+  triggerRefineRule,
+  triggerProposeRules,
   loadActionLogPanel,
   loadBugLogPanel,
   loadDesignPanel,
@@ -523,6 +530,8 @@ export async function startDashboardServer(
               return jsonResponse(loadSchedulerPanel(resolvedCwd));
             case "/api/learning-memory":
               return jsonResponse(loadLearningMemoryPanel(resolvedCwd));
+            case "/api/learning-memory/suggestions":
+              return jsonResponse(loadLearningSuggestionsPanel(resolvedCwd));
             case "/api/action-log":
               return jsonResponse(loadActionLogPanel(resolvedCwd));
             case "/api/bugs":
@@ -801,6 +810,159 @@ export async function startDashboardServer(
             jsonResponse(result, result.success ? 200 : 500)
           );
         }
+
+        // POST /api/learning-memory/entries — manual rule add
+        if (pathname === "/api/learning-memory/entries") {
+          try {
+            const body = (await req.json()) as {
+              section?: unknown;
+              text?: unknown;
+              source?: unknown;
+            };
+            const result = addLearningEntry(
+              resolvedCwd,
+              body.section,
+              body.text,
+              body.source
+            );
+            if (result.ok) {
+              sseManager.broadcast({
+                fileId: "learning-memory",
+                timestamp: new Date().toISOString(),
+              });
+              return jsonResponse(result, 200);
+            }
+            return jsonResponse(result, 400);
+          } catch (err) {
+            return jsonResponse(
+              { ok: false, error: err instanceof Error ? err.message : String(err) },
+              500
+            );
+          }
+        }
+
+        // POST /api/learning-memory/suggestions/:id/accept
+        // POST /api/learning-memory/suggestions/:id/reject
+        if (pathname.startsWith("/api/learning-memory/suggestions/")) {
+          const tail = pathname.slice("/api/learning-memory/suggestions/".length);
+          const acceptMatch = tail.match(/^([^/]+)\/accept$/);
+          const rejectMatch = tail.match(/^([^/]+)\/reject$/);
+          if (acceptMatch) {
+            try {
+              const body = (await req.json().catch(() => ({}))) as {
+                section?: unknown;
+                text?: unknown;
+              };
+              const result = triggerAcceptSuggestion(resolvedCwd, acceptMatch[1], {
+                section: body.section,
+                text: body.text,
+              });
+              if (result.ok) {
+                sseManager.broadcast({
+                  fileId: "learning-memory",
+                  timestamp: new Date().toISOString(),
+                });
+                return jsonResponse(result, 200);
+              }
+              return jsonResponse(result, 400);
+            } catch (err) {
+              return jsonResponse(
+                { ok: false, error: err instanceof Error ? err.message : String(err) },
+                500
+              );
+            }
+          }
+          if (rejectMatch) {
+            const result = triggerRejectSuggestion(resolvedCwd, rejectMatch[1]);
+            if (result.ok) {
+              sseManager.broadcast({
+                fileId: "learning-memory",
+                timestamp: new Date().toISOString(),
+              });
+              return jsonResponse(result, 200);
+            }
+            return jsonResponse(result, 400);
+          }
+        }
+
+        // POST /api/learning-memory/refine
+        if (pathname === "/api/learning-memory/refine") {
+          try {
+            const body = (await req.json()) as {
+              section?: unknown;
+              text?: unknown;
+            };
+            const result = await triggerRefineRule(resolvedCwd, body.section, body.text);
+            if ("error" in result) {
+              return jsonResponse(result, 400);
+            }
+            return jsonResponse(result, 200);
+          } catch (err) {
+            return jsonResponse(
+              { error: err instanceof Error ? err.message : String(err) },
+              500
+            );
+          }
+        }
+
+        // POST /api/learning-memory/propose
+        if (pathname === "/api/learning-memory/propose") {
+          try {
+            const body = (await req.json().catch(() => ({}))) as {
+              window?: unknown;
+            };
+            const win = typeof body.window === "string" ? body.window : undefined;
+            const result = await triggerProposeRules(resolvedCwd, win);
+            if (result.ok) {
+              sseManager.broadcast({
+                fileId: "learning-memory",
+                timestamp: new Date().toISOString(),
+              });
+            }
+            return jsonResponse(result, result.ok ? 200 : 400);
+          } catch (err) {
+            return jsonResponse(
+              {
+                ok: false,
+                autoAccepted: 0,
+                queued: 0,
+                total: 0,
+                message: err instanceof Error ? err.message : String(err),
+              },
+              500
+            );
+          }
+        }
+      }
+
+      // ── REST API (DELETE) ─────────────────────────────────────────
+      if (method === "DELETE") {
+        const resolvedCwd = resolveProjectCwd(url, activeCwd);
+        if (resolvedCwd === null) {
+          return jsonResponse({ error: "Project not found" }, 404);
+        }
+        if (pathname === "/api/learning-memory/entries") {
+          try {
+            const body = (await req.json()) as {
+              section?: unknown;
+              index?: unknown;
+            };
+            const result = deleteLearningEntry(resolvedCwd, body.section, body.index);
+            if (result.ok) {
+              sseManager.broadcast({
+                fileId: "learning-memory",
+                timestamp: new Date().toISOString(),
+              });
+              return jsonResponse(result, 200);
+            }
+            return jsonResponse(result, 400);
+          } catch (err) {
+            return jsonResponse(
+              { ok: false, error: err instanceof Error ? err.message : String(err) },
+              500
+            );
+          }
+        }
       }
 
       // ── CORS Preflight ───────────────────────────────────────────
@@ -809,7 +971,7 @@ export async function startDashboardServer(
           status: 204,
           headers: {
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type",
           },
         });

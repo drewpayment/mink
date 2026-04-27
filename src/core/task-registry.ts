@@ -1,4 +1,8 @@
 import type { TaskDefinition } from "../types/scheduler";
+import { executeAiCli } from "./llm-runner";
+
+// Re-export so existing callers that imported it from task-registry keep working.
+export { executeAiCli };
 
 // ── Built-in Task Definitions ───────────────────────────────────────────────
 
@@ -53,6 +57,26 @@ const BUILT_IN_TASKS: TaskDefinition[] = [
     retryPolicy: { maxAttempts: 3, baseDelayMs: 60_000 },
     timeoutMs: 300_000,
   },
+  {
+    id: "learning-rules-mine",
+    name: "Learning Rules — Mine",
+    description: "Mine the action log for new learning rules via the AI CLI",
+    schedule: "30 3 * * *",
+    actionType: "ai-cli",
+    enabled: true,
+    retryPolicy: { maxAttempts: 3, baseDelayMs: 60_000 },
+    timeoutMs: 300_000,
+  },
+  {
+    id: "learning-rules-curate",
+    name: "Learning Rules — Curate",
+    description: "AI-driven dedupe and contradiction sweep over the learning memory",
+    schedule: "30 4 * * 1",
+    actionType: "ai-cli",
+    enabled: true,
+    retryPolicy: { maxAttempts: 3, baseDelayMs: 60_000 },
+    timeoutMs: 300_000,
+  },
 ];
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -63,58 +87,6 @@ export function getBuiltInTasks(): TaskDefinition[] {
 
 export function getTaskById(id: string): TaskDefinition | undefined {
   return BUILT_IN_TASKS.find((t) => t.id === id);
-}
-
-// ── AI CLI Execution ────────────────────────────────────────────────────────
-
-const API_KEY_ENV_VARS = [
-  "ANTHROPIC_API_KEY",
-  "CLAUDE_API_KEY",
-  "OPENAI_API_KEY",
-  "OPENAI_KEY",
-  "AI_API_KEY",
-];
-
-async function executeAiCli(
-  prompt: string,
-  timeoutMs: number
-): Promise<string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !API_KEY_ENV_VARS.includes(key)) {
-      env[key] = value;
-    }
-  }
-
-  const proc = Bun.spawn(["claude", "--print", prompt], {
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const timer = setTimeout(() => {
-    proc.kill();
-  }, timeoutMs);
-
-  try {
-    const exitCode = await proc.exited;
-    clearTimeout(timer);
-
-    if (exitCode !== 0) {
-      const stderr = await new Response(proc.stderr).text();
-      throw new Error(`AI CLI exited with code ${exitCode}: ${stderr}`);
-    }
-
-    return await new Response(proc.stdout).text();
-  } catch (err) {
-    clearTimeout(timer);
-    if (err instanceof Error && err.message.includes("ENOENT")) {
-      throw new Error(
-        "AI CLI (claude) is not available. Install it or ensure it is on PATH."
-      );
-    }
-    throw err;
-  }
 }
 
 // ── Task Execution ──────────────────────────────────────────────────────────
@@ -193,6 +165,18 @@ export async function executeTask(
       console.log(
         "[mink] project-suggestions: not yet implemented — skipping"
       );
+      break;
+    }
+
+    case "learning-rules-mine": {
+      const { runMine } = await import("./llm-rules");
+      await runMine(projectCwd, task.timeoutMs);
+      break;
+    }
+
+    case "learning-rules-curate": {
+      const { runCurate } = await import("./llm-rules");
+      await runCurate(projectCwd, task.timeoutMs);
       break;
     }
 

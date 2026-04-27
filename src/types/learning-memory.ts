@@ -34,3 +34,42 @@ export interface SeedInfo {
   description: string;
   frameworks: string[];
 }
+
+// ── Provenance / metadata sidecar ──────────────────────────────────────────
+
+export type RuleSource = "user" | "llm:auto" | "llm:refined" | "reflection";
+
+export interface RuleMeta {
+  id: string;
+  createdAt: string;
+  source: RuleSource;
+  confidence?: number;
+  rationale?: string;
+  sourceSessionIds?: string[];
+}
+
+export interface LearningMemoryMeta {
+  version: 1;
+  entries: Record<string, RuleMeta>;
+}
+
+// ── Pending suggestions inbox ──────────────────────────────────────────────
+
+export type SuggestionStatus = "pending" | "accepted" | "rejected";
+
+export interface SuggestedRule {
+  id: string;
+  section: SectionName;
+  text: string;
+  confidence: number;
+  rationale: string;
+  source: RuleSource;
+  createdAt: string;
+  sourceSessionIds: string[];
+  status: SuggestionStatus;
+}
+
+export interface SuggestionsStore {
+  version: 1;
+  suggestions: SuggestedRule[];
+}

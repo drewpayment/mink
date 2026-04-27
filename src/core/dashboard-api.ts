@@ -15,7 +15,34 @@ import {
 import { safeReadJson } from "./fs-utils";
 import { isFileIndex } from "./index-store";
 import { loadLedger } from "./token-ledger";
-import { parseLearningMemory } from "./learning-memory";
+import {
+  parseLearningMemory,
+  serializeLearningMemory,
+  addEntry,
+  removeEntry,
+  createEmptyLearningMemory,
+} from "./learning-memory";
+import {
+  loadMeta,
+  saveMeta,
+  setMetaForEntry,
+  removeMetaForEntry,
+  getMetaForEntry,
+  pruneOrphans,
+} from "./learning-memory-meta";
+import {
+  loadSuggestions,
+  acceptSuggestion as acceptSuggestionStore,
+  rejectSuggestion as rejectSuggestionStore,
+  pendingCount,
+} from "./learning-suggestions";
+import { resolveLearningMemoryAi } from "./global-config";
+import {
+  proposeRulesFromActionLog,
+  refineRule as refineRuleLLM,
+  routeProposed,
+} from "./llm-rules";
+import { atomicWriteText } from "./fs-utils";
 import { loadBugMemory } from "./bug-memory";
 import { safeReadLog, parseLogSessions } from "./action-log";
 import { getDaemonStatus, startDaemon, stopDaemon } from "./daemon";
@@ -75,11 +102,16 @@ import type {
   WikiPanelPayload,
   WikiNotePayload,
   WikiTreeNode,
+  LearningMemoryPayload,
+  LearningEntryPayload,
+  LearningSuggestionsPayload,
+  RefineRulePayload,
+  ProposeRulesResult,
 } from "../types/dashboard";
 import { isDesignEvalReport } from "../types/design-eval";
 import type { DesignEvalReport } from "../types/design-eval";
 import type { FileIndex, FileIndexEntry } from "../types/file-index";
-import type { LearningMemory } from "../types/learning-memory";
+import type { LearningMemory, SectionName } from "../types/learning-memory";
 
 // ── Secret Masking ─────────────────────────────────────────────────────────
 
@@ -215,34 +247,230 @@ export function loadSchedulerPanel(cwd: string): SchedulerPayload {
   };
 }
 
-export function loadLearningMemoryPanel(cwd: string): LearningMemory {
+function readLearningMemory(cwd: string): LearningMemory {
   const memPath = learningMemoryPath(cwd);
   if (!existsSync(memPath)) {
+    return createEmptyLearningMemory("unknown");
+  }
+  try {
+    return parseLearningMemory(readFileSync(memPath, "utf-8"));
+  } catch {
+    return createEmptyLearningMemory("unknown");
+  }
+}
+
+function writeLearningMemory(cwd: string, mem: LearningMemory): void {
+  atomicWriteText(learningMemoryPath(cwd), serializeLearningMemory(mem));
+}
+
+const SECTION_LIST: SectionName[] = [
+  "User Preferences",
+  "Key Learnings",
+  "Do-Not-Repeat",
+  "Decision Log",
+];
+
+function isValidSectionName(value: unknown): value is SectionName {
+  return typeof value === "string" && (SECTION_LIST as string[]).includes(value);
+}
+
+export function loadLearningMemoryPanel(cwd: string): LearningMemoryPayload {
+  const mem = readLearningMemory(cwd);
+  const meta = loadMeta(cwd);
+  const suggestions = loadSuggestions(cwd);
+  const ai = resolveLearningMemoryAi();
+
+  const entries: LearningEntryPayload[] = [];
+  for (const section of SECTION_LIST) {
+    const list = mem.sections[section] ?? [];
+    list.forEach((text, index) => {
+      const recorded = getMetaForEntry(meta, section, text);
+      entries.push({ section, index, text, meta: recorded });
+    });
+  }
+
+  return {
+    ...mem,
+    entries,
+    suggestionCount: pendingCount(suggestions),
+    ai: {
+      enabled: ai.enabled,
+      scheduledMining: ai.scheduledMining,
+      manualTriggers: ai.manualTriggers,
+      autoAcceptThreshold: ai.autoAcceptThreshold,
+    },
+  };
+}
+
+export function addLearningEntry(
+  cwd: string,
+  section: unknown,
+  text: unknown,
+  source: unknown = "user"
+): { ok: boolean; error?: string; section?: SectionName; index?: number } {
+  if (!isValidSectionName(section)) {
+    return { ok: false, error: "invalid section" };
+  }
+  if (typeof text !== "string" || text.trim() === "") {
+    return { ok: false, error: "text required" };
+  }
+  const cleaned = text.trim();
+  const mem = readLearningMemory(cwd);
+  if (mem.sections[section].includes(cleaned)) {
+    return { ok: false, error: "duplicate entry" };
+  }
+  addEntry(mem, section, cleaned);
+  writeLearningMemory(cwd, mem);
+
+  const meta = loadMeta(cwd);
+  const ruleSource =
+    source === "llm:auto" || source === "llm:refined" || source === "reflection"
+      ? source
+      : "user";
+  setMetaForEntry(meta, section, cleaned, { source: ruleSource });
+  saveMeta(cwd, meta);
+
+  return { ok: true, section, index: mem.sections[section].length - 1 };
+}
+
+export function deleteLearningEntry(
+  cwd: string,
+  section: unknown,
+  index: unknown
+): { ok: boolean; error?: string } {
+  if (!isValidSectionName(section)) {
+    return { ok: false, error: "invalid section" };
+  }
+  if (typeof index !== "number" || !Number.isInteger(index) || index < 0) {
+    return { ok: false, error: "invalid index" };
+  }
+  const mem = readLearningMemory(cwd);
+  const list = mem.sections[section];
+  if (index >= list.length) {
+    return { ok: false, error: "index out of range" };
+  }
+  const removedText = list[index];
+  removeEntry(mem, section, index);
+  writeLearningMemory(cwd, mem);
+
+  const meta = loadMeta(cwd);
+  removeMetaForEntry(meta, section, removedText);
+  saveMeta(cwd, meta);
+
+  return { ok: true };
+}
+
+export function loadLearningSuggestionsPanel(
+  cwd: string
+): LearningSuggestionsPayload {
+  const store = loadSuggestions(cwd);
+  return {
+    pending: store.suggestions.filter((s) => s.status === "pending"),
+    completed: store.suggestions.filter((s) => s.status !== "pending"),
+  };
+}
+
+export function triggerAcceptSuggestion(
+  cwd: string,
+  id: string,
+  edits?: { section?: unknown; text?: unknown }
+): { ok: boolean; error?: string } {
+  const safeEdits: { section?: SectionName; text?: string } = {};
+  if (edits?.section !== undefined) {
+    if (!isValidSectionName(edits.section)) {
+      return { ok: false, error: "invalid section" };
+    }
+    safeEdits.section = edits.section;
+  }
+  if (edits?.text !== undefined) {
+    if (typeof edits.text !== "string" || edits.text.trim() === "") {
+      return { ok: false, error: "invalid text" };
+    }
+    safeEdits.text = edits.text.trim();
+  }
+  const result = acceptSuggestionStore(cwd, id, safeEdits);
+  if (!result) {
+    return { ok: false, error: "suggestion not found or already resolved" };
+  }
+  return { ok: true };
+}
+
+export function triggerRejectSuggestion(
+  cwd: string,
+  id: string
+): { ok: boolean; error?: string } {
+  const ok = rejectSuggestionStore(cwd, id);
+  if (!ok) return { ok: false, error: "suggestion not found" };
+  return { ok: true };
+}
+
+export async function triggerRefineRule(
+  cwd: string,
+  section: unknown,
+  text: unknown
+): Promise<RefineRulePayload | { error: string }> {
+  void cwd;
+  if (!isValidSectionName(section)) return { error: "invalid section" };
+  if (typeof text !== "string" || text.trim() === "") {
+    return { error: "text required" };
+  }
+  const ai = resolveLearningMemoryAi();
+  if (!ai.enabled || !ai.manualTriggers) {
+    return { error: "Manual AI triggers are disabled" };
+  }
+  try {
+    const result = await refineRuleLLM(section, text.trim());
+    return result;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function triggerProposeRules(
+  cwd: string,
+  _window?: string
+): Promise<ProposeRulesResult> {
+  void _window;
+  const ai = resolveLearningMemoryAi();
+  if (!ai.enabled || !ai.manualTriggers) {
     return {
-      projectName: "unknown",
-      sections: {
-        "User Preferences": [],
-        "Key Learnings": [],
-        "Do-Not-Repeat": [],
-        "Decision Log": [],
-      },
+      ok: false,
+      autoAccepted: 0,
+      queued: 0,
+      total: 0,
+      message: "Manual AI triggers are disabled",
     };
   }
   try {
-    const content = readFileSync(memPath, "utf-8");
-    return parseLearningMemory(content);
-  } catch {
+    const proposed = await proposeRulesFromActionLog(cwd, {
+      maxBytes: ai.actionLogBytes,
+      maxRules: ai.maxRulesPerRun,
+    });
+    const result = routeProposed(cwd, proposed, ai.autoAcceptThreshold);
     return {
-      projectName: "unknown",
-      sections: {
-        "User Preferences": [],
-        "Key Learnings": [],
-        "Do-Not-Repeat": [],
-        "Decision Log": [],
-      },
+      ok: true,
+      autoAccepted: result.autoAccepted,
+      queued: result.queued,
+      total: proposed.length,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      autoAccepted: 0,
+      queued: 0,
+      total: 0,
+      message: err instanceof Error ? err.message : String(err),
     };
   }
 }
+
+export function syncLearningMetaFromMemory(cwd: string): void {
+  const mem = readLearningMemory(cwd);
+  const meta = loadMeta(cwd);
+  const pruned = pruneOrphans(meta, mem);
+  saveMeta(cwd, pruned);
+}
+
 
 export function loadActionLogPanel(cwd: string): ActionLogPayload {
   const content = safeReadLog(actionLogPath(cwd));

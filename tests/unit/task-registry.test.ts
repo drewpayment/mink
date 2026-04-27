@@ -6,9 +6,9 @@ import {
 import { parseCronExpression } from "../../src/core/cron-parser";
 
 describe("getBuiltInTasks", () => {
-  test("returns 5 built-in tasks", () => {
+  test("returns 7 built-in tasks", () => {
     const tasks = getBuiltInTasks();
-    expect(tasks.length).toBe(5);
+    expect(tasks.length).toBe(7);
   });
 
   test("all tasks have unique IDs", () => {
@@ -75,13 +75,15 @@ describe("getTaskById", () => {
     expect(task!.name).toBe("File Index Rescan");
   });
 
-  test("returns all 5 tasks by ID", () => {
+  test("returns all 7 tasks by ID", () => {
     const ids = [
       "file-index-rescan",
       "action-log-consolidation",
       "waste-detection",
       "learning-memory-reflection",
       "project-suggestions",
+      "learning-rules-mine",
+      "learning-rules-curate",
     ];
     for (const id of ids) {
       expect(getTaskById(id)).toBeDefined();

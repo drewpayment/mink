@@ -52,7 +52,7 @@ describe("manifest persistence", () => {
     const now = new Date("2026-04-11T10:00:00.000Z");
     const manifest = createInitialManifest(now);
 
-    expect(manifest.tasks.length).toBe(5);
+    expect(manifest.tasks.length).toBe(7);
     expect(manifest.deadLetterQueue).toEqual([]);
     expect(manifest.lastHeartbeat).toBe(now.toISOString());
 
@@ -207,8 +207,10 @@ describe("sequential execution", () => {
     expect(dueTasks[0]).toBe("action-log-consolidation");
     expect(dueTasks[1]).toBe("file-index-rescan");
     expect(dueTasks[2]).toBe("learning-memory-reflection");
-    expect(dueTasks[3]).toBe("project-suggestions");
-    expect(dueTasks[4]).toBe("waste-detection");
+    expect(dueTasks[3]).toBe("learning-rules-curate");
+    expect(dueTasks[4]).toBe("learning-rules-mine");
+    expect(dueTasks[5]).toBe("project-suggestions");
+    expect(dueTasks[6]).toBe("waste-detection");
   });
 });
 

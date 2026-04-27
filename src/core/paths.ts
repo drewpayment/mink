@@ -29,6 +29,14 @@ export function learningMemoryPath(cwd: string): string {
   return join(projectDir(cwd), "learning-memory.md");
 }
 
+export function learningMemoryMetaPath(cwd: string): string {
+  return join(projectDir(cwd), "learning-memory.meta.json");
+}
+
+export function learningSuggestionsPath(cwd: string): string {
+  return join(projectDir(cwd), "learning-memory.suggestions.json");
+}
+
 export function tokenLedgerPath(cwd: string): string {
   return join(projectDir(cwd), "token-ledger.json");
 }

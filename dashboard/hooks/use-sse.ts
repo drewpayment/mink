@@ -8,6 +8,7 @@ import {
   fetchFileIndex,
   fetchScheduler,
   fetchLearningMemory,
+  fetchLearningSuggestions,
   fetchActionLog,
   fetchBugs,
   fetchDesign,
@@ -71,6 +72,7 @@ export function fetchAllData() {
   fetchFileIndex(pid).then(store.setFileIndex).catch(console.warn);
   fetchScheduler(pid).then(applySchedulerData).catch(console.warn);
   fetchLearningMemory(pid).then(store.setLearningMemory).catch(console.warn);
+  fetchLearningSuggestions(pid).then(store.setLearningSuggestions).catch(console.warn);
   fetchActionLog(pid)
     .then((data) => store.setActionLog(parseActionLogEntries(data)))
     .catch(console.warn);
@@ -113,6 +115,9 @@ function handleEvent(payload: { fileId?: string; type?: string; projectId?: stri
       break;
     case "learning-memory":
       fetchLearningMemory(pid).then(store.setLearningMemory).catch(console.warn);
+      fetchLearningSuggestions(pid)
+        .then(store.setLearningSuggestions)
+        .catch(console.warn);
       break;
     case "action-log":
       fetchActionLog(pid)

@@ -14,6 +14,12 @@ export interface GlobalConfig {
   "channel.discord.allowlist"?: string;
   "channel.default-platform"?: string;
   "channel.skip-permissions"?: string;
+  "learning.ai.enabled"?: string;
+  "learning.ai.scheduled-mining"?: string;
+  "learning.ai.manual-triggers"?: string;
+  "learning.ai.auto-accept-threshold"?: string;
+  "learning.ai.max-rules-per-run"?: string;
+  "learning.ai.action-log-bytes"?: string;
 }
 
 export type ConfigKey = keyof GlobalConfig & string;
@@ -144,6 +150,48 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     default: "true",
     envVar: "MINK_CHANNEL_SKIP_PERMISSIONS",
     description: "Pass --dangerously-skip-permissions so the channel can run without terminal prompts",
+    scope: "shared",
+  },
+  {
+    key: "learning.ai.enabled",
+    default: "true",
+    envVar: "MINK_LEARNING_AI_ENABLED",
+    description: "Master switch for LLM-powered learning memory enhancements",
+    scope: "shared",
+  },
+  {
+    key: "learning.ai.scheduled-mining",
+    default: "true",
+    envVar: "MINK_LEARNING_AI_SCHEDULED_MINING",
+    description: "Allow background scheduler to mine the action log for new rules",
+    scope: "shared",
+  },
+  {
+    key: "learning.ai.manual-triggers",
+    default: "true",
+    envVar: "MINK_LEARNING_AI_MANUAL_TRIGGERS",
+    description: "Allow manual UI-triggered refine/propose calls",
+    scope: "shared",
+  },
+  {
+    key: "learning.ai.auto-accept-threshold",
+    default: "0.85",
+    envVar: "MINK_LEARNING_AI_AUTO_ACCEPT_THRESHOLD",
+    description: "Confidence ≥ this value writes directly; below lands in suggestions",
+    scope: "shared",
+  },
+  {
+    key: "learning.ai.max-rules-per-run",
+    default: "8",
+    envVar: "MINK_LEARNING_AI_MAX_RULES_PER_RUN",
+    description: "Cap on rules proposed per mining run",
+    scope: "shared",
+  },
+  {
+    key: "learning.ai.action-log-bytes",
+    default: "32000",
+    envVar: "MINK_LEARNING_AI_ACTION_LOG_BYTES",
+    description: "Trailing bytes of action-log.md fed to the AI for proposals",
     scope: "shared",
   },
 ];
