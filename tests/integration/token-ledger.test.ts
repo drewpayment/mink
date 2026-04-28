@@ -10,10 +10,20 @@ import {
   loadLedger,
   loadArchive,
 } from "../../src/core/token-ledger";
+import { getOrCreateDeviceId } from "../../src/core/device";
 import type { SessionState } from "../../src/types/session";
 
 describe("token ledger integration", () => {
   let dir: string;
+
+  // sessionStop now writes the ledger to projDir/state/<deviceId>/token-ledger.json.
+  function ledgerPathFor(d: string): string {
+    return join(d, "state", getOrCreateDeviceId(), "token-ledger.json");
+  }
+
+  function archivePathFor(d: string): string {
+    return join(d, "state", getOrCreateDeviceId(), "token-ledger-archive.json");
+  }
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "mink-ledger-integ-"));
@@ -33,7 +43,7 @@ describe("token ledger integration", () => {
 
     sessionStop(sessionFile);
 
-    const ledgerPath = join(dir, "token-ledger.json");
+    const ledgerPath = ledgerPathFor(dir);
     expect(existsSync(ledgerPath)).toBe(true);
 
     const ledger = loadLedger(ledgerPath);
@@ -59,7 +69,7 @@ describe("token ledger integration", () => {
     atomicWriteJson(sessionFile2, state2);
     sessionStop(sessionFile2);
 
-    const ledgerPath = join(dir, "token-ledger.json");
+    const ledgerPath = ledgerPathFor(dir);
     const ledger = loadLedger(ledgerPath);
 
     expect(ledger.sessions).toHaveLength(2);
@@ -69,7 +79,7 @@ describe("token ledger integration", () => {
   });
 
   test("first-ever session creates ledger from scratch", () => {
-    const ledgerPath = join(dir, "token-ledger.json");
+    const ledgerPath = ledgerPathFor(dir);
     expect(existsSync(ledgerPath)).toBe(false);
 
     const sessionFile = join(dir, "session.json");
@@ -102,7 +112,7 @@ describe("token ledger integration", () => {
     // Second stop
     sessionStop(sessionFile);
 
-    const ledgerPath = join(dir, "token-ledger.json");
+    const ledgerPath = ledgerPathFor(dir);
     const ledger = loadLedger(ledgerPath);
 
     // Same session ID, so only one record
@@ -112,7 +122,8 @@ describe("token ledger integration", () => {
     expect(ledger.lifetime.totalWrites).toBe(1);
   });
 
-  test("archive triggers at low threshold", () => {
+  test("archive triggers at low threshold (legacy non-sharded path)", () => {
+    // Pass `(dir, threshold)` (no deviceId) to exercise the legacy code path.
     const finalizer = createLedgerFinalizer(dir, 2);
 
     // Append 4 sessions via the finalizer directly

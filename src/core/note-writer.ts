@@ -1,9 +1,54 @@
 import { join } from "path";
 import { existsSync, readFileSync } from "fs";
-import { atomicWriteText } from "./fs-utils";
+import { createHash } from "crypto";
+import { atomicWriteText, safeAppendText } from "./fs-utils";
 import { categoryToDir, vaultDailyDir, vaultTemplates } from "./vault";
 import { loadTemplate } from "./vault-templates";
+import { getOrCreateDeviceId } from "./device";
 import type { NoteMetadata, NoteFrontmatter, NoteCategory } from "../types/note";
+
+const MAX_COLLISION_ATTEMPTS = 4;
+
+function sha256(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+// Resolve the target path for a note write so two devices creating notes with
+// the same slug never overwrite each other. Strategy:
+//   1. If the path is free, use it as-is.
+//   2. If the path holds the exact same content (idempotent re-save), reuse
+//      the path so the write is a no-op.
+//   3. Otherwise append a short device suffix and retry. Fall back to a
+//      timestamp suffix if the device suffix is also taken.
+function resolveUniqueNotePath(
+  dir: string,
+  baseSlug: string,
+  content: string
+): string {
+  const targetHash = sha256(content);
+  const primary = join(dir, `${baseSlug}.md`);
+  if (!existsSync(primary)) return primary;
+  if (sameContent(primary, targetHash)) return primary;
+
+  const dev4 = getOrCreateDeviceId().replace(/-/g, "").slice(0, 4);
+  for (let i = 0; i < MAX_COLLISION_ATTEMPTS; i++) {
+    const suffix = i === 0 ? dev4 : `${dev4}-${i + 1}`;
+    const candidate = join(dir, `${baseSlug}-${suffix}.md`);
+    if (!existsSync(candidate)) return candidate;
+    if (sameContent(candidate, targetHash)) return candidate;
+  }
+
+  // Final fallback: timestamp suffix (effectively guaranteed unique).
+  return join(dir, `${baseSlug}-${Date.now()}.md`);
+}
+
+function sameContent(filePath: string, expectedHash: string): boolean {
+  try {
+    return sha256(readFileSync(filePath, "utf-8")) === expectedHash;
+  } catch {
+    return false;
+  }
+}
 
 export function slugifyTitle(title: string): string {
   return title
@@ -61,7 +106,6 @@ export function createNote(meta: NoteMetadata): {
   const now = meta.created || new Date().toISOString();
   const slug = slugifyTitle(meta.title);
   const dir = categoryToDir(meta.category, meta.projectSlug);
-  const filePath = join(dir, `${slug}.md`);
 
   let content: string;
 
@@ -78,6 +122,7 @@ export function createNote(meta: NoteMetadata): {
     content = buildNoteContent(meta, now);
   }
 
+  const filePath = resolveUniqueNotePath(dir, slug, content);
   atomicWriteText(filePath, content);
   return { filePath, content };
 }
@@ -104,14 +149,15 @@ export function appendToDaily(date: string, content: string): string {
   const filePath = join(dir, `${date}.md`);
 
   if (existsSync(filePath)) {
-    const existing = readFileSync(filePath, "utf-8");
+    // Append-only so `merge=union` cleanly resolves cross-device daily entries
+    // — full-file rewrites would defeat union merging and reintroduce conflict
+    // markers when two devices append on the same day.
     const timestamp = new Date().toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
     });
-    const updated = `${existing.trimEnd()}\n\n## ${timestamp}\n\n${content}\n`;
-    atomicWriteText(filePath, updated);
+    safeAppendText(filePath, `\n\n## ${timestamp}\n\n${content}\n`);
   } else {
     const now = new Date().toISOString();
     const rendered = loadTemplate(vaultTemplates(), "daily-note", {
@@ -197,7 +243,7 @@ export function ingestFile(
 
   const slug = slugifyTitle(title);
   const dir = categoryToDir(meta.category, meta.projectSlug);
-  const filePath = join(dir, `${slug}.md`);
+  const filePath = resolveUniqueNotePath(dir, slug, content);
   atomicWriteText(filePath, content);
   return { filePath, content };
 }

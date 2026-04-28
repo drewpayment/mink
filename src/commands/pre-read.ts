@@ -3,12 +3,11 @@ import { readStdinJson } from "../core/stdin";
 import { sessionPath, fileIndexPath } from "../core/paths";
 import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { createSessionState, isSessionState } from "../core/session";
+import { isFileIndex, lookupEntry } from "../core/index-store";
 import {
-  isFileIndex,
-  lookupEntry,
-  recordHit,
-  recordMiss,
-} from "../core/index-store";
+  incrementFileIndexHit,
+  incrementFileIndexMiss,
+} from "../core/state-counters";
 import type { SessionState } from "../types/session";
 import type { FileIndex, FileIndexEntry } from "../types/file-index";
 import type { PreToolUseInput } from "../types/hook-input";
@@ -40,17 +39,17 @@ export function analyzePreRead(
     state.counters.repeatedReadWarnings++;
   }
 
-  // File index lookup
+  // File index lookup. Hit/miss telemetry is persisted by the caller via
+  // increment{Hit,Miss}, not by mutating the shared index — keeping the
+  // file-index.json content-addressed by filePath so a JSON union merge driver
+  // can resolve cross-device updates without conflict.
   if (index) {
     entry = lookupEntry(index, filePath);
     if (entry) {
       indexHit = true;
-      recordHit(index);
       warnings.push(
         `[mink] ${filePath} — ${entry.description} (~${entry.estimatedTokens} tokens)`
       );
-    } else {
-      recordMiss(index);
     }
   }
 
@@ -99,7 +98,12 @@ export async function preRead(cwd: string): Promise<void> {
     // Persist state changes
     atomicWriteJson(sessionPath(cwd), state);
     if (index) {
-      atomicWriteJson(fileIndexPath(cwd), index);
+      try {
+        if (result.indexHit) incrementFileIndexHit(cwd);
+        else incrementFileIndexMiss(cwd);
+      } catch {
+        // Counter file is best-effort telemetry — never block the read hook
+      }
     }
   } catch {
     // Never crash — exit silently

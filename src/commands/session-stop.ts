@@ -4,8 +4,10 @@ import { safeReadJson, atomicWriteJson, atomicWriteText } from "../core/fs-utils
 import { isSessionState, buildSummary } from "../core/session";
 import { reflect } from "./reflect";
 import { createLedgerFinalizer } from "../core/token-ledger";
-import { loadBugMemory, hasBugForFileInSession } from "../core/bug-memory";
+import { hasBugForFileInSession } from "../core/bug-memory";
+import { aggregateBugMemoryAt } from "../core/state-aggregator";
 import { createActionLogWriter, consolidateLog } from "../core/action-log";
+import { getOrCreateDeviceId } from "../core/device";
 import {
   isWikiEnabled,
   isVaultInitialized,
@@ -55,7 +57,8 @@ export function sessionStop(
   state.stopCount++;
 
   const projDir = dirname(sessionFile);
-  const effectiveFinalizer = finalizer ?? createLedgerFinalizer(projDir);
+  const deviceId = getOrCreateDeviceId();
+  const effectiveFinalizer = finalizer ?? createLedgerFinalizer(projDir, deviceId);
 
   if (hasActivity(state)) {
     const summary = buildSummary(state);
@@ -66,9 +69,11 @@ export function sessionStop(
       effectiveFinalizer.updateSession(summary);
     }
 
-    // Append session end to action log and run consolidation
+    // Append session end to action log and run consolidation. Both writes
+    // target THIS device's shard so concurrent sessions on other devices
+    // never collide on the action log file.
     try {
-      const logPath = join(projDir, "action-log.md");
+      const logPath = join(projDir, "state", deviceId, "action-log.md");
       const logWriter = createActionLogWriter(logPath);
       logWriter.appendSessionEnd(summary);
 
@@ -84,8 +89,7 @@ export function sessionStop(
 
   // Check for files edited 3+ times without a corresponding bug entry
   const editCounts = getEditCounts(state);
-  const bugMemoryFile = join(projDir, "bug-memory.json");
-  const bugMemory = loadBugMemory(bugMemoryFile);
+  const bugMemory = aggregateBugMemoryAt(projDir);
 
   for (const [filePath, count] of Object.entries(editCounts)) {
     if (count >= 3) {

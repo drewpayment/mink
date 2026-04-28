@@ -1,5 +1,7 @@
-import { existsSync, readFileSync } from "fs";
-import { parseLearningMemory, serializeLearningMemory } from "../core/learning-memory";
+import { existsSync } from "fs";
+import { dirname } from "path";
+import { serializeLearningMemory, totalEntryCount } from "../core/learning-memory";
+import { aggregateLearningMemoryAt } from "../core/state-aggregator";
 import { reflectMemory } from "../core/reflection";
 import { atomicWriteText, safeReadJson } from "../core/fs-utils";
 import type { ReflectionResult } from "../types/learning-memory";
@@ -8,17 +10,20 @@ import type { ProjectConfig } from "../types/file-index";
 const DEFAULT_TOKEN_BUDGET = 2000;
 
 export function reflect(
-  projectDir: string,
+  _cwd: string,
   memoryPath: string,
   configPath: string
 ): ReflectionResult | null {
-  if (!existsSync(memoryPath)) {
+  // Aggregate canonical + every device's sidecar that sits next to memoryPath.
+  // Using dirname(memoryPath) keeps callers in control of where the project
+  // state lives — production passes projectDir(cwd)/learning-memory.md, tests
+  // pass arbitrary temp directories.
+  const projDir = dirname(memoryPath);
+  const mem = aggregateLearningMemoryAt(projDir);
+  if (totalEntryCount(mem) === 0 && !existsSync(memoryPath)) {
     console.log("[mink] no learning memory found");
     return null;
   }
-
-  const markdown = readFileSync(memoryPath, "utf-8");
-  const mem = parseLearningMemory(markdown);
 
   const config = safeReadJson(configPath) as ProjectConfig | null;
   const tokenBudget = config?.learningMemoryTokenBudget ?? DEFAULT_TOKEN_BUDGET;

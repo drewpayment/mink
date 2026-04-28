@@ -34,10 +34,29 @@ describe("dashboard server", () => {
     const dir = projectDir(cwd);
     mkdirSync(dir, { recursive: true });
 
-    // Write minimal state files
+    // Write minimal state files. Aggregator derives lifetime totals from
+    // sessions, so the fixture must include a real session that sums to
+    // the expected counters.
     writeFileSync(join(dir, "token-ledger.json"), JSON.stringify({
       lifetime: { totalTokens: 100, totalReads: 5, totalWrites: 2, totalSessions: 1, totalFileIndexHits: 4, totalFileIndexMisses: 1, totalRepeatedReads: 0, totalEstimatedSavings: 50 },
-      sessions: []
+      sessions: [
+        {
+          sessionId: "sess-fixture-1",
+          startTimestamp: "2026-04-11T09:00:00.000Z",
+          endTimestamp: "2026-04-11T10:00:00.000Z",
+          reads: [],
+          writes: [],
+          totals: {
+            readCount: 5,
+            writeCount: 2,
+            estimatedTokens: 100,
+            repeatedReads: 0,
+            fileIndexHits: 4,
+            fileIndexMisses: 1,
+          },
+          estimatedSavings: 50,
+        }
+      ]
     }));
 
     writeFileSync(join(dir, "file-index.json"), JSON.stringify({

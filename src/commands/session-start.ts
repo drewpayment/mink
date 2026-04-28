@@ -1,8 +1,9 @@
 import { mkdirSync } from "fs";
 import { createSessionState } from "../core/session";
-import { projectDir, sessionPath, actionLogPath } from "../core/paths";
+import { projectDir, sessionPath, actionLogShardPath } from "../core/paths";
 import { atomicWriteJson } from "../core/fs-utils";
 import { createActionLogWriter } from "../core/action-log";
+import { getOrCreateDeviceId } from "../core/device";
 import { isWikiEnabled, isVaultInitialized, isInsideVault } from "../core/vault";
 import { loadVaultIndex } from "../core/note-index";
 
@@ -23,6 +24,17 @@ export function sessionStart(cwd: string): void {
     // Never crash hooks
   }
 
+  // One-shot migration to sync layout v2. Idempotent re-run is a no-op.
+  try {
+    const { readSyncVersion, MINK_SYNC_VERSION } = require("../core/sync");
+    if (readSyncVersion() < MINK_SYNC_VERSION) {
+      const { migrateSyncLayout } = require("./sync-migrate");
+      migrateSyncLayout();
+    }
+  } catch {
+    // Migration is best-effort; never block session-start
+  }
+
   // Sync pull before session begins (if enabled)
   try {
     const { isSyncInitialized, syncPull } = require("../core/sync");
@@ -39,9 +51,11 @@ export function sessionStart(cwd: string): void {
   const state = createSessionState();
   atomicWriteJson(sessionPath(cwd), state);
 
-  // Append session header to action log
+  // Append session header to this device's action log shard
   try {
-    const logWriter = createActionLogWriter(actionLogPath(cwd));
+    const logWriter = createActionLogWriter(
+      actionLogShardPath(cwd, getOrCreateDeviceId())
+    );
     logWriter.appendSessionHeader(state.startTimestamp);
   } catch {
     // Never crash hooks
@@ -54,6 +68,23 @@ export function sessionStart(cwd: string): void {
       const inboxCount = Object.values(index.entries).filter(
         (e) => e.category === "inbox"
       ).length;
+
+      // Regenerate the master index when missing — it's gitignored under sync
+      // v2 so freshly-cloned devices need it materialised before Obsidian can
+      // see the vault. updateMasterIndex is idempotent + cheap.
+      try {
+        const { join } = require("path");
+        const { existsSync } = require("fs");
+        const { resolveVaultPath } = require("../core/vault");
+        const { updateMasterIndex } = require("../core/note-linker");
+        const vaultPath = resolveVaultPath();
+        const masterIndexPath = join(vaultPath, "_index.md");
+        if (!existsSync(masterIndexPath)) {
+          updateMasterIndex(vaultPath);
+        }
+      } catch {
+        // Never crash hooks on regeneration failure
+      }
 
       if (inboxCount > 0) {
         console.error(

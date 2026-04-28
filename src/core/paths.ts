@@ -2,15 +2,26 @@ import { join } from "path";
 import { homedir } from "os";
 import { generateProjectId } from "./project-id";
 
-const MINK_ROOT = join(homedir(), ".mink");
+// Resolved per-call so tests can override via MINK_ROOT_OVERRIDE without
+// reloading modules. Production callers get the default homedir/.mink path.
+function resolveMinkRoot(): string {
+  return process.env.MINK_ROOT_OVERRIDE || join(homedir(), ".mink");
+}
+
+const MINK_ROOT = resolveMinkRoot();
 
 export function minkRoot(): string {
+  // Re-resolve when the test override is in play so individual tests can
+  // point at their own temp dir without contaminating each other.
+  if (process.env.MINK_ROOT_OVERRIDE) {
+    return process.env.MINK_ROOT_OVERRIDE;
+  }
   return MINK_ROOT;
 }
 
 export function projectDir(cwd: string): string {
   const id = generateProjectId(cwd);
-  return join(MINK_ROOT, "projects", id);
+  return join(minkRoot(), "projects", id);
 }
 
 export function sessionPath(cwd: string): string {
@@ -46,11 +57,11 @@ export function actionLogPath(cwd: string): string {
 }
 
 export function schedulerPidPath(): string {
-  return join(MINK_ROOT, "scheduler.pid");
+  return join(minkRoot(), "scheduler.pid");
 }
 
 export function schedulerLogPath(): string {
-  return join(MINK_ROOT, "scheduler.log");
+  return join(minkRoot(), "scheduler.log");
 }
 
 export function schedulerManifestPath(cwd: string): string {
@@ -58,27 +69,27 @@ export function schedulerManifestPath(cwd: string): string {
 }
 
 export function channelPidPath(): string {
-  return join(MINK_ROOT, "channel.pid");
+  return join(minkRoot(), "channel.pid");
 }
 
 export function channelLogPath(): string {
-  return join(MINK_ROOT, "channel.log");
+  return join(minkRoot(), "channel.log");
 }
 
 export function globalConfigPath(): string {
-  return join(MINK_ROOT, "config");
+  return join(minkRoot(), "config");
 }
 
 export function localConfigPath(): string {
-  return join(MINK_ROOT, "config.local");
+  return join(minkRoot(), "config.local");
 }
 
 export function deviceIdPath(): string {
-  return join(MINK_ROOT, "device-id");
+  return join(minkRoot(), "device-id");
 }
 
 export function deviceRegistryPath(): string {
-  return join(MINK_ROOT, "devices.json");
+  return join(minkRoot(), "devices.json");
 }
 
 export function projectMetaPath(cwd: string): string {
@@ -87,6 +98,51 @@ export function projectMetaPath(cwd: string): string {
 
 export function backupDirPath(cwd: string): string {
   return join(projectDir(cwd), "backups");
+}
+
+// ── Sync v2 — shard-aware paths ────────────────────────────────────────────
+// Per-device shards isolate machine-rewritten state files so two devices never
+// write to the same path. Aggregators in state-aggregator.ts compose the
+// authoritative view by reading every device's shard plus the legacy paths
+// above. The legacy helpers (tokenLedgerPath, bugMemoryPath, actionLogPath,
+// tokenLedgerArchivePath) remain valid for fallback reads during the migration
+// window — they are NOT removed.
+
+export function syncVersionPath(): string {
+  return join(minkRoot(), ".mink-sync-version");
+}
+
+export function projectStateDir(cwd: string): string {
+  return join(projectDir(cwd), "state");
+}
+
+export function deviceShardDir(cwd: string, deviceId: string): string {
+  return join(projectStateDir(cwd), deviceId);
+}
+
+export function tokenLedgerShardPath(cwd: string, deviceId: string): string {
+  return join(deviceShardDir(cwd, deviceId), "token-ledger.json");
+}
+
+export function tokenLedgerArchiveShardPath(cwd: string, deviceId: string): string {
+  return join(deviceShardDir(cwd, deviceId), "token-ledger-archive.json");
+}
+
+export function bugMemoryShardPath(cwd: string, deviceId: string): string {
+  return join(deviceShardDir(cwd, deviceId), "bug-memory.json");
+}
+
+export function actionLogShardPath(cwd: string, deviceId: string): string {
+  return join(deviceShardDir(cwd, deviceId), "action-log.md");
+}
+
+export function learningMemorySidecarPath(cwd: string, deviceId: string): string {
+  return join(projectDir(cwd), `learning-memory.${deviceId}.md`);
+}
+
+// Per-device telemetry counters split out of file-index.json (gitignored, not synced).
+export function fileIndexCountersPath(cwd: string): string {
+  return join(projectDir(cwd), ".mink-state-counters.json");
 }
 
 export function designCapturesDir(cwd: string): string {

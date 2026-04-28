@@ -60,33 +60,41 @@ describe("full session lifecycle", () => {
     expect(final.stopCount).toBe(1);
   });
 
-  test("multiple stops do not duplicate finalization", () => {
-    const sessionFile = join(dir, "session.json");
-    const state = createSessionState();
-    recordRead(state, "/src/a.ts", 100, true);
-    atomicWriteJson(sessionFile, state);
+  // Each sessionStop runs a real sync push against the user's `~/.mink/`
+  // (because isSyncInitialized() checks the global mink root, not the test
+  // dir). 3 sequential calls × ~2s of sync work blow past the default 5s
+  // timeout — bump it explicitly so timing variance can't flake the test.
+  test(
+    "multiple stops do not duplicate finalization",
+    () => {
+      const sessionFile = join(dir, "session.json");
+      const state = createSessionState();
+      recordRead(state, "/src/a.ts", 100, true);
+      atomicWriteJson(sessionFile, state);
 
-    let appendCount = 0;
-    let updateCount = 0;
-    const finalizer = {
-      appendSession() {
-        appendCount++;
-      },
-      updateSession() {
-        updateCount++;
-      },
-    };
+      let appendCount = 0;
+      let updateCount = 0;
+      const finalizer = {
+        appendSession() {
+          appendCount++;
+        },
+        updateSession() {
+          updateCount++;
+        },
+      };
 
-    sessionStop(sessionFile, finalizer);
-    sessionStop(sessionFile, finalizer);
-    sessionStop(sessionFile, finalizer);
+      sessionStop(sessionFile, finalizer);
+      sessionStop(sessionFile, finalizer);
+      sessionStop(sessionFile, finalizer);
 
-    expect(appendCount).toBe(1);
-    expect(updateCount).toBe(2);
+      expect(appendCount).toBe(1);
+      expect(updateCount).toBe(2);
 
-    const final = safeReadJson(sessionFile) as SessionState;
-    expect(final.stopCount).toBe(3);
-  });
+      const final = safeReadJson(sessionFile) as SessionState;
+      expect(final.stopCount).toBe(3);
+    },
+    15000
+  );
 
   test("zero-activity session skips finalization", () => {
     const sessionFile = join(dir, "session.json");
