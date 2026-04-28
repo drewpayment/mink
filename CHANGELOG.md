@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/drewpayment/mink/compare/v0.8.0...v0.9.0) (2026-04-28)
+
+
+### Features
+
+* **sync:** zero-intervention cross-device conflict resolution (v2) ([6c826af](https://github.com/drewpayment/mink/commit/6c826af73bfcd980a96aa3fff1a19e3ca3a0d8f3))
+
+
+### Bug Fixes
+
+* **sync:** migration resumes across budget cuts and skips done projects ([2c749b8](https://github.com/drewpayment/mink/commit/2c749b8a32e7efa814e41179905f0dd77030b994))
+
 ## [0.8.0](https://github.com/drewpayment/mink/compare/v0.7.0...v0.8.0) (2026-04-26)
 
 
