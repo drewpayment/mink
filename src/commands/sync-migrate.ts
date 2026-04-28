@@ -172,6 +172,44 @@ function listProjects(): string[] {
   }
 }
 
+// True if any legacy v1 state shape still lives at the top level of projDir
+// AND no per-device shard has been populated yet. Once a shard directory has
+// any contents, this project counts as migrated even if a stale legacy file
+// is still on disk — that's the case where the user opened a session
+// mid-migration and writes started landing in the shard. The aggregator unions
+// across legacy + shards on read, so the stale file is harmless until cleaned
+// up; what we must avoid is a permanent re-migrate loop on every session-start.
+function projectNeedsMigration(projDir: string): boolean {
+  const stateDir = join(projDir, "state");
+  if (existsSync(stateDir)) {
+    try {
+      const shards = readdirSync(stateDir).filter((d) => {
+        try {
+          return statSync(join(stateDir, d)).isDirectory();
+        } catch {
+          return false;
+        }
+      });
+      if (shards.length > 0) return false;
+    } catch {
+      // fall through
+    }
+  }
+  for (const f of [
+    "token-ledger.json",
+    "token-ledger-archive.json",
+    "bug-memory.json",
+    "action-log.md",
+  ]) {
+    if (existsSync(join(projDir, f))) return true;
+  }
+  return false;
+}
+
+function listProjectsNeedingMigration(): string[] {
+  return listProjects().filter(projectNeedsMigration);
+}
+
 export interface MigrateResult {
   ranMigration: boolean;
   fromVersion: number;
@@ -181,9 +219,15 @@ export interface MigrateResult {
 
 // Idempotent. Safe to invoke from `mink sync migrate` directly or from a
 // session-start auto-trigger when readSyncVersion() < MINK_SYNC_VERSION.
+//
+// We treat the version marker as a hint, not a gate — a previous partial run
+// (interrupted by the budget cap) may have written v2 with projects still
+// pending. We re-run as long as any project on disk still has legacy files at
+// its top level, regardless of marker.
 export function migrateSyncLayout(): MigrateResult {
   const fromVersion = readSyncVersion();
-  if (fromVersion >= MINK_SYNC_VERSION) {
+  const pending = listProjectsNeedingMigration();
+  if (fromVersion >= MINK_SYNC_VERSION && pending.length === 0) {
     return {
       ranMigration: false,
       fromVersion,
@@ -227,25 +271,37 @@ export function migrateSyncLayout(): MigrateResult {
       }
     }
 
-    for (const projDir of listProjects()) {
+    // Process pending projects only — already-migrated projects are skipped
+    // for free, and we resume work from any prior partial run.
+    let processed = 0;
+    let remaining = 0;
+    for (const projDir of listProjectsNeedingMigration()) {
       if (Date.now() - start > MIGRATE_BUDGET_MS) {
-        // Out of budget — write the version even though some projects may
-        // still need migration on next run. Each migrateProject is
-        // independently idempotent, so deferring is safe.
-        break;
+        remaining++;
+        continue;
       }
       try {
         migrateProject(projDir, deviceId);
+        processed++;
       } catch {
         // best-effort per project — never block migration on one project
       }
     }
 
-    writeSyncVersion(MINK_SYNC_VERSION);
+    // Only stamp the version marker once nothing is left to migrate. If we
+    // still have pending projects, leave the marker as-is so the next session
+    // knows to keep going.
+    if (remaining === 0 && listProjectsNeedingMigration().length === 0) {
+      writeSyncVersion(MINK_SYNC_VERSION);
+    }
 
-    if (isSyncInitialized()) {
+    if (isSyncInitialized() && processed > 0) {
+      // Skip the lock file — it's part of migration coordination, not state.
       gitSafe("add -A");
-      gitSafe(`commit -m "mink: migrate sync layout v${fromVersion} → v${MINK_SYNC_VERSION} (device ${deviceId.slice(0, 8)})"`);
+      gitSafe(`reset HEAD ".sync-migrate.lock"`);
+      gitSafe(
+        `commit -m "mink: migrate sync layout v${fromVersion} -> v${MINK_SYNC_VERSION} (device ${deviceId.slice(0, 8)}, ${processed} projects)"`
+      );
     }
 
     if (stashed) {

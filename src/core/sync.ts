@@ -42,6 +42,9 @@ channel.log
 device-id
 config.local
 
+# Migration coordination — never sync this
+.sync-migrate.lock
+
 # Local backups and per-device caches — machine-specific snapshots
 projects/*/backups/
 projects/*/session.json

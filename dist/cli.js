@@ -1631,6 +1631,9 @@ channel.log
 device-id
 config.local
 
+# Migration coordination — never sync this
+.sync-migrate.lock
+
 # Local backups and per-device caches — machine-specific snapshots
 projects/*/backups/
 projects/*/session.json
@@ -1786,9 +1789,39 @@ function listProjects() {
     return [];
   }
 }
+function projectNeedsMigration(projDir) {
+  const stateDir = join6(projDir, "state");
+  if (existsSync6(stateDir)) {
+    try {
+      const shards = readdirSync2(stateDir).filter((d) => {
+        try {
+          return statSync2(join6(stateDir, d)).isDirectory();
+        } catch {
+          return false;
+        }
+      });
+      if (shards.length > 0)
+        return false;
+    } catch {}
+  }
+  for (const f of [
+    "token-ledger.json",
+    "token-ledger-archive.json",
+    "bug-memory.json",
+    "action-log.md"
+  ]) {
+    if (existsSync6(join6(projDir, f)))
+      return true;
+  }
+  return false;
+}
+function listProjectsNeedingMigration() {
+  return listProjects().filter(projectNeedsMigration);
+}
 function migrateSyncLayout() {
   const fromVersion = readSyncVersion();
-  if (fromVersion >= MINK_SYNC_VERSION) {
+  const pending = listProjectsNeedingMigration();
+  if (fromVersion >= MINK_SYNC_VERSION && pending.length === 0) {
     return {
       ranMigration: false,
       fromVersion,
@@ -1821,18 +1854,25 @@ function migrateSyncLayout() {
         }
       }
     }
-    for (const projDir of listProjects()) {
+    let processed = 0;
+    let remaining = 0;
+    for (const projDir of listProjectsNeedingMigration()) {
       if (Date.now() - start > MIGRATE_BUDGET_MS) {
-        break;
+        remaining++;
+        continue;
       }
       try {
         migrateProject(projDir, deviceId);
+        processed++;
       } catch {}
     }
-    writeSyncVersion(MINK_SYNC_VERSION);
-    if (isSyncInitialized()) {
+    if (remaining === 0 && listProjectsNeedingMigration().length === 0) {
+      writeSyncVersion(MINK_SYNC_VERSION);
+    }
+    if (isSyncInitialized() && processed > 0) {
       gitSafe3("add -A");
-      gitSafe3(`commit -m "mink: migrate sync layout v${fromVersion} → v${MINK_SYNC_VERSION} (device ${deviceId.slice(0, 8)})"`);
+      gitSafe3(`reset HEAD ".sync-migrate.lock"`);
+      gitSafe3(`commit -m "mink: migrate sync layout v${fromVersion} -> v${MINK_SYNC_VERSION} (device ${deviceId.slice(0, 8)}, ${processed} projects)"`);
     }
     if (stashed) {
       gitSafe3("stash pop");
