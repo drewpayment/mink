@@ -1,5 +1,5 @@
-import { loadBugMemory, searchBugs } from "../core/bug-memory";
-import { bugMemoryPath } from "../core/paths";
+import { searchBugs } from "../core/bug-memory";
+import { aggregateBugMemory } from "../core/state-aggregator";
 
 export function bugSearch(cwd: string, query: string): void {
   if (!query) {
@@ -7,7 +7,7 @@ export function bugSearch(cwd: string, query: string): void {
     process.exit(1);
   }
 
-  const memory = loadBugMemory(bugMemoryPath(cwd));
+  const memory = aggregateBugMemory(cwd);
   const results = searchBugs(memory, query);
 
   if (results.length === 0) {

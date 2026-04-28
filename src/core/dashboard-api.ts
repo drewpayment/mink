@@ -18,6 +18,12 @@ import { loadLedger } from "./token-ledger";
 import { parseLearningMemory } from "./learning-memory";
 import { loadBugMemory } from "./bug-memory";
 import { safeReadLog, parseLogSessions } from "./action-log";
+import {
+  aggregateTokenLedger,
+  aggregateBugMemory,
+  aggregateActionLog,
+  aggregateLearningMemory,
+} from "./state-aggregator";
 import { getDaemonStatus, startDaemon, stopDaemon } from "./daemon";
 import { loadManifest, removeFromDeadLetter, saveManifest } from "./scheduler";
 import { getBuiltInTasks, executeTask } from "./task-registry";
@@ -147,8 +153,8 @@ export function loadOverview(cwd: string): OverviewPayload {
       : undefined,
   };
 
-  // Token ledger summary
-  const ledger = loadLedger(tokenLedgerPath(cwd));
+  // Token ledger summary (aggregated across all device shards + legacy)
+  const ledger = aggregateTokenLedger(cwd);
   const summary = {
     totalSessions: ledger.lifetime.totalSessions,
     totalTokens: ledger.lifetime.totalTokens,
@@ -173,7 +179,7 @@ export function loadOverview(cwd: string): OverviewPayload {
 }
 
 export function loadTokenLedgerPanel(cwd: string): TokenLedgerPayload {
-  const ledger = loadLedger(tokenLedgerPath(cwd));
+  const ledger = aggregateTokenLedger(cwd);
   return {
     lifetime: ledger.lifetime,
     sessions: ledger.sessions,
@@ -216,42 +222,17 @@ export function loadSchedulerPanel(cwd: string): SchedulerPayload {
 }
 
 export function loadLearningMemoryPanel(cwd: string): LearningMemory {
-  const memPath = learningMemoryPath(cwd);
-  if (!existsSync(memPath)) {
-    return {
-      projectName: "unknown",
-      sections: {
-        "User Preferences": [],
-        "Key Learnings": [],
-        "Do-Not-Repeat": [],
-        "Decision Log": [],
-      },
-    };
-  }
-  try {
-    const content = readFileSync(memPath, "utf-8");
-    return parseLearningMemory(content);
-  } catch {
-    return {
-      projectName: "unknown",
-      sections: {
-        "User Preferences": [],
-        "Key Learnings": [],
-        "Do-Not-Repeat": [],
-        "Decision Log": [],
-      },
-    };
-  }
+  return aggregateLearningMemory(cwd);
 }
 
 export function loadActionLogPanel(cwd: string): ActionLogPayload {
-  const content = safeReadLog(actionLogPath(cwd));
+  const content = aggregateActionLog(cwd);
   const sessions = parseLogSessions(content);
   return { sessions };
 }
 
 export function loadBugLogPanel(cwd: string): BugLogPayload {
-  const memory = loadBugMemory(bugMemoryPath(cwd));
+  const memory = aggregateBugMemory(cwd);
   return { entries: memory.entries, nextId: memory.nextId };
 }
 

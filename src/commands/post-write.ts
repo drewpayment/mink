@@ -1,7 +1,8 @@
 import { relative } from "path";
 import { readFileSync } from "fs";
 import { readStdinJson } from "../core/stdin";
-import { sessionPath, fileIndexPath, actionLogPath } from "../core/paths";
+import { sessionPath, fileIndexPath, actionLogShardPath } from "../core/paths";
+import { getOrCreateDeviceId } from "../core/device";
 import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { createSessionState, isSessionState, recordWrite } from "../core/session";
 import {
@@ -129,9 +130,11 @@ export async function postWrite(cwd: string): Promise<void> {
       upsertEntry(index, result.indexEntry);
     }
 
-    // 2. Action log entry
+    // 2. Action log entry — write to this device's shard
     try {
-      const logWriter = createActionLogWriter(actionLogPath(cwd));
+      const logWriter = createActionLogWriter(
+        actionLogShardPath(cwd, getOrCreateDeviceId())
+      );
       logWriter.appendWriteEntry(
         new Date().toISOString(),
         filePath,

@@ -5,6 +5,10 @@ import { sessionPath, learningMemoryPath, bugMemoryPath } from "../core/paths";
 import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { createSessionState, isSessionState } from "../core/session";
 import { parseLearningMemory, getEntries } from "../core/learning-memory";
+import {
+  aggregateLearningMemory,
+  aggregateBugMemory,
+} from "../core/state-aggregator";
 import { extractPatterns, matchPatterns } from "../core/pattern-engine";
 import {
   loadBugMemory,
@@ -88,20 +92,19 @@ export async function preWrite(cwd: string): Promise<void> {
     const filePath = relative(cwd, absolutePath);
     const writeContent = extractWriteContent(input);
 
-    // Load learning memory Do-Not-Repeat entries
+    // Load learning memory Do-Not-Repeat entries (canonical + sidecars)
     let doNotRepeatEntries: string[] = [];
     try {
-      const markdown = readFileSync(learningMemoryPath(cwd), "utf-8");
-      const mem = parseLearningMemory(markdown);
+      const mem = aggregateLearningMemory(cwd);
       doNotRepeatEntries = getEntries(mem, "Do-Not-Repeat");
     } catch {
       // Learning memory not found or corrupt — skip enforcement
     }
 
-    // Load bug memory for this file
+    // Load bug memory for this file (aggregated across shards)
     let bugMemory: BugMemory | undefined;
     try {
-      bugMemory = loadBugMemory(bugMemoryPath(cwd));
+      bugMemory = aggregateBugMemory(cwd);
     } catch {
       // Bug memory not found or corrupt — skip lookup
     }

@@ -13,6 +13,12 @@ import { isFileIndex } from "../core/index-store";
 import { loadLedger } from "../core/token-ledger";
 import { parseLearningMemory, totalEntryCount } from "../core/learning-memory";
 import { loadBugMemory } from "../core/bug-memory";
+import {
+  aggregateTokenLedger,
+  aggregateBugMemory,
+  aggregateLearningMemory,
+} from "../core/state-aggregator";
+import { loadCounters } from "../core/state-counters";
 import { getDaemonStatus } from "../core/daemon";
 
 interface FileCheck {
@@ -72,12 +78,17 @@ export function status(cwd: string): void {
     const raw = safeReadJson(fileIndexPath(cwd));
     if (raw && isFileIndex(raw)) {
       const h = raw.header;
-      const total = h.lifetimeHits + h.lifetimeMisses;
-      const ratio = total > 0 ? ((h.lifetimeHits / total) * 100).toFixed(1) : "N/A";
+      // Hit/miss counters live in the per-device counter file, fall back to
+      // legacy header counters for unmigrated repos.
+      const counters = loadCounters(cwd);
+      const hits = counters.fileIndexHits || h.lifetimeHits;
+      const misses = counters.fileIndexMisses || h.lifetimeMisses;
+      const total = hits + misses;
+      const ratio = total > 0 ? ((hits / total) * 100).toFixed(1) : "N/A";
       console.log("  File index:");
       console.log(`    Files: ${h.totalFiles}`);
       console.log(`    Last scan: ${h.lastScanTimestamp || "never"}`);
-      console.log(`    Hit/miss ratio: ${ratio}${total > 0 ? "%" : ""} (${h.lifetimeHits} hits, ${h.lifetimeMisses} misses)`);
+      console.log(`    Hit/miss ratio: ${ratio}${total > 0 ? "%" : ""} (${hits} hits, ${misses} misses)`);
     } else {
       console.log("  File index: not available");
     }
@@ -86,9 +97,9 @@ export function status(cwd: string): void {
   }
   console.log();
 
-  // Section 3: Token ledger
+  // Section 3: Token ledger (aggregated across all device shards + legacy)
   try {
-    const ledger = loadLedger(tokenLedgerPath(cwd));
+    const ledger = aggregateTokenLedger(cwd);
     const lt = ledger.lifetime;
     console.log("  Token ledger:");
     console.log(`    Sessions: ${lt.totalSessions}`);
@@ -100,32 +111,33 @@ export function status(cwd: string): void {
   }
   console.log();
 
-  // Section 4: Learning memory
+  // Section 4: Learning memory (canonical + sidecars)
   try {
-    const memPath = learningMemoryPath(cwd);
-    if (existsSync(memPath)) {
-      const content = readFileSync(memPath, "utf-8");
-      const mem = parseLearningMemory(content);
-      const total = totalEntryCount(mem);
-      const mtime = statSync(memPath).mtime;
+    const mem = aggregateLearningMemory(cwd);
+    const total = totalEntryCount(mem);
+    if (total === 0 && mem.projectName === "unknown") {
+      console.log("  Learning memory: not initialized");
+    } else {
       console.log("  Learning memory:");
       console.log(`    User Preferences: ${mem.sections["User Preferences"].length}`);
       console.log(`    Key Learnings: ${mem.sections["Key Learnings"].length}`);
       console.log(`    Do-Not-Repeat: ${mem.sections["Do-Not-Repeat"].length}`);
       console.log(`    Decision Log: ${mem.sections["Decision Log"].length}`);
       console.log(`    Total entries: ${total}`);
-      console.log(`    Last modified: ${mtime.toISOString()}`);
-    } else {
-      console.log("  Learning memory: not initialized");
+      const memPath = learningMemoryPath(cwd);
+      if (existsSync(memPath)) {
+        const mtime = statSync(memPath).mtime;
+        console.log(`    Canonical last modified: ${mtime.toISOString()}`);
+      }
     }
   } catch {
     console.log("  Learning memory: error reading");
   }
   console.log();
 
-  // Section 5: Bug log
+  // Section 5: Bug log (aggregated across shards)
   try {
-    const bugs = loadBugMemory(bugMemoryPath(cwd));
+    const bugs = aggregateBugMemory(cwd);
     console.log(`  Bug log: ${bugs.entries.length} entries`);
   } catch {
     console.log("  Bug log: error reading");

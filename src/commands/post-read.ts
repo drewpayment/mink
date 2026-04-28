@@ -1,11 +1,12 @@
 import { relative } from "path";
 import { readStdinJson } from "../core/stdin";
-import { sessionPath, fileIndexPath, actionLogPath } from "../core/paths";
+import { sessionPath, fileIndexPath, actionLogShardPath } from "../core/paths";
 import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { createSessionState, isSessionState, recordRead } from "../core/session";
 import { isFileIndex, lookupEntry } from "../core/index-store";
 import { estimateTokens, isBinaryFile } from "../core/token-estimate";
 import { createActionLogWriter } from "../core/action-log";
+import { getOrCreateDeviceId } from "../core/device";
 import type { SessionState } from "../types/session";
 import type { FileIndex } from "../types/file-index";
 import type { PostToolUseInput } from "../types/hook-input";
@@ -100,9 +101,11 @@ export async function postRead(cwd: string): Promise<void> {
     // Record the read in session state
     recordRead(state, filePath, result.estimatedTokens, result.indexHit);
 
-    // Append read entry to action log
+    // Append read entry to this device's action log shard
     try {
-      const logWriter = createActionLogWriter(actionLogPath(cwd));
+      const logWriter = createActionLogWriter(
+        actionLogShardPath(cwd, getOrCreateDeviceId())
+      );
       logWriter.appendReadEntry(
         new Date().toISOString(),
         filePath,

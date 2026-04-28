@@ -1,9 +1,10 @@
 import { existsSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
-import { minkRoot } from "./paths";
+import { minkRoot, syncVersionPath } from "./paths";
 import { resolveConfigValue, setConfigValue } from "./global-config";
 import { updateDeviceHeartbeat } from "./device";
+import { parkConflictingState } from "./conflict-park";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -11,16 +12,58 @@ const GIT_TIMEOUT = 5_000;
 const PUSH_TIMEOUT = 10_000;
 const FETCH_TIMEOUT = 15_000;
 
+// Sync layout version. Bumped when the on-disk shape of `~/.mink/` changes in
+// a way that older devices cannot read. Migration runs on first session-start
+// after upgrade when readSyncVersion() < MINK_SYNC_VERSION.
+export const MINK_SYNC_VERSION = 2;
+
+export function readSyncVersion(): number {
+  try {
+    const raw = readFileSync(syncVersionPath(), "utf-8").trim();
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  } catch {
+    // Pre-versioned repos default to v1.
+    return 1;
+  }
+}
+
+export function writeSyncVersion(version: number): void {
+  writeFileSync(syncVersionPath(), `${version}\n`);
+}
+
 const GITIGNORE_CONTENTS = `# Runtime state — machine-specific
 scheduler.pid
 scheduler.log
+channel.pid
+channel.log
 
 # Device identity and local config — machine-specific
 device-id
 config.local
 
-# Local backups — machine-specific snapshots
+# Local backups and per-device caches — machine-specific snapshots
 projects/*/backups/
+projects/*/session.json
+projects/*/scheduler-manifest.json
+projects/*/design-captures/
+projects/*/.mink-state-counters.json
+
+# Wiki derived/regenerable pages — each device rebuilds locally
+wiki/_index.md
+wiki/.mink-index.json
+wiki/projects/*/conventions.md
+wiki/projects/*/architecture.md
+`;
+
+const GITATTRIBUTES_CONTENTS = `# Sync v2 — merge drivers eliminate conflicts on shared files.
+# Drivers are registered in .git/config by ensureMergeDriversRegistered().
+projects/*/file-index.json merge=mink-json-union
+projects/*/learning-memory.*.md merge=union
+projects/*/learning-memory.md merge=mink-learning-memory
+wiki/areas/daily/*.md merge=union
+wiki/projects/*/sessions/*.md merge=union
+devices.json merge=mink-devices
 `;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -52,6 +95,32 @@ export function isSyncInitialized(): boolean {
 export function ensureGitignore(): void {
   const gitignorePath = join(minkRoot(), ".gitignore");
   writeFileSync(gitignorePath, GITIGNORE_CONTENTS);
+}
+
+export function ensureGitAttributes(): void {
+  const path = join(minkRoot(), ".gitattributes");
+  writeFileSync(path, GITATTRIBUTES_CONTENTS);
+}
+
+const MERGE_DRIVERS = [
+  "mink-json-union",
+  "mink-learning-memory",
+  "mink-devices",
+] as const;
+
+// Register the custom merge drivers in the local repo's .git/config so git
+// invokes `mink sync merge-driver <name>` whenever it encounters a conflict
+// on a path matched by .gitattributes. We point at the absolute path to the
+// currently-running mink CLI so a stale registration after npm relinks gets
+// refreshed every time `ensureMergeDriversRegistered()` runs.
+export function ensureMergeDriversRegistered(): void {
+  const cliPath = process.argv[1] ?? "mink";
+  for (const name of MERGE_DRIVERS) {
+    const command = `${cliPath} sync merge-driver ${name} %O %A %B %P`;
+    gitSafe(`config merge.${name}.name "Mink ${name}"`);
+    gitSafe(`config merge.${name}.driver "${command}"`);
+    gitSafe(`config merge.${name}.recursive binary`);
+  }
 }
 
 export interface SyncStatusInfo {
@@ -112,6 +181,12 @@ export function initSync(remoteUrl: string): void {
   git("init");
   git(`remote add origin ${remoteUrl}`);
 
+  // Install merge drivers + attributes now that .git exists. Drivers must be
+  // registered before the first pull so any incoming conflicts can be auto-
+  // resolved without surfacing to the user.
+  ensureGitAttributes();
+  ensureMergeDriversRegistered();
+
   // Try to fetch from remote
   const fetchResult = gitSafe("fetch origin", FETCH_TIMEOUT);
 
@@ -171,14 +246,36 @@ export function initSync(remoteUrl: string): void {
   console.log("[mink] manual sync: run 'mink sync' at any time");
 }
 
+// Sync v2 helper: fetch + merge --no-edit using the registered merge drivers.
+// Anything still conflicting after the drivers run gets parked to a hidden
+// ref so sync can never block. Returns true on a clean merge.
+function attemptMergeOrPark(
+  branch: string,
+  reason: string,
+  onMessage: (msg: string) => void
+): boolean {
+  try {
+    git(`merge --no-edit origin/${branch}`, FETCH_TIMEOUT);
+    return true;
+  } catch {
+    const parked = parkConflictingState(reason);
+    if (parked) {
+      onMessage(
+        `[mink] sync: parked conflicting state to ${parked} — sync continues, run 'mink sync reconcile list' to inspect`
+      );
+    }
+    return false;
+  }
+}
+
 export function syncPull(
   onMessage: (msg: string) => void = (msg) => console.error(msg)
 ): void {
   if (!isSyncInitialized()) return;
 
   ensureGitignore();
-
-  const root = minkRoot();
+  ensureGitAttributes();
+  ensureMergeDriversRegistered();
 
   try {
     // Stash any uncommitted local changes as safety net
@@ -192,25 +289,17 @@ export function syncPull(
     // Determine branch
     const branch = gitSafe("rev-parse --abbrev-ref HEAD") ?? "main";
 
-    // Pull with rebase
-    try {
-      git(`pull --rebase origin ${branch}`, FETCH_TIMEOUT);
-    } catch (err) {
-      // Check if rebase is in progress and abort
-      if (existsSync(join(root, ".git", "rebase-merge")) ||
-          existsSync(join(root, ".git", "rebase-apply"))) {
-        gitSafe("rebase --abort");
-        onMessage(
-          "[mink] sync pull: rebase conflict detected — aborted rebase, local state preserved"
-        );
-        onMessage(
-          "[mink] resolve manually with 'mink sync pull' or 'cd ~/.mink && git pull --rebase origin main'"
-        );
-      } else {
-        onMessage(
-          `[mink] sync pull failed: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
+    // Fetch + merge --no-edit. Custom merge drivers (file-index union,
+    // learning-memory section merge, devices registry union) resolve every
+    // anticipated conflict; anything left over gets parked to a hidden ref
+    // and the working tree advances to upstream HEAD so sync never gets stuck.
+    const fetched = gitSafe(`fetch origin ${branch}`, FETCH_TIMEOUT);
+    if (fetched !== null) {
+      attemptMergeOrPark(branch, "pull", onMessage);
+    } else {
+      onMessage(
+        "[mink] sync pull: fetch failed (network or auth) — local state preserved"
+      );
     }
 
     // Pop stash if we stashed earlier
@@ -240,62 +329,52 @@ export function syncPush(
   if (!isSyncInitialized()) return;
 
   ensureGitignore();
-  try { updateDeviceHeartbeat(); } catch { /* never crash hooks */ }
-
-  const root = minkRoot();
+  ensureGitAttributes();
+  ensureMergeDriversRegistered();
+  try {
+    updateDeviceHeartbeat();
+  } catch {
+    /* never crash hooks */
+  }
 
   try {
-    // Check for changes
     const status = gitSafe("status --porcelain");
-    if (!status || !status.trim()) {
-      // No local changes — still try to push any unpushed commits
-      const branch = gitSafe("rev-parse --abbrev-ref HEAD") ?? "main";
-      try {
-        git(`push origin ${branch}`, PUSH_TIMEOUT);
-        setConfigValue("sync.last-push", new Date().toISOString());
-      } catch {
-        // No unpushed commits or network error — silent
-      }
-      return;
-    }
-
-    // Stage all changes (respects .gitignore)
-    git("add -A");
-
-    // Commit
-    const now = new Date();
-    const timestamp = now.toISOString().replace("T", " ").slice(0, 16);
-    git(`commit -m "mink: sync ${timestamp}"`);
-
-    // Determine branch
+    const hasChanges = status !== null && status.trim().length > 0;
     const branch = gitSafe("rev-parse --abbrev-ref HEAD") ?? "main";
 
-    // Pull with rebase to reconcile any remote changes
-    try {
-      git(`pull --rebase origin ${branch}`, FETCH_TIMEOUT);
-    } catch {
-      // Check for rebase conflict
-      if (existsSync(join(root, ".git", "rebase-merge")) ||
-          existsSync(join(root, ".git", "rebase-apply"))) {
-        gitSafe("rebase --abort");
-        onMessage(
-          "[mink] sync: rebase conflict during push — local commit preserved, skipping push"
-        );
-        onMessage(
-          "[mink] resolve manually with 'mink sync pull' then 'mink sync push'"
-        );
-        return;
-      }
+    if (hasChanges) {
+      git("add -A");
+      const now = new Date();
+      const timestamp = now.toISOString().replace("T", " ").slice(0, 16);
+      gitSafe(`commit -m "mink: sync ${timestamp}"`);
     }
 
-    // Push (best-effort)
+    // Reconcile with remote before pushing. Custom merge drivers handle
+    // anticipated conflicts; anything they can't is parked to a hidden ref.
+    const fetched = gitSafe(`fetch origin ${branch}`, FETCH_TIMEOUT);
+    if (fetched !== null) {
+      attemptMergeOrPark(branch, "push", onMessage);
+    }
+
+    // Push. Single retry on rejection (race with a simultaneous push from
+    // another device). After that we leave the commit local for next session
+    // — matches spec 15's push-failure handling.
     try {
       git(`push origin ${branch}`, PUSH_TIMEOUT);
       setConfigValue("sync.last-push", new Date().toISOString());
     } catch {
-      onMessage(
-        "[mink] sync push failed — local commit preserved, will retry next session"
-      );
+      const refetched = gitSafe(`fetch origin ${branch}`, FETCH_TIMEOUT);
+      if (refetched !== null) {
+        attemptMergeOrPark(branch, "push-retry", onMessage);
+      }
+      try {
+        git(`push origin ${branch}`, PUSH_TIMEOUT);
+        setConfigValue("sync.last-push", new Date().toISOString());
+      } catch {
+        onMessage(
+          "[mink] sync push failed — local commit preserved, will retry next session"
+        );
+      }
     }
   } catch (err) {
     onMessage(

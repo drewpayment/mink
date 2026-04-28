@@ -74,9 +74,11 @@ describe("read intelligence integration", () => {
     expect(finalState.reads["src/auth.ts"].estimatedTokens).toBeGreaterThan(0);
     expect(finalState.counters.fileIndexHits).toBe(1);
 
-    // Verify index updated
+    // Verify session-level read counter still records the hit. Index-level
+    // hit/miss is now persisted to the per-device counter file, not the
+    // shared file-index header.
     const finalIndex = safeReadJson(indexFile) as FileIndex;
-    expect(finalIndex.header.lifetimeHits).toBe(1);
+    expect(finalIndex.header.lifetimeHits).toBe(0);
   });
 
   test("multiple reads of different files accumulate correctly", () => {
@@ -95,12 +97,13 @@ describe("read intelligence integration", () => {
     const postResult2 = analyzePostRead("src/config.ts", "b".repeat(800), index);
     recordRead(state, "src/config.ts", postResult2.estimatedTokens, postResult2.indexHit);
 
-    // Verify accumulation
+    // Verify accumulation. Session counters still increment for hit telemetry;
+    // the shared index header no longer carries hit counts.
     expect(Object.keys(state.reads)).toHaveLength(2);
     expect(state.reads["src/auth.ts"].readCount).toBe(1);
     expect(state.reads["src/config.ts"].readCount).toBe(1);
     expect(state.counters.fileIndexHits).toBe(2);
-    expect(index.header.lifetimeHits).toBe(2);
+    expect(index.header.lifetimeHits).toBe(0);
   });
 
   test("repeated read of same file: warning emitted, readCount incremented", () => {

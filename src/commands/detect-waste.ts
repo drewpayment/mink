@@ -1,36 +1,31 @@
 import { statSync } from "fs";
 import {
-  tokenLedgerPath,
+  tokenLedgerShardPath,
   fileIndexPath,
-  actionLogPath,
   learningMemoryPath,
 } from "../core/paths";
-import { createEmptyLedger, isTokenLedger, saveLedger } from "../core/token-ledger";
+import { loadLedger, saveLedger } from "../core/token-ledger";
 import { isFileIndex, createEmptyIndex } from "../core/index-store";
-import { safeReadLog } from "../core/action-log";
+import {
+  aggregateTokenLedger,
+  aggregateActionLog,
+} from "../core/state-aggregator";
+import { loadCounters } from "../core/state-counters";
 import { safeReadJson } from "../core/fs-utils";
 import { runDetection } from "../core/waste-detection";
+import { getOrCreateDeviceId } from "../core/device";
 import type { TokenLedger } from "../types/token-ledger";
 import type { FileIndex } from "../types/file-index";
 
 export function detectWaste(cwd: string): void {
-  const ledgerPath = tokenLedgerPath(cwd);
   const idxPath = fileIndexPath(cwd);
-  const logPath = actionLogPath(cwd);
   const lmPath = learningMemoryPath(cwd);
 
-  // Load and validate ledger — distinguish empty vs corrupted
-  const rawLedger = safeReadJson(ledgerPath);
-  let ledger: TokenLedger;
-
-  if (rawLedger === null) {
-    ledger = createEmptyLedger();
-  } else if (!isTokenLedger(rawLedger)) {
-    console.warn("[mink] Warning: corrupt token ledger, skipping waste detection");
-    return;
-  } else {
-    ledger = rawLedger;
-  }
+  // Aggregated ledger (across all device shards + legacy). Aggregator returns
+  // an empty ledger when no sources exist, so the empty-vs-corrupt distinction
+  // collapses into "treat missing as empty" — corrupt files inside a shard are
+  // already logged by loadLedger.
+  const ledger: TokenLedger = aggregateTokenLedger(cwd);
 
   // Load file index
   const rawIndex = safeReadJson(idxPath);
@@ -41,8 +36,8 @@ export function detectWaste(cwd: string): void {
     fileIndex = createEmptyIndex();
   }
 
-  // Load action log content
-  const actionLogContent = safeReadLog(logPath);
+  // Aggregated action log content (across all device shards + legacy)
+  const actionLogContent = aggregateActionLog(cwd);
 
   // Get learning memory mtime
   let learningMemoryMtimeMs: number | null = null;
@@ -52,18 +47,32 @@ export function detectWaste(cwd: string): void {
     // File missing — will be flagged as stale
   }
 
-  // Run detection
+  // Pull hit/miss telemetry from the per-device counter file, falling back to
+  // the legacy header counters when unmigrated. We feed runDetection a synthetic
+  // header so it works without knowing about the split.
+  const counters = loadCounters(cwd);
+  const headerForDetection = {
+    ...fileIndex.header,
+    lifetimeHits: counters.fileIndexHits || fileIndex.header.lifetimeHits,
+    lifetimeMisses: counters.fileIndexMisses || fileIndex.header.lifetimeMisses,
+  };
+
+  // Run detection on the aggregated cross-device view
   const flags = runDetection(
     ledger,
     fileIndex.entries,
-    fileIndex.header,
+    headerForDetection,
     actionLogContent,
     learningMemoryMtimeMs
   );
 
-  // Store flags in ledger (replaces previous)
-  ledger.wasteFlags = flags;
-  saveLedger(ledgerPath, ledger);
+  // Persist flags in THIS device's shard ledger so it's the only writer for
+  // that file. The aggregator unions wasteFlags across shards on read, so
+  // every device's view stays current without merge conflicts.
+  const shardLedgerPath = tokenLedgerShardPath(cwd, getOrCreateDeviceId());
+  const shardLedger = loadLedger(shardLedgerPath);
+  shardLedger.wasteFlags = flags;
+  saveLedger(shardLedgerPath, shardLedger);
 
   // Output summary
   if (flags.length === 0) {

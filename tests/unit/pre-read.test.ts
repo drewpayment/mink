@@ -74,17 +74,20 @@ describe("analyzePreRead", () => {
 
     expect(result.indexHit).toBe(false);
     expect(result.entry).toBeNull();
-    expect(index.header.lifetimeMisses).toBe(1);
+    // Hit/miss telemetry is now persisted by the caller via the per-device
+    // counter file, so analyzePreRead leaves the shared index untouched.
+    expect(index.header.lifetimeMisses).toBe(0);
   });
 
-  test("file index hit increments lifetimeHits", () => {
+  test("file index hit reports indexHit without mutating the index", () => {
     const state = createSessionState();
     const index = createEmptyIndex();
     upsertEntry(index, makeEntry("src/auth.ts", "Auth middleware", 380));
 
-    analyzePreRead("src/auth.ts", state, index);
+    const result = analyzePreRead("src/auth.ts", state, index);
 
-    expect(index.header.lifetimeHits).toBe(1);
+    expect(result.indexHit).toBe(true);
+    expect(index.header.lifetimeHits).toBe(0);
   });
 
   test("null index is treated as miss without crash", () => {

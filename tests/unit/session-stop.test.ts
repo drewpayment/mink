@@ -9,6 +9,7 @@ import {
   recordWrite,
 } from "../../src/core/session";
 import { sessionStop } from "../../src/commands/session-stop";
+import { getOrCreateDeviceId } from "../../src/core/device";
 import type { SessionState, SessionSummary } from "../../src/types/session";
 import type { TokenLedger } from "../../src/types/token-ledger";
 
@@ -17,6 +18,11 @@ function setupSession(dir: string, state: SessionState) {
   const sessionFile = join(dir, "session.json");
   atomicWriteJson(sessionFile, state);
   return sessionFile;
+}
+
+// session-stop writes the ledger to this device's shard under projDir/state/<id>/.
+function shardLedgerPath(dir: string): string {
+  return join(dir, "state", getOrCreateDeviceId(), "token-ledger.json");
 }
 
 describe("sessionStop", () => {
@@ -170,8 +176,7 @@ describe("sessionStop", () => {
 
     sessionStop(sessionFile);
 
-    const ledgerPath = join(dir, "token-ledger.json");
-    const ledger = safeReadJson(ledgerPath) as any;
+    const ledger = safeReadJson(shardLedgerPath(dir)) as any;
     expect(ledger).not.toBeNull();
     expect(ledger.sessions).toHaveLength(1);
     expect(ledger.lifetime.totalSessions).toBe(1);
@@ -193,8 +198,7 @@ describe("sessionStop", () => {
 
     sessionStop(sessionFile);
 
-    const ledgerPath = join(dir, "token-ledger.json");
-    const ledger = safeReadJson(ledgerPath) as any;
+    const ledger = safeReadJson(shardLedgerPath(dir)) as any;
     expect(ledger.sessions).toHaveLength(1); // same session, updated
     expect(ledger.lifetime.totalReads).toBe(2);
   });

@@ -160,16 +160,32 @@ export function saveArchive(archivePath: string, newlyArchived: LedgerSession[])
 
 export function createLedgerFinalizer(
   projectDir: string,
+  deviceIdOrThreshold?: string | number,
   archiveThreshold: number = 1000
 ): SessionFinalizer {
-  const ledgerPath = join(projectDir, "token-ledger.json");
-  const archivePath = join(projectDir, "token-ledger-archive.json");
+  // Backward compat: callers that pass `(projectDir)` or
+  // `(projectDir, threshold)` still work and write to the legacy path. New
+  // callers pass `(projectDir, deviceId, threshold?)` to write into the
+  // per-device shard at projectDir/state/<deviceId>/...
+  let ledgerPath: string;
+  let archivePath: string;
+  let threshold: number;
+  if (typeof deviceIdOrThreshold === "string") {
+    const shardDir = join(projectDir, "state", deviceIdOrThreshold);
+    ledgerPath = join(shardDir, "token-ledger.json");
+    archivePath = join(shardDir, "token-ledger-archive.json");
+    threshold = archiveThreshold;
+  } else {
+    ledgerPath = join(projectDir, "token-ledger.json");
+    archivePath = join(projectDir, "token-ledger-archive.json");
+    threshold = deviceIdOrThreshold ?? archiveThreshold;
+  }
 
   return {
     appendSession(summary: SessionSummary): void {
       const ledger = loadLedger(ledgerPath);
       appendSession(ledger, summary);
-      const { archived } = archiveIfNeeded(ledger, archiveThreshold);
+      const { archived } = archiveIfNeeded(ledger, threshold);
       if (archived.length > 0) {
         saveArchive(archivePath, archived);
       }

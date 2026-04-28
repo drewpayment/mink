@@ -7,6 +7,11 @@ import {
   isSyncInitialized,
 } from "../core/sync";
 import { setConfigValue } from "../core/global-config";
+import { runMergeDriver } from "../core/sync-merge-drivers";
+import {
+  listParkedConflicts,
+  dropParkedConflict,
+} from "../core/conflict-park";
 
 export async function sync(args: string[]): Promise<void> {
   const subcommand = args[0];
@@ -39,11 +44,80 @@ export async function sync(args: string[]): Promise<void> {
     case "disconnect":
       return handleDisconnect();
 
+    case "merge-driver":
+      return handleMergeDriver(args.slice(1));
+
+    case "reconcile":
+      return handleReconcile(args.slice(1));
+
+    case "migrate": {
+      const { syncMigrateCommand } = await import("./sync-migrate");
+      syncMigrateCommand();
+      return;
+    }
+
     default:
       console.error(`[mink] unknown sync subcommand: ${subcommand}`);
-      console.error("Usage: mink sync [init|status|push|pull|pause|resume|disconnect]");
+      console.error(
+        "Usage: mink sync [init|status|push|pull|pause|resume|disconnect|reconcile|migrate|merge-driver]"
+      );
       process.exit(1);
   }
+}
+
+function handleReconcile(args: string[]): void {
+  const sub = args[0];
+  if (sub === undefined || sub === "list") {
+    const refs = listParkedConflicts();
+    if (refs.length === 0) {
+      console.log("[mink] no parked conflicts");
+      return;
+    }
+    console.log(`[mink] ${refs.length} parked conflict ref(s):`);
+    for (const r of refs) console.log(`  ${r}`);
+    console.log(
+      "Inspect with: cd ~/.mink && git log <ref> | git diff main..<ref>"
+    );
+    console.log("Drop with:    mink sync reconcile drop <ref>");
+    return;
+  }
+  if (sub === "drop") {
+    const ref = args[1];
+    if (!ref) {
+      console.error("Usage: mink sync reconcile drop <ref>");
+      process.exit(1);
+    }
+    if (dropParkedConflict(ref)) {
+      console.log(`[mink] dropped ${ref}`);
+    } else {
+      console.error(`[mink] failed to drop ${ref} — only refs/mink/conflicts/* are droppable`);
+      process.exit(1);
+    }
+    return;
+  }
+  console.error("Usage: mink sync reconcile [list|drop <ref>]");
+  process.exit(1);
+}
+
+// Invoked by git for paths matched in .gitattributes. Always exits 0 so a
+// merge can never block — the driver itself logs warnings and falls back to
+// "ours" when inputs are unparseable.
+function handleMergeDriver(args: string[]): void {
+  const [name, basePath, oursPath, theirsPath, filePath] = args;
+  if (!name || !basePath || !oursPath || !theirsPath) {
+    console.error(
+      "Usage: mink sync merge-driver <name> <base> <ours> <theirs> [path]"
+    );
+    process.exit(0); // exit 0 so git never sees a failure here
+  }
+  const code = runMergeDriver(
+    name,
+    basePath,
+    oursPath,
+    theirsPath,
+    filePath ?? oursPath
+  );
+  process.exit(code);
 }
 
 function handleManualSync(): void {
