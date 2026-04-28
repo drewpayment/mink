@@ -1,14 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { Dialog as DialogPrimitive } from "radix-ui";
 import { Btn } from "@/components/ui/btn";
+import { Icon } from "@/components/ui/icon";
 import {
   addLearningEntry,
   refineLearningRule,
@@ -114,79 +109,82 @@ export function AddRuleModal({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
-        <DialogTitle>Add learning rule</DialogTitle>
-        <DialogDescription>
-          Capture a workflow preference, project fact, mistake-to-avoid, or
-          committed decision.
-        </DialogDescription>
+    <DialogPrimitive.Root open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="modal-overlay" />
+        <DialogPrimitive.Content className="modal-content">
+          <DialogPrimitive.Title className="modal-title">
+            Add learning rule
+          </DialogPrimitive.Title>
+          <DialogPrimitive.Description className="modal-desc">
+            Capture a workflow preference, project fact, mistake-to-avoid, or
+            committed decision.
+          </DialogPrimitive.Description>
 
-        <div className="field" style={{ marginTop: 8 }}>
-          <label htmlFor="add-rule-section">Section</label>
-          <select
-            id="add-rule-section"
-            value={section}
-            onChange={(e) => setSection(e.target.value as SectionName)}
-          >
-            {SECTION_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
+          <div className="field">
+            <label htmlFor="add-rule-section">Section</label>
+            <select
+              id="add-rule-section"
+              value={section}
+              onChange={(e) => setSection(e.target.value as SectionName)}
+            >
+              {SECTION_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="field">
-          <label htmlFor="add-rule-text">Rule</label>
-          <textarea
-            id="add-rule-text"
-            rows={3}
-            placeholder="Single imperative sentence describing the rule…"
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              setRefined(null);
-            }}
-          />
-          <span className="hint">
-            {refineEnabled
-              ? "Tip: click Refine to let the AI tighten phrasing before saving."
-              : "AI manual triggers are disabled in config."}
-          </span>
-        </div>
+          <div className="field">
+            <label htmlFor="add-rule-text">Rule</label>
+            <textarea
+              id="add-rule-text"
+              rows={3}
+              placeholder="Single imperative sentence describing the rule…"
+              value={text}
+              onChange={(e) => {
+                setText(e.target.value);
+                setRefined(null);
+              }}
+            />
+            <span className="hint">
+              {refineEnabled
+                ? "Tip: click Refine to let the AI tighten phrasing before saving."
+                : "AI manual triggers are disabled in config."}
+            </span>
+          </div>
 
-        {refined && (
-          <div
-            className="inset"
-            style={{ display: "flex", flexDirection: "column", gap: 6 }}
-          >
-            <div style={{ fontWeight: 600, color: "var(--fg-0)" }}>
-              AI refinement
-              <span
-                className="chip accent"
-                style={{ marginLeft: 8, fontSize: 10 }}
-              >
-                conf {refined.confidence.toFixed(2)}
-              </span>
-            </div>
-            <div>{refined.text}</div>
-            {refined.rationale && (
-              <div className="c" style={{ fontSize: 11 }}>
-                {refined.rationale}
+          {refined && (
+            <div
+              className="inset"
+              style={{ display: "flex", flexDirection: "column", gap: 6 }}
+            >
+              <div style={{ fontWeight: 600, color: "var(--fg-0)" }}>
+                AI refinement
+                <span
+                  className="chip accent"
+                  style={{ marginLeft: 8, fontSize: 10 }}
+                >
+                  conf {refined.confidence.toFixed(2)}
+                </span>
               </div>
-            )}
-          </div>
-        )}
+              <div>{refined.text}</div>
+              {refined.rationale && (
+                <div className="c" style={{ fontSize: 11 }}>
+                  {refined.rationale}
+                </div>
+              )}
+            </div>
+          )}
 
-        {error && (
-          <div className="chip red" style={{ alignSelf: "flex-start" }}>
-            {error}
-          </div>
-        )}
+          {error && (
+            <div className="chip red" style={{ alignSelf: "flex-start" }}>
+              {error}
+            </div>
+          )}
 
-        <DialogFooter>
-          <div className="row tight" style={{ gap: 8 }}>
+          <div className="modal-footer">
             <Btn
               variant="ghost"
               icon="wand"
@@ -217,8 +215,15 @@ export function AddRuleModal({
               Cancel
             </Btn>
           </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+
+          <DialogPrimitive.Close
+            className="modal-close"
+            aria-label="Close"
+          >
+            <Icon name="x" size={12} />
+          </DialogPrimitive.Close>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }

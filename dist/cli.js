@@ -5556,17 +5556,17 @@ var init_task_registry = __esm(() => {
       schedule: "30 3 * * *",
       actionType: "ai-cli",
       enabled: true,
-      retryPolicy: { maxAttempts: 2, baseDelayMs: 60000 },
+      retryPolicy: { maxAttempts: 3, baseDelayMs: 60000 },
       timeoutMs: 300000
     },
     {
       id: "learning-rules-curate",
       name: "Learning Rules — Curate",
       description: "AI-driven dedupe and contradiction sweep over the learning memory",
-      schedule: "0 4 * * 1",
+      schedule: "30 4 * * 1",
       actionType: "ai-cli",
       enabled: true,
-      retryPolicy: { maxAttempts: 2, baseDelayMs: 60000 },
+      retryPolicy: { maxAttempts: 3, baseDelayMs: 60000 },
       timeoutMs: 300000
     }
   ];
@@ -73476,7 +73476,7 @@ var require_ffi_WASM_RELEASE_SYNC = __commonJS((exports) => {
 
 // node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js
 var require_emscripten_module_WASM_RELEASE_SYNC = __commonJS((exports, module) => {
-  var __dirname = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
+  var __dirname = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
   var QuickJSRaw = (() => {
     var _scriptDir = typeof document !== "undefined" && document.currentScript ? document.currentScript.src : undefined;
     if (typeof __filename !== "undefined")

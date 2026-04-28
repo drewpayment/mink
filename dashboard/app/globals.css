@@ -370,6 +370,49 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--line-1); border-radius: 999px; border: 2px solid var(--bg-0); }
 ::-webkit-scrollbar-thumb:hover { background: var(--line-2); }
 
+/* ---------- Modal ------------------------------------------------------- */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: oklch(0 0 0 / 0.55);
+}
+.modal-overlay[data-state="open"]  { animation: modal-fade-in  .15s ease-out; }
+.modal-overlay[data-state="closed"]{ animation: modal-fade-out .12s ease-in forwards; }
+
+.modal-content {
+  position: fixed; top: 50%; left: 50%; z-index: 51;
+  transform: translate(-50%, -50%);
+  width: calc(100% - 32px); max-width: 520px;
+  background: var(--bg-1); border: 1px solid var(--line-1);
+  border-radius: 10px; box-shadow: var(--shadow-pop);
+  padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 10px;
+  outline: none;
+}
+.modal-content[data-state="open"]  { animation: modal-zoom-in  .15s ease-out; }
+.modal-content[data-state="closed"]{ animation: modal-zoom-out .12s ease-in forwards; }
+
+.modal-title { margin: 0; font-size: 14px; font-weight: 600; color: var(--fg-0); letter-spacing: -0.01em; }
+.modal-desc  { margin: 0; font-size: 11.5px; color: var(--fg-3); }
+.modal-footer { display: flex; justify-content: flex-end; gap: 6px; margin-top: 4px; }
+.modal-close {
+  position: absolute; top: 10px; right: 10px;
+  width: 22px; height: 22px; border-radius: 6px;
+  display: grid; place-items: center; color: var(--fg-3);
+  border: 1px solid transparent;
+}
+.modal-close:hover { background: var(--bg-2); color: var(--fg-0); border-color: var(--line-1); }
+
+@keyframes modal-fade-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modal-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes modal-zoom-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes modal-zoom-out {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+}
+
 /* ---------- Tweaks panel ------------------------------------------------ */
 .tweaks {
   position: fixed; right: 16px; bottom: 36px; z-index: 50;
