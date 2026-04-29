@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/drewpayment/mink/compare/v0.9.0...v0.9.1) (2026-04-29)
+
+
+### Bug Fixes
+
+* **init:** emit `mink` bin shim in hook commands for portability ([735ef64](https://github.com/drewpayment/mink/commit/735ef64504e41704a60d876fae6422b6a3c559db))
+* **init:** emit `mink` bin shim in hook commands instead of absolute cli.js path ([2391ac5](https://github.com/drewpayment/mink/commit/2391ac57608581fb583c48275225d839511dde64)), closes [#55](https://github.com/drewpayment/mink/issues/55)
+
 ## [0.9.0](https://github.com/drewpayment/mink/compare/v0.8.0...v0.9.0) (2026-04-28)
 
 
