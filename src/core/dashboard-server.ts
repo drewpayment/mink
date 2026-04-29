@@ -470,11 +470,13 @@ export async function startDashboardServer(
           try {
             const limitRaw = url.searchParams.get("limit");
             const categoryRaw = url.searchParams.get("category");
+            const pathRaw = url.searchParams.get("path");
             const limit = limitRaw ? Number(limitRaw) : undefined;
             return jsonResponse(
               loadWikiPanel({
                 limit: Number.isFinite(limit) ? limit : undefined,
                 category: (categoryRaw as "all" | undefined) ?? undefined,
+                path: pathRaw ?? undefined,
               }),
             );
           } catch (err) {

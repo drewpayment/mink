@@ -1,25 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { WikiPanelPayload } from "@mink/types/dashboard";
 import { Card } from "@/components/ui/panel-card";
 import { Chip } from "@/components/ui/chip";
 import { Btn } from "@/components/ui/btn";
 import { Icon } from "@/components/ui/icon";
 import { useDashboardStore } from "@/hooks/use-dashboard-store";
-import { fetchWikiNote } from "@/lib/api-client";
+import { fetchWiki, fetchWikiNote } from "@/lib/api-client";
 
 const CATS = ["all", "inbox", "projects", "areas", "resources", "archives"] as const;
 type Cat = (typeof CATS)[number];
-
-function normalizeSlashes(p: string): string {
-  return p.replace(/\\/g, "/");
-}
-
-function isInTreePath(filePath: string, treePath: string): boolean {
-  const f = normalizeSlashes(filePath);
-  const t = normalizeSlashes(treePath);
-  return f === t || f.startsWith(t + "/");
-}
 
 function formatTimestamp(iso: string): string {
   if (!iso) return "—";
@@ -39,6 +30,8 @@ export function WikiPanel() {
   const setWikiNote = useDashboardStore((s) => s.setWikiNote);
   const [cat, setCat] = useState<Cat>("all");
   const [selectedTreePath, setSelectedTreePath] = useState<string | null>(null);
+  const [filteredWiki, setFilteredWiki] = useState<WikiPanelPayload | null>(null);
+  const [filterLoading, setFilterLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [noteError, setNoteError] = useState<string | null>(null);
 
@@ -48,6 +41,33 @@ export function WikiPanel() {
       setSelected(wiki.recent[0].filePath);
     }
   }, [selected, wiki]);
+
+  // Refetch a path-filtered payload whenever the selected folder changes,
+  // and again when the baseline wiki payload changes (SSE refresh).
+  useEffect(() => {
+    if (!selectedTreePath) {
+      setFilteredWiki(null);
+      setFilterLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setFilterLoading(true);
+    fetchWiki({ path: selectedTreePath })
+      .then((data) => {
+        if (cancelled) return;
+        setFilteredWiki(data);
+        setFilterLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.warn(err);
+        setFilteredWiki(null);
+        setFilterLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTreePath, wiki]);
 
   // Load selected note body.
   useEffect(() => {
@@ -92,10 +112,10 @@ export function WikiPanel() {
     );
   }
 
-  const byCat = cat === "all" ? wiki.recent : wiki.recent.filter((n) => n.category === cat);
-  const filtered = selectedTreePath
-    ? byCat.filter((n) => isInTreePath(n.filePath, selectedTreePath))
-    : byCat;
+  const notesSource = selectedTreePath ? filteredWiki : wiki;
+  const recent = notesSource?.recent ?? [];
+  const filtered = cat === "all" ? recent : recent.filter((n) => n.category === cat);
+  const showFilterLoading = selectedTreePath && filterLoading && !filteredWiki;
 
   return (
     <div className="page">
@@ -172,7 +192,9 @@ export function WikiPanel() {
           }
           flush
         >
-          {filtered.length === 0 ? (
+          {showFilterLoading ? (
+            <div className="empty"><h4>Loading…</h4></div>
+          ) : filtered.length === 0 ? (
             <div className="empty"><h4>No notes</h4></div>
           ) : (
             <table className="tbl">
