@@ -11,6 +11,16 @@ import { fetchWikiNote } from "@/lib/api-client";
 const CATS = ["all", "inbox", "projects", "areas", "resources", "archives"] as const;
 type Cat = (typeof CATS)[number];
 
+function normalizeSlashes(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
+function isInTreePath(filePath: string, treePath: string): boolean {
+  const f = normalizeSlashes(filePath);
+  const t = normalizeSlashes(treePath);
+  return f === t || f.startsWith(t + "/");
+}
+
 function formatTimestamp(iso: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -28,6 +38,7 @@ export function WikiPanel() {
   const wikiNote = useDashboardStore((s) => s.wikiNote);
   const setWikiNote = useDashboardStore((s) => s.setWikiNote);
   const [cat, setCat] = useState<Cat>("all");
+  const [selectedTreePath, setSelectedTreePath] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [noteError, setNoteError] = useState<string | null>(null);
 
@@ -81,7 +92,10 @@ export function WikiPanel() {
     );
   }
 
-  const filtered = cat === "all" ? wiki.recent : wiki.recent.filter((n) => n.category === cat);
+  const byCat = cat === "all" ? wiki.recent : wiki.recent.filter((n) => n.category === cat);
+  const filtered = selectedTreePath
+    ? byCat.filter((n) => isInTreePath(n.filePath, selectedTreePath))
+    : byCat;
 
   return (
     <div className="page">
@@ -103,17 +117,32 @@ export function WikiPanel() {
             {wiki.tree.length === 0 ? (
               <div className="muted" style={{ fontSize: 11, padding: 6 }}>Vault is empty.</div>
             ) : (
-              wiki.tree.map((n) => (
-                <div
-                  key={n.path}
-                  className="tree-row dir"
-                  style={{ paddingLeft: 10 + n.depth * 14 }}
-                >
-                  <Icon name="folder" size={11} />
-                  <span className="fn">{n.name}</span>
-                  <span className="meta">{n.count}</span>
-                </div>
-              ))
+              wiki.tree.map((n) => {
+                const active = selectedTreePath === n.path;
+                return (
+                  <button
+                    key={n.path}
+                    type="button"
+                    className={`tree-row dir${active ? " on" : ""}`}
+                    style={{
+                      paddingLeft: 10 + n.depth * 14,
+                      width: "100%",
+                      background: "transparent",
+                      border: 0,
+                      textAlign: "left",
+                      font: "inherit",
+                      color: "inherit",
+                    }}
+                    onClick={() =>
+                      setSelectedTreePath((prev) => (prev === n.path ? null : n.path))
+                    }
+                  >
+                    <Icon name="folder" size={11} />
+                    <span className="fn">{n.name}</span>
+                    <span className="meta">{n.count}</span>
+                  </button>
+                );
+              })
             )}
           </div>
         </Card>
@@ -129,6 +158,16 @@ export function WikiPanel() {
                   </button>
                 ))}
               </div>
+              {selectedTreePath && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedTreePath(null)}
+                  title="Clear folder filter"
+                  style={{ background: "transparent", border: 0, padding: 0, marginLeft: 8, cursor: "pointer" }}
+                >
+                  <Chip tone="accent">{selectedTreePath} ×</Chip>
+                </button>
+              )}
             </div>
           }
           flush
