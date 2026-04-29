@@ -7,26 +7,40 @@ import { buildHooksConfig, mergeHooksIntoSettings, writeMinkRule, init } from ".
 import { learningMemoryPath } from "../../src/core/paths";
 
 describe("buildHooksConfig", () => {
-  test("uses bun when bun is the detected runtime", () => {
-    const hooks = buildHooksConfig("bun", "/usr/local/bin/mink/cli.js");
-    expect(hooks.SessionStart[0].hooks[0].command).toContain("bun run");
-    expect(hooks.Stop[0].hooks[0].command).toContain("bun run");
+  test("emits the `mink` bin shim for installed (dist) cli paths", () => {
+    const hooks = buildHooksConfig("/usr/local/bin/mink/cli.js");
+    expect(hooks.SessionStart[0].hooks[0].command).toBe("mink session-start");
+    expect(hooks.Stop[0].hooks[0].command).toBe("mink session-stop");
   });
 
-  test("uses node when node is the detected runtime", () => {
-    const hooks = buildHooksConfig("node", "/usr/local/bin/mink/cli.js");
-    expect(hooks.SessionStart[0].hooks[0].command).toContain("node ");
-    expect(hooks.Stop[0].hooks[0].command).toContain("node ");
+  test("does not bake an absolute path into hook commands for dist cli paths", () => {
+    // The whole point of issue #55: settings.json must be portable across machines.
+    const hooks = buildHooksConfig("/home/someone/.bun/install/global/node_modules/@drewpayment/mink/dist/cli.js");
+    for (const entries of Object.values(hooks)) {
+      for (const entry of entries) {
+        for (const h of entry.hooks) {
+          expect(h.command).not.toContain("/home/someone");
+          expect(h.command).not.toContain("cli.js");
+          expect(h.command.startsWith("mink ")).toBe(true);
+        }
+      }
+    }
+  });
+
+  test("falls back to `bun run <abs path>` for source-dev mode (.ts)", () => {
+    const hooks = buildHooksConfig("/repo/src/cli.ts");
+    expect(hooks.SessionStart[0].hooks[0].command).toBe("bun run /repo/src/cli.ts session-start");
+    expect(hooks.Stop[0].hooks[0].command).toBe("bun run /repo/src/cli.ts session-stop");
   });
 
   test("includes correct commands", () => {
-    const hooks = buildHooksConfig("bun", "/path/to/cli.js");
+    const hooks = buildHooksConfig("/path/to/cli.js");
     expect(hooks.SessionStart[0].hooks[0].command).toContain("session-start");
     expect(hooks.Stop[0].hooks[0].command).toContain("session-stop");
   });
 
   test("each hook entry has correct structure with type and command", () => {
-    const hooks = buildHooksConfig("bun", "/path/to/cli.js");
+    const hooks = buildHooksConfig("/path/to/cli.js");
     for (const entries of Object.values(hooks)) {
       for (const entry of entries) {
         expect(entry.matcher).toBeDefined();
@@ -40,7 +54,7 @@ describe("buildHooksConfig", () => {
   });
 
   test("includes PreToolUse and PostToolUse hooks for Read", () => {
-    const hooks = buildHooksConfig("bun", "/path/to/cli.js");
+    const hooks = buildHooksConfig("/path/to/cli.js");
     expect(hooks.PreToolUse).toBeDefined();
     expect(hooks.PreToolUse[0].matcher).toBe("Read");
     expect(hooks.PreToolUse[0].hooks[0].command).toContain("pre-read");
@@ -49,18 +63,8 @@ describe("buildHooksConfig", () => {
     expect(hooks.PostToolUse[0].hooks[0].command).toContain("post-read");
   });
 
-  test("uses correct runtime prefix for read hooks", () => {
-    const bunHooks = buildHooksConfig("bun", "/path/to/cli.js");
-    expect(bunHooks.PreToolUse[0].hooks[0].command).toContain("bun run");
-    expect(bunHooks.PostToolUse[0].hooks[0].command).toContain("bun run");
-
-    const nodeHooks = buildHooksConfig("node", "/path/to/cli.js");
-    expect(nodeHooks.PreToolUse[0].hooks[0].command).toContain("node ");
-    expect(nodeHooks.PostToolUse[0].hooks[0].command).toContain("node ");
-  });
-
   test("includes Edit and Write matchers for pre-write and post-write", () => {
-    const hooks = buildHooksConfig("bun", "/path/to/cli.js");
+    const hooks = buildHooksConfig("/path/to/cli.js");
 
     // PreToolUse: Read (pre-read) + Edit (pre-write) + Write (pre-write)
     expect(hooks.PreToolUse).toHaveLength(3);
@@ -92,7 +96,7 @@ describe("mergeHooksIntoSettings", () => {
   test("creates settings.json if it does not exist", () => {
     const settingsDir = join(dir, ".claude");
     const settingsPath = join(settingsDir, "settings.json");
-    const hooks = buildHooksConfig("bun", "/path/to/cli.js");
+    const hooks = buildHooksConfig("/path/to/cli.js");
 
     mergeHooksIntoSettings(settingsPath, hooks);
 
@@ -115,7 +119,7 @@ describe("mergeHooksIntoSettings", () => {
       })
     );
 
-    const hooks = buildHooksConfig("bun", "/path/to/cli.js");
+    const hooks = buildHooksConfig("/path/to/cli.js");
     mergeHooksIntoSettings(settingsPath, hooks);
 
     const settings = safeReadJson(settingsPath) as Record<string, unknown>;
@@ -131,7 +135,7 @@ describe("mergeHooksIntoSettings", () => {
     expect(settings.otherSetting).toBe(true);
   });
 
-  test("replaces existing mink hooks on re-init", () => {
+  test("replaces legacy absolute-path mink hooks with the portable `mink` shim on re-init", () => {
     const settingsDir = join(dir, ".claude");
     mkdirSync(settingsDir, { recursive: true });
     const settingsPath = join(settingsDir, "settings.json");
@@ -156,26 +160,46 @@ describe("mergeHooksIntoSettings", () => {
       })
     );
 
-    const hooks = buildHooksConfig("bun", "/new/path/cli.js");
+    const hooks = buildHooksConfig("/new/path/cli.js");
     mergeHooksIntoSettings(settingsPath, hooks);
 
     const settings = safeReadJson(settingsPath) as Record<string, unknown>;
     const allHooks = settings.hooks as Record<string, Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }>>;
 
     expect(allHooks.SessionStart).toHaveLength(1);
-    expect(allHooks.SessionStart[0].hooks[0].command).toContain("/new/path/cli.js");
+    expect(allHooks.SessionStart[0].hooks[0].command).toBe("mink session-start");
 
-    // PreToolUse: 3 entries (Read, Edit, Write) — all replaced with new path
+    // PreToolUse: 3 entries (Read, Edit, Write) — all replaced with the bin shim
     expect(allHooks.PreToolUse).toHaveLength(3);
-    expect(allHooks.PreToolUse.every((e) => e.hooks[0].command.includes("/new/path/cli.js"))).toBe(true);
+    expect(allHooks.PreToolUse.every((e) => e.hooks[0].command.startsWith("mink "))).toBe(true);
+    expect(allHooks.PreToolUse.every((e) => !e.hooks[0].command.includes("/old/path"))).toBe(true);
+    expect(allHooks.PreToolUse.every((e) => !e.hooks[0].command.includes("/new/path"))).toBe(true);
     expect(allHooks.PreToolUse.some((e) => e.hooks[0].command.includes("pre-read"))).toBe(true);
     expect(allHooks.PreToolUse.some((e) => e.hooks[0].command.includes("pre-write"))).toBe(true);
 
     // PostToolUse: 3 entries (Read, Edit, Write)
     expect(allHooks.PostToolUse).toHaveLength(3);
-    expect(allHooks.PostToolUse.every((e) => e.hooks[0].command.includes("/new/path/cli.js"))).toBe(true);
+    expect(allHooks.PostToolUse.every((e) => e.hooks[0].command.startsWith("mink "))).toBe(true);
     expect(allHooks.PostToolUse.some((e) => e.hooks[0].command.includes("post-read"))).toBe(true);
     expect(allHooks.PostToolUse.some((e) => e.hooks[0].command.includes("post-write"))).toBe(true);
+  });
+
+  test("re-init does not duplicate `mink` shim hooks already in settings", () => {
+    const settingsDir = join(dir, ".claude");
+    mkdirSync(settingsDir, { recursive: true });
+    const settingsPath = join(settingsDir, "settings.json");
+    // Seed with current-format hooks (the `mink` shim).
+    const initial = buildHooksConfig("/path/to/cli.js");
+    mergeHooksIntoSettings(settingsPath, initial);
+    // Re-run with the same config — should replace, not append.
+    mergeHooksIntoSettings(settingsPath, buildHooksConfig("/path/to/cli.js"));
+
+    const settings = safeReadJson(settingsPath) as Record<string, unknown>;
+    const allHooks = settings.hooks as Record<string, Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }>>;
+    expect(allHooks.SessionStart).toHaveLength(1);
+    expect(allHooks.Stop).toHaveLength(1);
+    expect(allHooks.PreToolUse).toHaveLength(3);
+    expect(allHooks.PostToolUse).toHaveLength(3);
   });
 });
 

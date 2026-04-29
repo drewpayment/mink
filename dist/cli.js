@@ -3823,9 +3823,9 @@ function resolveCliPath() {
     return distPath;
   return resolve2(selfDir, "../cli.ts");
 }
-function buildHooksConfig(runtime, cliPath) {
+function buildHooksConfig(cliPath) {
   const isTsSource = cliPath.endsWith(".ts");
-  const prefix = isTsSource ? `bun run ${cliPath}` : runtime === "bun" ? `bun run ${cliPath}` : `node ${cliPath}`;
+  const prefix = isTsSource ? `bun run ${cliPath}` : "mink";
   const hook = (cmd) => [{ type: "command", command: cmd }];
   return {
     SessionStart: [{ matcher: "", hooks: hook(`${prefix} session-start`) }],
@@ -3843,7 +3843,12 @@ function buildHooksConfig(runtime, cliPath) {
   };
 }
 function isMinkCommand(cmd) {
-  return cmd.includes("cli") && (cmd.includes("session-start") || cmd.includes("session-stop") || cmd.includes("pre-read") || cmd.includes("post-read") || cmd.includes("pre-write") || cmd.includes("post-write"));
+  const hasMinkSubcommand = cmd.includes("session-start") || cmd.includes("session-stop") || cmd.includes("pre-read") || cmd.includes("post-read") || cmd.includes("pre-write") || cmd.includes("post-write");
+  if (!hasMinkSubcommand)
+    return false;
+  if (/(^|\/|\s)mink\s/.test(cmd))
+    return true;
+  return cmd.includes("cli.js") || cmd.includes("cli.ts");
 }
 function isMinkHook(entry) {
   if (Array.isArray(entry.hooks)) {
@@ -3881,7 +3886,7 @@ function isExistingInstallation(cwd) {
 async function init(cwd) {
   const runtime = detectRuntime();
   const cliPath = resolveCliPath();
-  const hooks = buildHooksConfig(runtime, cliPath);
+  const hooks = buildHooksConfig(cliPath);
   const settingsPath = resolve2(cwd, ".claude", "settings.json");
   const dir = projectDir(cwd);
   const upgrading = isExistingInstallation(cwd);
@@ -8146,17 +8151,8 @@ var init_dashboard = __esm(() => {
 });
 
 // src/commands/init.ts
-import { execSync as execSync6 } from "child_process";
 import { mkdirSync as mkdirSync12, existsSync as existsSync25 } from "fs";
 import { resolve as resolve5, dirname as dirname10, basename as basename8, join as join25 } from "path";
-function detectRuntime2() {
-  try {
-    execSync6("bun --version", { stdio: "ignore" });
-    return "bun";
-  } catch {
-    return "node";
-  }
-}
 function resolveCliPath2() {
   const selfPath = new URL(import.meta.url).pathname;
   const selfDir = dirname10(selfPath);
@@ -8169,9 +8165,9 @@ function resolveCliPath2() {
     return distPath;
   return resolve5(selfDir, "../cli.ts");
 }
-function buildHooksConfig2(runtime, cliPath) {
+function buildHooksConfig2(cliPath) {
   const isTsSource = cliPath.endsWith(".ts");
-  const prefix = isTsSource ? `bun run ${cliPath}` : runtime === "bun" ? `bun run ${cliPath}` : `node ${cliPath}`;
+  const prefix = isTsSource ? `bun run ${cliPath}` : "mink";
   const hook = (cmd) => [{ type: "command", command: cmd }];
   return {
     SessionStart: [{ matcher: "", hooks: hook(`${prefix} session-start`) }],
@@ -8189,7 +8185,12 @@ function buildHooksConfig2(runtime, cliPath) {
   };
 }
 function isMinkCommand2(cmd) {
-  return cmd.includes("cli") && (cmd.includes("session-start") || cmd.includes("session-stop") || cmd.includes("pre-read") || cmd.includes("post-read") || cmd.includes("pre-write") || cmd.includes("post-write"));
+  const hasMinkSubcommand = cmd.includes("session-start") || cmd.includes("session-stop") || cmd.includes("pre-read") || cmd.includes("post-read") || cmd.includes("pre-write") || cmd.includes("post-write");
+  if (!hasMinkSubcommand)
+    return false;
+  if (/(^|\/|\s)mink\s/.test(cmd))
+    return true;
+  return cmd.includes("cli.js") || cmd.includes("cli.ts");
 }
 function isMinkHook2(entry) {
   if (Array.isArray(entry.hooks)) {
@@ -8220,7 +8221,7 @@ var init_init2 = __esm(() => {
 });
 
 // src/core/daemon-service.ts
-import { execSync as execSync7 } from "child_process";
+import { execSync as execSync6 } from "child_process";
 import { existsSync as existsSync26, mkdirSync as mkdirSync13, unlinkSync as unlinkSync5, writeFileSync as writeFileSync10 } from "fs";
 import { homedir as homedir4 } from "os";
 import { dirname as dirname11, join as join26 } from "path";
@@ -8339,7 +8340,7 @@ function installService(options = {}) {
   if (platform2 === "systemd") {
     writeFileSync10(paths.unitFile, renderSystemdUnit(inv));
     try {
-      execSync7("systemctl --user daemon-reload", { stdio: "ignore" });
+      execSync6("systemctl --user daemon-reload", { stdio: "ignore" });
     } catch {}
     console.log(`[mink] wrote ${paths.unitFile}`);
     console.log("[mink] next steps:");
@@ -8368,18 +8369,18 @@ function uninstallService() {
   }
   if (platform2 === "systemd") {
     try {
-      execSync7("systemctl --user disable --now mink-daemon.service", {
+      execSync6("systemctl --user disable --now mink-daemon.service", {
         stdio: "ignore"
       });
     } catch {}
     unlinkSync5(paths.unitFile);
     try {
-      execSync7("systemctl --user daemon-reload", { stdio: "ignore" });
+      execSync6("systemctl --user daemon-reload", { stdio: "ignore" });
     } catch {}
     console.log(`[mink] removed ${paths.unitFile}`);
   } else {
     try {
-      execSync7(`launchctl unload -w ${paths.unitFile}`, { stdio: "ignore" });
+      execSync6(`launchctl unload -w ${paths.unitFile}`, { stdio: "ignore" });
     } catch {}
     unlinkSync5(paths.unitFile);
     console.log(`[mink] removed ${paths.unitFile}`);
@@ -8763,7 +8764,7 @@ var exports_update = {};
 __export(exports_update, {
   update: () => update
 });
-import { resolve as resolve7, dirname as dirname12 } from "path";
+import { resolve as resolve7 } from "path";
 function parseArgs(args) {
   let dryRun = false;
   let project = null;
@@ -8810,9 +8811,8 @@ async function update(cwd, args) {
     console.log("  Run 'mink init' in a project directory to register it.");
     return;
   }
-  const runtime = detectRuntime2();
-  const cliPath = resolve7(dirname12(new URL(import.meta.url).pathname), "../cli.ts");
-  const newHooks = buildHooksConfig2(runtime, cliPath);
+  const cliPath = resolveCliPath2();
+  const newHooks = buildHooksConfig2(cliPath);
   for (const target of targets) {
     console.log(`[mink] updating: ${target.name} (${target.id})`);
     if (dryRun) {
@@ -73431,7 +73431,7 @@ var require_ffi_WASM_RELEASE_SYNC = __commonJS((exports) => {
 
 // node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js
 var require_emscripten_module_WASM_RELEASE_SYNC = __commonJS((exports, module) => {
-  var __dirname = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
+  var __dirname = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
   var QuickJSRaw = (() => {
     var _scriptDir = typeof document !== "undefined" && document.currentScript ? document.currentScript.src : undefined;
     if (typeof __filename !== "undefined")
@@ -74880,7 +74880,7 @@ var init_httpUtil = __esm(() => {
 });
 
 // node_modules/@puppeteer/browsers/lib/esm/browser-data/chrome.js
-import { execSync as execSync8 } from "node:child_process";
+import { execSync as execSync7 } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 function folder(platform2) {
@@ -74970,7 +74970,7 @@ function getChromeWindowsLocation(channel2, locationsPrefixes) {
 }
 function getWslVariable(variable) {
   try {
-    const result = execSync8(`cmd.exe /c echo %${variable.toLocaleUpperCase()}%`, {
+    const result = execSync7(`cmd.exe /c echo %${variable.toLocaleUpperCase()}%`, {
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf-8"
     }).trim();
@@ -74981,7 +74981,7 @@ function getWslVariable(variable) {
   return;
 }
 function getWslLocation(channel2) {
-  const wslVersion = execSync8("wslinfo --version", {
+  const wslVersion = execSync7("wslinfo --version", {
     stdio: ["ignore", "pipe", "ignore"],
     encoding: "utf-8"
   }).trim();
@@ -74997,7 +74997,7 @@ function getWslLocation(channel2) {
   }
   const windowsPath = getChromeWindowsLocation(channel2, wslPrefixes);
   return windowsPath.map((path2) => {
-    return execSync8(`wslpath "${path2}"`).toString().trim();
+    return execSync7(`wslpath "${path2}"`).toString().trim();
   });
 }
 function getChromeLinuxOrWslLocation(channel2) {
@@ -81856,19 +81856,19 @@ var init_cliui = __esm(() => {
 });
 
 // node_modules/escalade/sync/index.mjs
-import { dirname as dirname13, resolve as resolve9 } from "path";
+import { dirname as dirname12, resolve as resolve9 } from "path";
 import { readdirSync as readdirSync10, statSync as statSync12 } from "fs";
 function sync_default(start, callback) {
   let dir = resolve9(".", start);
   let tmp, stats = statSync12(dir);
   if (!stats.isDirectory()) {
-    dir = dirname13(dir);
+    dir = dirname12(dir);
   }
   while (true) {
     tmp = callback(dir, readdirSync10(dir));
     if (tmp)
       return resolve9(dir, tmp);
-    dir = dirname13(tmp = dir);
+    dir = dirname12(tmp = dir);
     if (tmp === dir)
       break;
   }
@@ -83082,7 +83082,7 @@ import { notStrictEqual, strictEqual } from "assert";
 import { inspect } from "util";
 import { readFileSync as readFileSync25 } from "fs";
 import { fileURLToPath } from "url";
-import { basename as basename10, dirname as dirname14, extname as extname3, relative as relative7, resolve as resolve12 } from "path";
+import { basename as basename9, dirname as dirname13, extname as extname3, relative as relative7, resolve as resolve12 } from "path";
 var REQUIRE_ERROR = "require is not supported by ESM", REQUIRE_DIRECTORY_ERROR = "loading a directory of commands is not supported yet for ESM", __dirname2, mainFilename, esm_default;
 var init_esm = __esm(() => {
   init_cliui();
@@ -83114,8 +83114,8 @@ var init_esm = __esm(() => {
     mainFilename: mainFilename || process.cwd(),
     Parser: lib_default,
     path: {
-      basename: basename10,
-      dirname: dirname14,
+      basename: basename9,
+      dirname: dirname13,
       extname: extname3,
       relative: relative7,
       resolve: resolve12
@@ -87812,7 +87812,7 @@ var init_PuppeteerNode = __esm(() => {
 import { spawn as spawn2, spawnSync as spawnSync4 } from "node:child_process";
 import fs5 from "node:fs";
 import os8 from "node:os";
-import { dirname as dirname15 } from "node:path";
+import { dirname as dirname14 } from "node:path";
 import { PassThrough } from "node:stream";
 var import_debug6, __runInitializers22 = function(thisArg, initializers, value) {
   var useValue = arguments.length > 2;
@@ -87936,7 +87936,7 @@ var init_ScreenRecorder = __esm(() => {
           filters.push(formatArgs.splice(vf, 2).at(-1) ?? "");
         }
         if (path11) {
-          fs5.mkdirSync(dirname15(path11), { recursive: overwrite });
+          fs5.mkdirSync(dirname14(path11), { recursive: overwrite });
         }
         this.#process = spawn2(ffmpegPath, [
           ["-loglevel", "error"],
@@ -90103,7 +90103,7 @@ var exports_skill = {};
 __export(exports_skill, {
   skill: () => skill
 });
-import { join as join32, resolve as resolve15, dirname as dirname16 } from "path";
+import { join as join32, resolve as resolve15, dirname as dirname15 } from "path";
 import { homedir as homedir6 } from "os";
 import {
   existsSync as existsSync34,
@@ -90116,17 +90116,17 @@ import {
   lstatSync as lstatSync2
 } from "fs";
 function getSkillsSourceDir() {
-  let dir = dirname16(new URL(import.meta.url).pathname);
+  let dir = dirname15(new URL(import.meta.url).pathname);
   while (true) {
     if (existsSync34(join32(dir, "package.json")) && existsSync34(join32(dir, "skills"))) {
       return join32(dir, "skills");
     }
-    const parent = dirname16(dir);
+    const parent = dirname15(dir);
     if (parent === dir)
       break;
     dir = parent;
   }
-  return resolve15(dirname16(new URL(import.meta.url).pathname), "../../skills");
+  return resolve15(dirname15(new URL(import.meta.url).pathname), "../../skills");
 }
 function getAvailableSkills() {
   const dir = getSkillsSourceDir();
@@ -90264,7 +90264,7 @@ var exports_agent = {};
 __export(exports_agent, {
   agent: () => agent
 });
-import { join as join33, resolve as resolve16, dirname as dirname17 } from "path";
+import { join as join33, resolve as resolve16, dirname as dirname16 } from "path";
 import { homedir as homedir7 } from "os";
 import {
   existsSync as existsSync35,
@@ -90275,20 +90275,20 @@ import {
 import { createHash as createHash3 } from "crypto";
 import { spawnSync as spawnSync5 } from "child_process";
 function getAgentTemplatePath() {
-  let dir = dirname17(new URL(import.meta.url).pathname);
+  let dir = dirname16(new URL(import.meta.url).pathname);
   while (true) {
     if (existsSync35(join33(dir, "package.json")) && existsSync35(join33(dir, "agents", TEMPLATE_FILE))) {
       return join33(dir, "agents", TEMPLATE_FILE);
     }
-    const parent = dirname17(dir);
+    const parent = dirname16(dir);
     if (parent === dir)
       break;
     dir = parent;
   }
-  return resolve16(dirname17(new URL(import.meta.url).pathname), "../../agents", TEMPLATE_FILE);
+  return resolve16(dirname16(new URL(import.meta.url).pathname), "../../agents", TEMPLATE_FILE);
 }
 function getMinkVersion() {
-  let dir = dirname17(new URL(import.meta.url).pathname);
+  let dir = dirname16(new URL(import.meta.url).pathname);
   while (true) {
     const pkgPath = join33(dir, "package.json");
     if (existsSync35(pkgPath)) {
@@ -90298,7 +90298,7 @@ function getMinkVersion() {
           return pkg.version;
       } catch {}
     }
-    const parent = dirname17(dir);
+    const parent = dirname16(dir);
     if (parent === dir)
       break;
     dir = parent;
@@ -91231,8 +91231,8 @@ switch (command2) {
   case "version":
   case "--version":
   case "-v": {
-    const { resolve: resolve17, dirname: dirname18 } = await import("path");
-    const cliPath = resolve17(dirname18(new URL(import.meta.url).pathname));
+    const { resolve: resolve17, dirname: dirname17 } = await import("path");
+    const cliPath = resolve17(dirname17(new URL(import.meta.url).pathname));
     const { readFileSync: readFileSync29 } = await import("fs");
     try {
       const pkg = JSON.parse(readFileSync29(resolve17(cliPath, "../package.json"), "utf-8"));

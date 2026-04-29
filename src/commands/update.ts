@@ -1,10 +1,9 @@
-import { resolve, dirname, basename } from "path";
-import { existsSync } from "fs";
+import { resolve } from "path";
 import { listRegisteredProjects } from "../core/project-registry";
 import { createBackup } from "../core/backup";
 import { projectMetaPath } from "../core/paths";
 import { atomicWriteJson, safeReadJson } from "../core/fs-utils";
-import { buildHooksConfig, detectRuntime, mergeHooksIntoSettings } from "./init";
+import { buildHooksConfig, mergeHooksIntoSettings, resolveCliPath } from "./init";
 
 function parseArgs(args: string[]): {
   dryRun: boolean;
@@ -78,12 +77,8 @@ export async function update(cwd: string, args: string[]): Promise<void> {
     return;
   }
 
-  const runtime = detectRuntime();
-  const cliPath = resolve(
-    dirname(new URL(import.meta.url).pathname),
-    "../cli.ts"
-  );
-  const newHooks = buildHooksConfig(runtime, cliPath);
+  const cliPath = resolveCliPath();
+  const newHooks = buildHooksConfig(cliPath);
 
   for (const target of targets) {
     console.log(`[mink] updating: ${target.name} (${target.id})`);

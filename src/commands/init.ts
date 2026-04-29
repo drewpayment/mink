@@ -53,18 +53,13 @@ export function resolveCliPath(): string {
   return resolve(selfDir, "../cli.ts");
 }
 
-export function buildHooksConfig(
-  runtime: "bun" | "node",
-  cliPath: string
-): HooksConfig {
-  // If using compiled JS, always use node (universally available)
-  // If using .ts source, must use bun
+export function buildHooksConfig(cliPath: string): HooksConfig {
+  // For installed packages emit the `mink` bin shim so the resulting
+  // .claude/settings.json is portable across machines, users, and runtimes
+  // when committed to git (issue #55). For source-dev mode (cli.ts) the shim
+  // isn't on PATH, so fall back to `bun run <abs path>`.
   const isTsSource = cliPath.endsWith(".ts");
-  const prefix = isTsSource
-    ? `bun run ${cliPath}`
-    : runtime === "bun"
-      ? `bun run ${cliPath}`
-      : `node ${cliPath}`;
+  const prefix = isTsSource ? `bun run ${cliPath}` : "mink";
   const hook = (cmd: string): HookCommand[] => [{ type: "command", command: cmd }];
   return {
     SessionStart: [{ matcher: "", hooks: hook(`${prefix} session-start`) }],
@@ -83,15 +78,20 @@ export function buildHooksConfig(
 }
 
 function isMinkCommand(cmd: string): boolean {
-  return (
-    cmd.includes("cli") &&
-    (cmd.includes("session-start") ||
-      cmd.includes("session-stop") ||
-      cmd.includes("pre-read") ||
-      cmd.includes("post-read") ||
-      cmd.includes("pre-write") ||
-      cmd.includes("post-write"))
-  );
+  const hasMinkSubcommand =
+    cmd.includes("session-start") ||
+    cmd.includes("session-stop") ||
+    cmd.includes("pre-read") ||
+    cmd.includes("post-read") ||
+    cmd.includes("pre-write") ||
+    cmd.includes("post-write");
+  if (!hasMinkSubcommand) return false;
+  // Match the new bin-shim format (`mink <subcmd>` or `/abs/path/to/mink <subcmd>`)
+  // as well as legacy formats (`bun run .../cli.js ...`, `node .../cli.js ...`,
+  // `bun run .../cli.ts ...`) so re-init replaces stale entries instead of
+  // duplicating them.
+  if (/(^|\/|\s)mink\s/.test(cmd)) return true;
+  return cmd.includes("cli.js") || cmd.includes("cli.ts");
 }
 
 function isMinkHook(entry: HookEntry | Record<string, unknown>): boolean {
@@ -159,7 +159,7 @@ function isExistingInstallation(cwd: string): boolean {
 export async function init(cwd: string): Promise<void> {
   const runtime = detectRuntime();
   const cliPath = resolveCliPath();
-  const hooks = buildHooksConfig(runtime, cliPath);
+  const hooks = buildHooksConfig(cliPath);
   const settingsPath = resolve(cwd, ".claude", "settings.json");
   const dir = projectDir(cwd);
   const upgrading = isExistingInstallation(cwd);
