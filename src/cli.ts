@@ -107,6 +107,12 @@ switch (command) {
     break;
   }
 
+  case "upgrade": {
+    const { upgrade } = await import("./commands/upgrade");
+    await upgrade(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "restore": {
     const { restore } = await import("./commands/restore");
     restore(cwd, process.argv.slice(3));
@@ -244,7 +250,8 @@ switch (command) {
     console.log("  dashboard [--port=N]    Open the real-time web dashboard");
     console.log("  daemon <cmd>            Manage the background daemon (start|stop|restart|logs|install|uninstall)");
     console.log("  cron <cmd> [id]         Manage scheduled tasks (list|run|retry)");
-    console.log("  update [options]        Update Mink across registered projects");
+    console.log("  update [options]        Update Mink hooks across registered projects");
+    console.log("  upgrade [options]       Self-upgrade the mink CLI from npm (--check|--dry-run|--force)");
     console.log("  restore [backup]        Restore state from a backup");
     console.log("  bug search <term>       Search the bug log");
     console.log("  detect-waste            Detect and flag wasteful patterns");

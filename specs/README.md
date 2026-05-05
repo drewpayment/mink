@@ -28,6 +28,7 @@ Mink is a hidden presence that moves alongside the developer. It has two mission
 | 16 | [Test Plan](./16-test-plan.md) | Quality |
 | 17 | [Companion Channels](./17-companion-channels.md) | Wiki |
 | 18 | [Configuration Surface](./18-configuration-surface.md) | Core |
+| 19 | [CLI Self-Update](./19-self-update.md) | Automation |
 
 ## Active Delivery Plans
 

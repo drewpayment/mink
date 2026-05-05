@@ -6,9 +6,9 @@ import {
 import { parseCronExpression } from "../../src/core/cron-parser";
 
 describe("getBuiltInTasks", () => {
-  test("returns 5 built-in tasks", () => {
+  test("returns 6 built-in tasks", () => {
     const tasks = getBuiltInTasks();
-    expect(tasks.length).toBe(5);
+    expect(tasks.length).toBe(6);
   });
 
   test("all tasks have unique IDs", () => {
@@ -55,15 +55,12 @@ describe("getBuiltInTasks", () => {
     }
   });
 
-  test("ai-cli tasks have longer timeout than function tasks", () => {
+  test("ai-cli tasks have at least 5 minute timeout", () => {
     const tasks = getBuiltInTasks();
-    const functionTasks = tasks.filter((t) => t.actionType === "function");
     const aiTasks = tasks.filter((t) => t.actionType === "ai-cli");
-
-    const maxFunctionTimeout = Math.max(...functionTasks.map((t) => t.timeoutMs));
-    const minAiTimeout = Math.min(...aiTasks.map((t) => t.timeoutMs));
-
-    expect(minAiTimeout).toBeGreaterThan(maxFunctionTimeout);
+    for (const task of aiTasks) {
+      expect(task.timeoutMs).toBeGreaterThanOrEqual(300_000);
+    }
   });
 });
 
@@ -75,13 +72,14 @@ describe("getTaskById", () => {
     expect(task!.name).toBe("File Index Rescan");
   });
 
-  test("returns all 5 tasks by ID", () => {
+  test("returns all 6 tasks by ID", () => {
     const ids = [
       "file-index-rescan",
       "action-log-consolidation",
       "waste-detection",
       "learning-memory-reflection",
       "project-suggestions",
+      "cli-self-update",
     ];
     for (const id of ids) {
       expect(getTaskById(id)).toBeDefined();
