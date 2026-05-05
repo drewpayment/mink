@@ -14,6 +14,9 @@ export interface GlobalConfig {
   "channel.discord.allowlist"?: string;
   "channel.default-platform"?: string;
   "channel.skip-permissions"?: string;
+  "cli.auto-update"?: string;
+  "cli.auto-update-schedule"?: string;
+  "cli.auto-update-package-manager"?: string;
 }
 
 export type ConfigKey = keyof GlobalConfig & string;
@@ -145,6 +148,27 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     envVar: "MINK_CHANNEL_SKIP_PERMISSIONS",
     description: "Pass --dangerously-skip-permissions so the channel can run without terminal prompts",
     scope: "shared",
+  },
+  {
+    key: "cli.auto-update",
+    default: "false",
+    envVar: "MINK_CLI_AUTO_UPDATE",
+    description: "Auto-upgrade the mink CLI on schedule via the background scheduler",
+    scope: "shared",
+  },
+  {
+    key: "cli.auto-update-schedule",
+    default: "0 4 * * *",
+    envVar: "MINK_CLI_AUTO_UPDATE_SCHEDULE",
+    description: "Cron expression governing the cli-self-update scheduled task",
+    scope: "shared",
+  },
+  {
+    key: "cli.auto-update-package-manager",
+    default: "auto",
+    envVar: "MINK_CLI_AUTO_UPDATE_PACKAGE_MANAGER",
+    description: "Force a package manager (auto|npm|bun) for self-upgrade installs",
+    scope: "local",
   },
 ];
 

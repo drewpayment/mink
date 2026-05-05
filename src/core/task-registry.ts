@@ -1,4 +1,6 @@
 import type { TaskDefinition } from "../types/scheduler";
+import { resolveConfigValue } from "./global-config";
+import { parseCronExpression } from "./cron-parser";
 
 // ── Built-in Task Definitions ───────────────────────────────────────────────
 
@@ -53,16 +55,43 @@ const BUILT_IN_TASKS: TaskDefinition[] = [
     retryPolicy: { maxAttempts: 3, baseDelayMs: 60_000 },
     timeoutMs: 300_000,
   },
+  {
+    id: "cli-self-update",
+    name: "CLI Self-Update",
+    description: "Check npm for a newer mink release and install it (gated by cli.auto-update)",
+    schedule: "0 4 * * *",
+    actionType: "function",
+    enabled: true,
+    retryPolicy: { maxAttempts: 3, baseDelayMs: 60_000 },
+    timeoutMs: 10 * 60_000,
+  },
 ];
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
+function resolveTaskSchedule(taskId: string, defaultSchedule: string): string {
+  if (taskId !== "cli-self-update") return defaultSchedule;
+  try {
+    const value = resolveConfigValue("cli.auto-update-schedule").value;
+    parseCronExpression(value);
+    return value;
+  } catch {
+    return defaultSchedule;
+  }
+}
+
+function applyDynamicOverrides(task: TaskDefinition): TaskDefinition {
+  if (task.id !== "cli-self-update") return task;
+  return { ...task, schedule: resolveTaskSchedule(task.id, task.schedule) };
+}
+
 export function getBuiltInTasks(): TaskDefinition[] {
-  return BUILT_IN_TASKS;
+  return BUILT_IN_TASKS.map(applyDynamicOverrides);
 }
 
 export function getTaskById(id: string): TaskDefinition | undefined {
-  return BUILT_IN_TASKS.find((t) => t.id === id);
+  const task = BUILT_IN_TASKS.find((t) => t.id === id);
+  return task ? applyDynamicOverrides(task) : undefined;
 }
 
 // ── AI CLI Execution ────────────────────────────────────────────────────────
@@ -193,6 +222,27 @@ export async function executeTask(
       console.log(
         "[mink] project-suggestions: not yet implemented — skipping"
       );
+      break;
+    }
+
+    case "cli-self-update": {
+      const { runSelfUpgrade } = await import("./self-update");
+      const result = await runSelfUpgrade({
+        source: "scheduler",
+        interactive: false,
+      });
+      // Surface non-success results so the scheduler retry/dead-letter logic
+      // can react. "skipped" and "up-to-date" are normal outcomes.
+      if (result.status === "error") {
+        const err = new Error(result.reason);
+        if (!result.transient) {
+          // Non-transient errors (e.g. no package manager) shouldn't keep retrying;
+          // tag the message so the dead-letter logs reflect the cause.
+          err.message = `[non-transient] ${err.message}`;
+        }
+        throw err;
+      }
+      console.log(`[mink] cli-self-update: ${result.status}`);
       break;
     }
 
