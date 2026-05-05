@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/drewpayment/mink/compare/v0.9.1...v0.10.0) (2026-05-05)
+
+
+### Features
+
+* **cli:** add mink upgrade and scheduled self-update ([#65](https://github.com/drewpayment/mink/issues/65)) ([a0156f5](https://github.com/drewpayment/mink/commit/a0156f5d803f456a9d5bdcf2f563cb0bc9431c90))
+* **cli:** self-update via mink upgrade + scheduled task ([73b3a1e](https://github.com/drewpayment/mink/commit/73b3a1e592b6a40c9c0da003855d38e7f7aa98d5))
+
 ## [0.9.1](https://github.com/drewpayment/mink/compare/v0.9.0...v0.9.1) (2026-04-29)
 
 
