@@ -80,7 +80,8 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 
 ### Automation
 - **Background Scheduler** — Daemon process with cron-based task scheduling, retry logic with exponential backoff, and a dead letter queue for failed tasks
-- **Built-in Tasks** — File index rescan, action log consolidation, waste detection, learning memory reflection, and project suggestions — all on configurable schedules
+- **Built-in Tasks** — File index rescan, action log consolidation, waste detection, learning memory reflection, project suggestions, and CLI self-update — all on configurable schedules
+- **Self-Update** — `mink upgrade` and an opt-in scheduled task that keeps headless installs current from npm without operator intervention
 
 ### Interfaces
 - **CLI** — 25+ commands covering lifecycle hooks, state management, notes/wiki, scheduling, configuration, backup/restore, and more
@@ -565,6 +566,66 @@ mink config notes.default-category inbox
 | `sync.remote-url` | — | — | Git remote URL for sync |
 | `sync.last-push` | — | — | Timestamp of last push |
 | `sync.last-pull` | — | — | Timestamp of last pull |
+
+## Self-Update
+
+Mink can keep itself current from npm — useful for headless installs and remote machines where you don't want to run `npm install -g` by hand every release.
+
+### Manual upgrade
+
+```bash
+# Report whether a newer version is available; do not install
+mink upgrade --check
+
+# Install the latest version (asks for confirmation in a TTY)
+mink upgrade
+
+# Skip the confirmation prompt — suitable for scripts
+mink upgrade --yes
+
+# Resolve everything but don't run the install
+mink upgrade --dry-run
+
+# Re-install the latest even if it isn't strictly newer
+mink upgrade --force
+```
+
+`mink upgrade` queries the npm registry for `@drewpayment/mink@latest`, semver-compares against the running version, and runs the right install command for whichever package manager you used (`npm install -g` or `bun add -g`, auto-detected).
+
+### Automatic updates on a schedule
+
+To have Mink upgrade itself automatically:
+
+```bash
+# Off by default — explicitly opt in
+mink config set cli.auto-update true
+
+# Default schedule is daily at 04:00 — change with any cron expression
+mink config set cli.auto-update-schedule "0 4 * * *"
+
+# Make sure the scheduler daemon is running so the task fires
+mink daemon start
+```
+
+The scheduler runs the upgrade non-interactively, retries transient failures (network errors, registry timeouts) with exponential backoff, and moves repeatedly-failing tasks into the dead-letter queue (visible via `mink cron dead-letter list`). Every attempt — successful or not — is logged as a JSON line to `~/.mink/self-update.log` (rotated at 1000 lines).
+
+### Kill switch
+
+To suppress scheduled upgrades temporarily without changing config:
+
+```bash
+export MINK_DISABLE_AUTO_UPDATE=1
+```
+
+The manual `mink upgrade` command always works regardless. Running mink from a working source tree (e.g. `bun run src/cli.ts upgrade`) is also blocked, to prevent self-mutating a development checkout.
+
+### Configuration
+
+| Setting | Default | Scope | Description |
+|---------|---------|-------|-------------|
+| `cli.auto-update` | `false` | shared | Enable scheduled self-upgrade |
+| `cli.auto-update-schedule` | `0 4 * * *` | shared | Cron expression for the `cli-self-update` task |
+| `cli.auto-update-package-manager` | `auto` | local | Force `npm` or `bun` instead of auto-detect |
 
 ## Architecture
 
