@@ -503,6 +503,19 @@ function tallyTags(entries: VaultIndexEntry[]): Array<[string, number]> {
 interface WikiPanelOptions {
   limit?: number;
   category?: NoteCategory | "all";
+  path?: string;
+}
+
+const PATH_FILTER_MAX = 500;
+
+function normalizeVaultPath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
+function entryMatchesPath(filePath: string, prefix: string): boolean {
+  const f = normalizeVaultPath(filePath);
+  const t = normalizeVaultPath(prefix);
+  return f === t || f.startsWith(t + "/");
 }
 
 export function loadWikiPanel(opts: WikiPanelOptions = {}): WikiPanelPayload {
@@ -524,7 +537,15 @@ export function loadWikiPanel(opts: WikiPanelOptions = {}): WikiPanelPayload {
   const index = loadVaultIndex();
   const allEntries = Object.values(index.entries);
   const limit = Math.max(1, Math.min(opts.limit ?? DEFAULT_RECENT_LIMIT, 200));
-  let recent = getRecentNotes(limit);
+  let recent: VaultIndexEntry[];
+  if (opts.path) {
+    recent = allEntries
+      .filter((e) => entryMatchesPath(e.filePath, opts.path!))
+      .sort((a, b) => b.lastModified.localeCompare(a.lastModified))
+      .slice(0, PATH_FILTER_MAX);
+  } else {
+    recent = getRecentNotes(limit);
+  }
   if (opts.category && opts.category !== "all") {
     recent = recent.filter((e) => e.category === opts.category);
   }

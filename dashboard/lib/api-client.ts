@@ -149,10 +149,13 @@ export async function triggerChannelRestart(): Promise<ActionResult> {
   return res.json();
 }
 
-export function fetchWiki(options: { limit?: number; category?: string } = {}) {
+export function fetchWiki(
+  options: { limit?: number; category?: string; path?: string } = {},
+) {
   const params = new URLSearchParams();
   if (options.limit != null) params.set("limit", String(options.limit));
   if (options.category) params.set("category", options.category);
+  if (options.path) params.set("path", options.path);
   const qs = params.toString();
   return fetchApi<WikiPanelPayload>(`/api/wiki${qs ? `?${qs}` : ""}`);
 }

@@ -7365,6 +7365,14 @@ function tallyTags(entries) {
   }
   return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
 }
+function normalizeVaultPath(p) {
+  return p.replace(/\\/g, "/");
+}
+function entryMatchesPath(filePath, prefix) {
+  const f = normalizeVaultPath(filePath);
+  const t = normalizeVaultPath(prefix);
+  return f === t || f.startsWith(t + "/");
+}
 function loadWikiPanel(opts = {}) {
   const initialized = isVaultInitialized();
   const vaultPath = resolveVaultPath();
@@ -7382,7 +7390,12 @@ function loadWikiPanel(opts = {}) {
   const index = loadVaultIndex();
   const allEntries = Object.values(index.entries);
   const limit = Math.max(1, Math.min(opts.limit ?? DEFAULT_RECENT_LIMIT, 200));
-  let recent = getRecentNotes(limit);
+  let recent;
+  if (opts.path) {
+    recent = allEntries.filter((e) => entryMatchesPath(e.filePath, opts.path)).sort((a, b) => b.lastModified.localeCompare(a.lastModified)).slice(0, PATH_FILTER_MAX);
+  } else {
+    recent = getRecentNotes(limit);
+  }
   if (opts.category && opts.category !== "all") {
     recent = recent.filter((e) => e.category === opts.category);
   }
@@ -7808,7 +7821,7 @@ async function triggerConfigReset(key, all) {
     };
   }
 }
-var SECRET_KEY_PATTERNS, BOOLEAN_VALUES, GROUP_LABELS, CHANNEL_LOG_LIMIT = 120, TIMESTAMP_PREFIX, WIKI_TREE_MAX_DEPTH = 2, WIKI_TREE_EXCLUDES, DEFAULT_RECENT_LIMIT = 25, VALID_CATEGORIES, DEDUP_TTL_MS = 600000, dedupCache;
+var SECRET_KEY_PATTERNS, BOOLEAN_VALUES, GROUP_LABELS, CHANNEL_LOG_LIMIT = 120, TIMESTAMP_PREFIX, WIKI_TREE_MAX_DEPTH = 2, WIKI_TREE_EXCLUDES, DEFAULT_RECENT_LIMIT = 25, PATH_FILTER_MAX = 500, VALID_CATEGORIES, DEDUP_TTL_MS = 600000, dedupCache;
 var init_dashboard_api = __esm(() => {
   init_paths();
   init_fs_utils();
@@ -8185,10 +8198,12 @@ retry: 3000
           try {
             const limitRaw = url.searchParams.get("limit");
             const categoryRaw = url.searchParams.get("category");
+            const pathRaw = url.searchParams.get("path");
             const limit = limitRaw ? Number(limitRaw) : undefined;
             return jsonResponse(loadWikiPanel({
               limit: Number.isFinite(limit) ? limit : undefined,
-              category: categoryRaw ?? undefined
+              category: categoryRaw ?? undefined,
+              path: pathRaw ?? undefined
             }));
           } catch (err) {
             return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);
