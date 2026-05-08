@@ -10,6 +10,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import {
   scanProject,
+  scanProjectWithStats,
   getExcludes,
   loadConfig,
   DEFAULT_EXCLUDES,
@@ -201,6 +202,26 @@ describe("scanner", () => {
     test("handles empty project directory", () => {
       const results = scanProject(dir, DEFAULT_EXCLUDES);
       expect(results).toHaveLength(0);
+    });
+
+    test("scanProjectWithStats reports truncation when over cap", () => {
+      for (let i = 0; i < 10; i++) {
+        writeFileSync(join(dir, `file${i}.ts`), `export const x${i} = ${i};`);
+      }
+
+      const stats = scanProjectWithStats(dir, DEFAULT_EXCLUDES, 5);
+      expect(stats.files).toHaveLength(5);
+      expect(stats.totalScanned).toBe(10);
+      expect(stats.truncated).toBe(5);
+    });
+
+    test("scanProjectWithStats reports zero truncation under cap", () => {
+      writeFileSync(join(dir, "a.ts"), "x");
+      writeFileSync(join(dir, "b.ts"), "x");
+
+      const stats = scanProjectWithStats(dir, DEFAULT_EXCLUDES, 100);
+      expect(stats.totalScanned).toBe(2);
+      expect(stats.truncated).toBe(0);
     });
 
     test("applies custom exclude patterns", () => {

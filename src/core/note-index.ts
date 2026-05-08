@@ -7,6 +7,7 @@ import type { VaultIndex, VaultIndexEntry, NoteCategory } from "../types/note";
 export function createEmptyVaultIndex(): VaultIndex {
   return {
     lastScanTimestamp: "",
+    lastFullScanTimestamp: "",
     totalNotes: 0,
     entries: {},
   };
@@ -182,7 +183,9 @@ export function rebuildVaultIndex(): VaultIndex {
     }
   }
 
-  index.lastScanTimestamp = new Date().toISOString();
+  const now = new Date().toISOString();
+  index.lastScanTimestamp = now;
+  index.lastFullScanTimestamp = now;
   saveVaultIndex(index);
   return index;
 }
@@ -217,6 +220,52 @@ export function getRecentNotes(n: number): VaultIndexEntry[] {
   return Object.values(index.entries)
     .sort((a, b) => b.lastModified.localeCompare(a.lastModified))
     .slice(0, n);
+}
+
+export interface VaultStaleness {
+  isStale: boolean;
+  reason: string | null;
+  diskCount: number;
+  indexCount: number;
+  lastFullScan: string | null;
+}
+
+export function vaultIndexStaleness(): VaultStaleness {
+  const index = loadVaultIndex();
+  const root = resolveVaultPath();
+  const diskCount = collectAllMarkdown(root).length;
+  const indexCount = Object.keys(index.entries).length;
+  const lastFullScan = index.lastFullScanTimestamp || null;
+
+  if (!lastFullScan) {
+    return {
+      isStale: true,
+      reason: "no full scan on record",
+      diskCount,
+      indexCount,
+      lastFullScan: null,
+    };
+  }
+
+  const delta = Math.abs(diskCount - indexCount);
+  const threshold = Math.max(5, Math.floor(diskCount * 0.05));
+  if (delta >= threshold) {
+    return {
+      isStale: true,
+      reason: `${diskCount} files on disk but ${indexCount} in index`,
+      diskCount,
+      indexCount,
+      lastFullScan,
+    };
+  }
+
+  return {
+    isStale: false,
+    reason: null,
+    diskCount,
+    indexCount,
+    lastFullScan,
+  };
 }
 
 interface ScannedMarkdown {

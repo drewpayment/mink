@@ -1,8 +1,13 @@
 import { readFileSync } from "fs";
-import { join } from "path";
+import { join, relative } from "path";
 import { fileIndexPath, configPath } from "../core/paths";
 import { atomicWriteJson, safeReadJson } from "../core/fs-utils";
-import { scanProject, loadConfig, getExcludes } from "../core/scanner";
+import {
+  scanProject,
+  scanProjectWithStats,
+  loadConfig,
+  getExcludes,
+} from "../core/scanner";
 import { extractDescription } from "../core/description";
 import { estimateTokens } from "../core/token-estimate";
 import {
@@ -12,6 +17,11 @@ import {
   checkStaleness,
 } from "../core/index-store";
 import type { FileIndex, FileIndexEntry } from "../types/file-index";
+
+function configRelativePath(cfgPath: string, cwd: string): string {
+  const rel = relative(cwd, cfgPath);
+  return rel.startsWith("..") ? cfgPath : rel;
+}
 
 function loadExistingIndex(indexPath: string): FileIndex {
   const raw = safeReadJson(indexPath);
@@ -64,7 +74,8 @@ export function scan(cwd: string, options: { check: boolean }): void {
   const start = Date.now();
   const index = loadExistingIndex(idxPath);
 
-  const scanned = scanProject(cwd, excludes, maxFiles);
+  const stats = scanProjectWithStats(cwd, excludes, maxFiles);
+  const scanned = stats.files;
 
   // Build new entries, preserving lifetime counters
   const newIndex = createEmptyIndex();
@@ -95,7 +106,19 @@ export function scan(cwd: string, options: { check: boolean }): void {
   atomicWriteJson(idxPath, newIndex);
 
   const elapsed = Date.now() - start;
-  console.log(
-    `[mink] indexed ${newIndex.header.totalFiles} files in ${elapsed}ms`
-  );
+  if (stats.truncated > 0) {
+    console.log(
+      `[mink] scanned ${stats.totalScanned} files; indexed ${newIndex.header.totalFiles} most recent in ${elapsed}ms`
+    );
+    console.log(
+      `  ${stats.truncated} files past maxFiles=${maxFiles} were not indexed`
+    );
+    console.log(
+      `  raise the cap by setting "maxFiles" in ${configRelativePath(cfgPath, cwd)}`
+    );
+  } else {
+    console.log(
+      `[mink] indexed ${newIndex.header.totalFiles} files in ${elapsed}ms`
+    );
+  }
 }

@@ -14,7 +14,11 @@ import {
 import { atomicWriteJson } from "../core/fs-utils";
 import { setConfigValue } from "../core/global-config";
 import { seedTemplates } from "../core/vault-templates";
-import { rebuildVaultIndex, loadVaultIndex } from "../core/note-index";
+import {
+  rebuildVaultIndex,
+  loadVaultIndex,
+  vaultIndexStaleness,
+} from "../core/note-index";
 import { updateMasterIndex } from "../core/note-linker";
 import type { VaultManifest, NoteCategory } from "../types/note";
 
@@ -32,6 +36,7 @@ export async function wiki(
       wikiStatus();
       break;
     case "rebuild-index":
+    case "scan":
       wikiRebuildIndex();
       break;
     case "organize":
@@ -51,7 +56,8 @@ export async function wiki(
       console.log();
       console.log("  init                Initialize the notes/wiki vault");
       console.log("  status              Show vault statistics");
-      console.log("  rebuild-index       Full rescan and reindex of vault");
+      console.log("  rebuild-index       Full rescan and reindex of vault (alias: scan)");
+      console.log("  scan                Alias for rebuild-index");
       console.log("  organize            List inbox notes needing categorization");
       console.log("  link <path> [name]  Symlink external notes into the vault");
       console.log("  unlink <name>       Remove a symlinked directory from the vault");
@@ -174,6 +180,13 @@ function wikiStatus(): void {
   }
 
   const vaultPath = resolveVaultPath();
+  const staleness = vaultIndexStaleness();
+  if (staleness.isStale) {
+    console.log(
+      `[mink] vault index is stale (${staleness.reason}) — rebuilding...`
+    );
+    rebuildVaultIndex();
+  }
   const index = loadVaultIndex();
 
   const categoryCounts: Record<string, number> = {
@@ -200,7 +213,10 @@ function wikiStatus(): void {
   }
   console.log();
   console.log(
-    `  last indexed: ${index.lastScanTimestamp || "never"}`
+    `  last full scan: ${index.lastFullScanTimestamp || "never"}`
+  );
+  console.log(
+    `  last update:    ${index.lastScanTimestamp || "never"}`
   );
 
   const links = listLinks();

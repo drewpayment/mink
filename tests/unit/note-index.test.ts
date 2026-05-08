@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { rmSync, writeFileSync, mkdtempSync } from "fs";
+import { rmSync, writeFileSync, mkdtempSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -14,6 +14,9 @@ import {
   loadVaultIndex,
   saveVaultIndex,
   searchVaultIndex,
+  rebuildVaultIndex,
+  updateVaultIndexForFile,
+  vaultIndexStaleness,
 } from "../../src/core/note-index";
 import { ensureVaultStructure } from "../../src/core/vault";
 
@@ -371,6 +374,86 @@ ${longLine}`;
       expect(results.length).toBe(0);
     });
 
+  });
+
+  describe("rebuildVaultIndex", () => {
+    test("indexes nested subdirectories", () => {
+      mkdirSync(join(tempDir, "areas", "Personal"), { recursive: true });
+      mkdirSync(join(tempDir, "resources", "People", "Team"), {
+        recursive: true,
+      });
+      writeFileSync(join(tempDir, "inbox", "top.md"), "# Top\n");
+      writeFileSync(
+        join(tempDir, "areas", "Personal", "deep.md"),
+        "# Deep\n"
+      );
+      writeFileSync(
+        join(tempDir, "resources", "People", "Team", "deeper.md"),
+        "# Deeper\n"
+      );
+
+      const index = rebuildVaultIndex();
+      const paths = Object.keys(index.entries);
+      expect(paths).toContain("inbox/top.md");
+      expect(paths).toContain("areas/Personal/deep.md");
+      expect(paths).toContain("resources/People/Team/deeper.md");
+    });
+
+    test("sets lastFullScanTimestamp", () => {
+      writeFileSync(join(tempDir, "inbox", "note.md"), "# A\n");
+      const index = rebuildVaultIndex();
+      expect(index.lastFullScanTimestamp).toBeTruthy();
+      expect(index.lastScanTimestamp).toBeTruthy();
+    });
+
+    test("updateVaultIndexForFile does not bump lastFullScanTimestamp", () => {
+      writeFileSync(join(tempDir, "inbox", "first.md"), "# First\n");
+      const fullIdx = rebuildVaultIndex();
+      const fullStamp = fullIdx.lastFullScanTimestamp;
+
+      const filePath = join(tempDir, "inbox", "second.md");
+      writeFileSync(filePath, "# Second\n");
+      updateVaultIndexForFile(filePath, "# Second\n");
+
+      const after = loadVaultIndex();
+      expect(after.lastFullScanTimestamp).toBe(fullStamp);
+    });
+  });
+
+  describe("vaultIndexStaleness", () => {
+    test("flags stale when no full scan recorded", () => {
+      writeFileSync(join(tempDir, "inbox", "a.md"), "# A\n");
+      const result = vaultIndexStaleness();
+      expect(result.isStale).toBe(true);
+      expect(result.reason).toContain("no full scan");
+      expect(result.diskCount).toBe(1);
+    });
+
+    test("not stale immediately after rebuild", () => {
+      writeFileSync(join(tempDir, "inbox", "a.md"), "# A\n");
+      writeFileSync(join(tempDir, "inbox", "b.md"), "# B\n");
+      rebuildVaultIndex();
+      const result = vaultIndexStaleness();
+      expect(result.isStale).toBe(false);
+      expect(result.diskCount).toBe(2);
+      expect(result.indexCount).toBe(2);
+    });
+
+    test("flags stale when disk count diverges past threshold", () => {
+      writeFileSync(join(tempDir, "inbox", "a.md"), "# A\n");
+      rebuildVaultIndex();
+      // Add 10 more without indexing
+      for (let i = 0; i < 10; i++) {
+        writeFileSync(join(tempDir, "inbox", `extra-${i}.md`), `# Extra ${i}\n`);
+      }
+      const result = vaultIndexStaleness();
+      expect(result.isStale).toBe(true);
+      expect(result.diskCount).toBe(11);
+      expect(result.indexCount).toBe(1);
+    });
+  });
+
+  describe("searchVaultIndex (cont)", () => {
     test("case-insensitive search", () => {
       const index = createEmptyVaultIndex();
       updateVaultEntry(index, {
