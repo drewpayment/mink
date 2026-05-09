@@ -1133,6 +1133,7 @@ import { readFileSync as readFileSync4, readdirSync, statSync } from "fs";
 function createEmptyVaultIndex() {
   return {
     lastScanTimestamp: "",
+    lastFullScanTimestamp: "",
     totalNotes: 0,
     entries: {}
   };
@@ -1266,7 +1267,9 @@ function rebuildVaultIndex() {
       updateVaultEntry(index, entry);
     } catch {}
   }
-  index.lastScanTimestamp = new Date().toISOString();
+  const now = new Date().toISOString();
+  index.lastScanTimestamp = now;
+  index.lastFullScanTimestamp = now;
   saveVaultIndex(index);
   return index;
 }
@@ -1278,6 +1281,40 @@ function searchVaultIndex(term) {
 function getRecentNotes(n) {
   const index = loadVaultIndex();
   return Object.values(index.entries).sort((a, b) => b.lastModified.localeCompare(a.lastModified)).slice(0, n);
+}
+function vaultIndexStaleness() {
+  const index = loadVaultIndex();
+  const root = resolveVaultPath();
+  const diskCount = collectAllMarkdown(root).length;
+  const indexCount = Object.keys(index.entries).length;
+  const lastFullScan = index.lastFullScanTimestamp || null;
+  if (!lastFullScan) {
+    return {
+      isStale: true,
+      reason: "no full scan on record",
+      diskCount,
+      indexCount,
+      lastFullScan: null
+    };
+  }
+  const delta = Math.abs(diskCount - indexCount);
+  const threshold = Math.max(5, Math.floor(diskCount * 0.05));
+  if (delta >= threshold) {
+    return {
+      isStale: true,
+      reason: `${diskCount} files on disk but ${indexCount} in index`,
+      diskCount,
+      indexCount,
+      lastFullScan
+    };
+  }
+  return {
+    isStale: false,
+    reason: null,
+    diskCount,
+    indexCount,
+    lastFullScan
+  };
 }
 function collectAllMarkdown(rootPath) {
   const files = [];
@@ -3247,11 +3284,16 @@ function loadConfig(configPath3) {
 function getExcludes(config) {
   return [...DEFAULT_EXCLUDES, ...config.excludePatterns ?? []];
 }
-function scanProject(projectRoot, excludes, maxFiles = DEFAULT_MAX_FILES) {
+function scanProjectWithStats(projectRoot, excludes, maxFiles = DEFAULT_MAX_FILES) {
   const results = [];
   walkDirectory(projectRoot, projectRoot, excludes, results);
   results.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return results.slice(0, maxFiles);
+  const totalScanned = results.length;
+  const files = results.slice(0, maxFiles);
+  return { files, totalScanned, truncated: totalScanned - files.length };
+}
+function scanProject(projectRoot, excludes, maxFiles = DEFAULT_MAX_FILES) {
+  return scanProjectWithStats(projectRoot, excludes, maxFiles).files;
 }
 var DEFAULT_EXCLUDES, DEFAULT_MAX_FILES = 500;
 var init_scanner = __esm(() => {
@@ -3550,7 +3592,11 @@ __export(exports_scan, {
   scan: () => scan
 });
 import { readFileSync as readFileSync11 } from "fs";
-import { join as join14 } from "path";
+import { join as join14, relative as relative2 } from "path";
+function configRelativePath(cfgPath, cwd) {
+  const rel = relative2(cwd, cfgPath);
+  return rel.startsWith("..") ? cfgPath : rel;
+}
 function loadExistingIndex(indexPath) {
   const raw = safeReadJson(indexPath);
   if (isFileIndex(raw))
@@ -3595,7 +3641,8 @@ function scan(cwd, options) {
   }
   const start = Date.now();
   const index = loadExistingIndex(idxPath);
-  const scanned = scanProject(cwd, excludes, maxFiles);
+  const stats = scanProjectWithStats(cwd, excludes, maxFiles);
+  const scanned = stats.files;
   const newIndex = createEmptyIndex();
   newIndex.header.lifetimeHits = index.header.lifetimeHits;
   newIndex.header.lifetimeMisses = index.header.lifetimeMisses;
@@ -3619,7 +3666,13 @@ function scan(cwd, options) {
   newIndex.header.lastScanTimestamp = new Date().toISOString();
   atomicWriteJson(idxPath, newIndex);
   const elapsed = Date.now() - start;
-  console.log(`[mink] indexed ${newIndex.header.totalFiles} files in ${elapsed}ms`);
+  if (stats.truncated > 0) {
+    console.log(`[mink] scanned ${stats.totalScanned} files; indexed ${newIndex.header.totalFiles} most recent in ${elapsed}ms`);
+    console.log(`  ${stats.truncated} files past maxFiles=${maxFiles} were not indexed`);
+    console.log(`  raise the cap by setting "maxFiles" in ${configRelativePath(cfgPath, cwd)}`);
+  } else {
+    console.log(`[mink] indexed ${newIndex.header.totalFiles} files in ${elapsed}ms`);
+  }
 }
 var init_scan = __esm(() => {
   init_paths();
@@ -4829,7 +4882,11 @@ __export(exports_scan2, {
   scan: () => scan2
 });
 import { readFileSync as readFileSync16 } from "fs";
-import { join as join19 } from "path";
+import { join as join19, relative as relative3 } from "path";
+function configRelativePath2(cfgPath, cwd) {
+  const rel = relative3(cwd, cfgPath);
+  return rel.startsWith("..") ? cfgPath : rel;
+}
 function loadExistingIndex2(indexPath) {
   const raw = safeReadJson(indexPath);
   if (isFileIndex(raw))
@@ -4874,7 +4931,8 @@ function scan2(cwd, options) {
   }
   const start = Date.now();
   const index = loadExistingIndex2(idxPath);
-  const scanned = scanProject(cwd, excludes, maxFiles);
+  const stats = scanProjectWithStats(cwd, excludes, maxFiles);
+  const scanned = stats.files;
   const newIndex = createEmptyIndex();
   newIndex.header.lifetimeHits = index.header.lifetimeHits;
   newIndex.header.lifetimeMisses = index.header.lifetimeMisses;
@@ -4898,7 +4956,13 @@ function scan2(cwd, options) {
   newIndex.header.lastScanTimestamp = new Date().toISOString();
   atomicWriteJson(idxPath, newIndex);
   const elapsed = Date.now() - start;
-  console.log(`[mink] indexed ${newIndex.header.totalFiles} files in ${elapsed}ms`);
+  if (stats.truncated > 0) {
+    console.log(`[mink] scanned ${stats.totalScanned} files; indexed ${newIndex.header.totalFiles} most recent in ${elapsed}ms`);
+    console.log(`  ${stats.truncated} files past maxFiles=${maxFiles} were not indexed`);
+    console.log(`  raise the cap by setting "maxFiles" in ${configRelativePath2(cfgPath, cwd)}`);
+  } else {
+    console.log(`[mink] indexed ${newIndex.header.totalFiles} files in ${elapsed}ms`);
+  }
 }
 var init_scan2 = __esm(() => {
   init_paths();
@@ -4961,7 +5025,7 @@ __export(exports_pre_read, {
   preRead: () => preRead,
   analyzePreRead: () => analyzePreRead
 });
-import { relative as relative2 } from "path";
+import { relative as relative4 } from "path";
 function analyzePreRead(filePath, state, index) {
   const warnings = [];
   let repeatedRead = false;
@@ -5003,7 +5067,7 @@ async function preRead(cwd) {
     const absolutePath = input.tool_input.file_path;
     if (!absolutePath)
       return;
-    const filePath = relative2(cwd, absolutePath);
+    const filePath = relative4(cwd, absolutePath);
     const rawState = safeReadJson(sessionPath(cwd));
     const state = isSessionState(rawState) ? rawState : createSessionState();
     const rawIndex = safeReadJson(fileIndexPath(cwd));
@@ -5039,7 +5103,7 @@ __export(exports_post_read, {
   postRead: () => postRead,
   analyzePostRead: () => analyzePostRead
 });
-import { relative as relative3 } from "path";
+import { relative as relative5 } from "path";
 function analyzePostRead(filePath, content, index) {
   if (isBinaryFile(filePath, content ?? undefined)) {
     const entry = index ? lookupEntry(index, filePath) : null;
@@ -5094,7 +5158,7 @@ async function postRead(cwd) {
     const absolutePath = input.tool_input.file_path;
     if (!absolutePath)
       return;
-    const filePath = relative3(cwd, absolutePath);
+    const filePath = relative5(cwd, absolutePath);
     const rawState = safeReadJson(sessionPath(cwd));
     const state = isSessionState(rawState) ? rawState : createSessionState();
     const rawIndex = safeReadJson(fileIndexPath(cwd));
@@ -5205,7 +5269,7 @@ __export(exports_pre_write, {
   preWrite: () => preWrite,
   analyzePreWrite: () => analyzePreWrite
 });
-import { relative as relative4 } from "path";
+import { relative as relative6 } from "path";
 function analyzePreWrite(filePath, writeContent, doNotRepeatEntries, bugMemory) {
   const warnings = [];
   const allMatches = [];
@@ -5255,7 +5319,7 @@ async function preWrite(cwd) {
     const absolutePath = input.tool_input.file_path;
     if (!absolutePath)
       return;
-    const filePath = relative4(cwd, absolutePath);
+    const filePath = relative6(cwd, absolutePath);
     const writeContent = extractWriteContent(input);
     let doNotRepeatEntries = [];
     try {
@@ -5315,7 +5379,7 @@ __export(exports_post_write, {
   postWrite: () => postWrite,
   analyzePostWrite: () => analyzePostWrite
 });
-import { relative as relative5 } from "path";
+import { relative as relative7 } from "path";
 import { readFileSync as readFileSync17 } from "fs";
 function analyzePostWrite(filePath, fileContent, index) {
   if (isWriteExcluded(filePath)) {
@@ -5377,7 +5441,7 @@ async function postWrite(cwd) {
     const absolutePath = input.tool_input.file_path;
     if (!absolutePath)
       return;
-    const filePath = relative5(cwd, absolutePath);
+    const filePath = relative7(cwd, absolutePath);
     let fileContent = null;
     try {
       fileContent = readFileSync17(absolutePath, "utf-8");
@@ -9381,7 +9445,7 @@ var init_server_detect = __esm(() => {
 
 // src/core/design-eval/route-detect.ts
 import { existsSync as existsSync29, readdirSync as readdirSync9, statSync as statSync11 } from "fs";
-import { join as join29, relative as relative6, sep as sep2 } from "path";
+import { join as join29, relative as relative8, sep as sep2 } from "path";
 function detectFramework(cwd) {
   const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync29(join29(cwd, `${name}.${ext}`))) || existsSync29(join29(cwd, name));
   if (has("next.config"))
@@ -9412,7 +9476,7 @@ function detectNextRoutes(cwd) {
   if (existsSync29(appDir)) {
     const pageFiles = findFiles(appDir, /^page\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
-      const rel = relative6(appDir, file);
+      const rel = relative8(appDir, file);
       const dir = rel.replace(/([/\\])?page\.(tsx?|jsx?)$/, "");
       const route = dir === "" ? "/" : `/${dir.split(sep2).join("/")}`;
       if (/\[|@|\(/.test(route))
@@ -9424,7 +9488,7 @@ function detectNextRoutes(cwd) {
   if (existsSync29(pagesDir)) {
     const pageFiles = findFiles(pagesDir, /\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
-      const rel = relative6(pagesDir, file);
+      const rel = relative8(pagesDir, file);
       const name = rel.replace(/\.(tsx?|jsx?)$/, "");
       if (/^_(app|document|error)/.test(name))
         continue;
@@ -9446,7 +9510,7 @@ function detectSvelteKitRoutes(cwd) {
   const routes = [];
   const pageFiles = findFiles(routesDir, /^\+page\.svelte$/);
   for (const file of pageFiles) {
-    const rel = relative6(routesDir, file);
+    const rel = relative8(routesDir, file);
     const dir = rel.replace(/([/\\])?\+page\.svelte$/, "");
     const route = dir === "" ? "/" : `/${dir.split(sep2).join("/")}`;
     if (/\[|\(/.test(route))
@@ -9462,7 +9526,7 @@ function detectNuxtRoutes(cwd) {
   const routes = [];
   const vueFiles = findFiles(pagesDir, /\.vue$/);
   for (const file of vueFiles) {
-    const rel = relative6(pagesDir, file);
+    const rel = relative8(pagesDir, file);
     const name = rel.replace(/\.vue$/, "");
     if (/\[/.test(name))
       continue;
@@ -58223,7 +58287,7 @@ var require_util2 = __commonJS((exports) => {
   exports.isAbsolute = function(aPath) {
     return aPath.charAt(0) === "/" || urlRegexp.test(aPath);
   };
-  function relative7(aRoot, aPath) {
+  function relative9(aRoot, aPath) {
     if (aRoot === "") {
       aRoot = ".";
     }
@@ -58242,7 +58306,7 @@ var require_util2 = __commonJS((exports) => {
     }
     return Array(level + 1).join("../") + aPath.substr(aRoot.length + 1);
   }
-  exports.relative = relative7;
+  exports.relative = relative9;
   var supportsNullProto = function() {
     var obj = Object.create(null);
     return !("__proto__" in obj);
@@ -83539,7 +83603,7 @@ import { notStrictEqual, strictEqual } from "assert";
 import { inspect } from "util";
 import { readFileSync as readFileSync26 } from "fs";
 import { fileURLToPath } from "url";
-import { basename as basename9, dirname as dirname14, extname as extname3, relative as relative7, resolve as resolve13 } from "path";
+import { basename as basename9, dirname as dirname14, extname as extname3, relative as relative9, resolve as resolve13 } from "path";
 var REQUIRE_ERROR = "require is not supported by ESM", REQUIRE_DIRECTORY_ERROR = "loading a directory of commands is not supported yet for ESM", __dirname2, mainFilename, esm_default;
 var init_esm = __esm(() => {
   init_cliui();
@@ -83574,7 +83638,7 @@ var init_esm = __esm(() => {
       basename: basename9,
       dirname: dirname14,
       extname: extname3,
-      relative: relative7,
+      relative: relative9,
       resolve: resolve13
     },
     process: {
@@ -90102,6 +90166,7 @@ async function wiki(_cwd, args) {
       wikiStatus();
       break;
     case "rebuild-index":
+    case "scan":
       wikiRebuildIndex();
       break;
     case "organize":
@@ -90121,7 +90186,8 @@ async function wiki(_cwd, args) {
       console.log();
       console.log("  init                Initialize the notes/wiki vault");
       console.log("  status              Show vault statistics");
-      console.log("  rebuild-index       Full rescan and reindex of vault");
+      console.log("  rebuild-index       Full rescan and reindex of vault (alias: scan)");
+      console.log("  scan                Alias for rebuild-index");
       console.log("  organize            List inbox notes needing categorization");
       console.log("  link <path> [name]  Symlink external notes into the vault");
       console.log("  unlink <name>       Remove a symlinked directory from the vault");
@@ -90210,6 +90276,11 @@ function wikiStatus() {
     return;
   }
   const vaultPath = resolveVaultPath();
+  const staleness = vaultIndexStaleness();
+  if (staleness.isStale) {
+    console.log(`[mink] vault index is stale (${staleness.reason}) — rebuilding...`);
+    rebuildVaultIndex();
+  }
   const index = loadVaultIndex();
   const categoryCounts = {
     inbox: 0,
@@ -90232,7 +90303,8 @@ function wikiStatus() {
     console.log(`    ${cat.padEnd(12)} ${count}`);
   }
   console.log();
-  console.log(`  last indexed: ${index.lastScanTimestamp || "never"}`);
+  console.log(`  last full scan: ${index.lastFullScanTimestamp || "never"}`);
+  console.log(`  last update:    ${index.lastScanTimestamp || "never"}`);
   const links = listLinks();
   if (links.length > 0) {
     console.log();
@@ -91719,7 +91791,7 @@ switch (command2) {
     console.log("  config [key] [value]    Manage global user settings");
     console.log();
     console.log("Notes & Wiki:");
-    console.log("  wiki <cmd>              Manage the notes/wiki vault (init|status|link|unlink|links|rebuild-index|organize)");
+    console.log("  wiki <cmd>              Manage the notes/wiki vault (init|status|link|unlink|links|rebuild-index|scan|organize)");
     console.log('  note "text"             Capture a note to the vault');
     console.log("  note --daily [text]     Create or append to today's daily note");
     console.log("  note list [filters]     List notes (--category, --tag, --recent)");

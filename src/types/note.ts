@@ -62,6 +62,7 @@ export interface VaultIndexEntry {
 
 export interface VaultIndex {
   lastScanTimestamp: string;
+  lastFullScanTimestamp?: string;
   totalNotes: number;
   entries: Record<string, VaultIndexEntry>;
 }

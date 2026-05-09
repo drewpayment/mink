@@ -87,13 +87,29 @@ export function getExcludes(config: ProjectConfig): string[] {
   return [...DEFAULT_EXCLUDES, ...(config.excludePatterns ?? [])];
 }
 
+export interface ScanStats {
+  files: ScannedFile[];
+  totalScanned: number;
+  truncated: number;
+}
+
+export function scanProjectWithStats(
+  projectRoot: string,
+  excludes: string[],
+  maxFiles: number = DEFAULT_MAX_FILES
+): ScanStats {
+  const results: ScannedFile[] = [];
+  walkDirectory(projectRoot, projectRoot, excludes, results);
+  results.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  const totalScanned = results.length;
+  const files = results.slice(0, maxFiles);
+  return { files, totalScanned, truncated: totalScanned - files.length };
+}
+
 export function scanProject(
   projectRoot: string,
   excludes: string[],
   maxFiles: number = DEFAULT_MAX_FILES
 ): ScannedFile[] {
-  const results: ScannedFile[] = [];
-  walkDirectory(projectRoot, projectRoot, excludes, results);
-  results.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return results.slice(0, maxFiles);
+  return scanProjectWithStats(projectRoot, excludes, maxFiles).files;
 }
