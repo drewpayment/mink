@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.1](https://github.com/drewpayment/mink/compare/v0.10.0...v0.10.1) (2026-05-09)
+
+
+### Bug Fixes
+
+* **index:** surface scan cap and detect stale vault index ([309545f](https://github.com/drewpayment/mink/commit/309545f1fd0db48b326255794a3cc9b6a969116d))
+* **index:** surface scan cap and detect stale vault index ([4e052d8](https://github.com/drewpayment/mink/commit/4e052d8e2a1aee62ff460ebd14308ecd7eaeefb0))
+
 ## [0.10.0](https://github.com/drewpayment/mink/compare/v0.9.1...v0.10.0) (2026-05-05)
 
 
