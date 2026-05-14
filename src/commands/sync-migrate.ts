@@ -224,90 +224,198 @@ function listProjectsNeedingMigration(): string[] {
 //
 // When `projects.identity = git-remote`, walks every project on disk and:
 //   1. Computes its new identifier from the recorded working-copy path.
-//   2. If the new identifier differs from the on-disk directory name, renames
-//      the directory (preferring `git mv` so history is preserved when sync
-//      is initialised), records the old identifier as an alias, and lifts the
-//      singular `cwd` into the per-device path map keyed by this device.
+//   2. If the new identifier differs from the on-disk directory name, snapshots
+//      the project to a rollback backup, then renames the directory (preferring
+//      `git mv` so history is preserved when sync is initialised), records the
+//      old identifier as an alias, and lifts the singular `cwd` into the
+//      per-device path map keyed by this device.
 //   3. If the working-copy path is missing from the local filesystem (the
 //      project's repo was cloned on a different machine), the project is left
-//      alone — the device that owns the cwd will migrate it.
+//      alone — the device that owns the cwd will handle the rename.
 //
 // Idempotent: re-running after a clean pass walks every project, finds every
 // id matches its directory name, and does nothing.
-function migrateProjectIdentities(deviceId: string): {
-  renamed: number;
-  visited: number;
-} {
+
+export type IdentityPlanAction = "rename" | "skip-converged" | "skip-no-cwd" | "skip-unchanged";
+
+export interface IdentityPlanEntry {
+  oldId: string;
+  newId: string | null;
+  cwd: string | null;
+  action: IdentityPlanAction;
+  reason?: string;
+}
+
+// Walks every project on disk and returns the rename plan without touching it.
+// Backbone for both --dry-run and the real migration so they share logic.
+export function planIdentityMigration(): IdentityPlanEntry[] {
+  const plan: IdentityPlanEntry[] = [];
   if (resolveConfigValue("projects.identity").value !== "git-remote") {
-    return { renamed: 0, visited: 0 };
+    return plan;
   }
 
-  let renamed = 0;
-  let visited = 0;
   const projectsRoot = join(minkRoot(), "projects");
-  if (!existsSync(projectsRoot)) return { renamed, visited };
+  if (!existsSync(projectsRoot)) return plan;
 
   let entries: string[];
   try {
     entries = readdirSync(projectsRoot);
   } catch {
-    return { renamed, visited };
+    return plan;
   }
 
   for (const oldId of entries) {
     const oldProjDir = join(projectsRoot, oldId);
-    let isDir = false;
     try {
-      isDir = statSync(oldProjDir).isDirectory();
+      if (!statSync(oldProjDir).isDirectory()) continue;
     } catch {
       continue;
     }
-    if (!isDir) continue;
-    visited++;
 
     const meta = getProjectMeta(oldProjDir);
     if (!meta) continue;
 
-    // Skip projects whose cwd isn't reachable on this device — we cannot
-    // reliably re-resolve identity without the underlying filesystem. The
-    // device that owns the cwd will handle the rename and sync will carry it.
-    if (!existsSync(meta.cwd)) continue;
+    if (!existsSync(meta.cwd)) {
+      plan.push({
+        oldId,
+        newId: null,
+        cwd: meta.cwd,
+        action: "skip-no-cwd",
+        reason: "working-copy path not reachable on this device",
+      });
+      continue;
+    }
 
-    let resolution;
+    let newId: string;
     try {
-      resolution = resolveProjectIdentity(meta.cwd);
+      newId = resolveProjectIdentity(meta.cwd).id;
     } catch {
       continue;
     }
 
-    const newId = resolution.id;
-
-    // Always lift the singular cwd into the per-device map so older records
-    // gain the multi-device shape even when their identifier hasn't changed.
-    try {
-      setProjectPathForDevice(oldProjDir, deviceId, meta.cwd);
-    } catch {
-      // best-effort; keep going
+    if (newId === oldId) {
+      plan.push({ oldId, newId, cwd: meta.cwd, action: "skip-unchanged" });
+      continue;
     }
-
-    if (newId === oldId) continue;
 
     const newProjDir = join(projectsRoot, newId);
     if (existsSync(newProjDir)) {
-      // A previous device already migrated this project and the new directory
-      // arrived via sync. Record the old id as an alias on the new directory,
-      // then remove the now-redundant old directory's metadata pointer. Leave
-      // the actual files for the cross-device sync merge to reconcile rather
-      // than blind-deleting.
+      plan.push({
+        oldId,
+        newId,
+        cwd: meta.cwd,
+        action: "skip-converged",
+        reason: "destination already exists (from sync); alias-only update",
+      });
+      continue;
+    }
+
+    plan.push({ oldId, newId, cwd: meta.cwd, action: "rename" });
+  }
+  return plan;
+}
+
+const IDENTITY_BACKUP_DIRNAME = ".identity-rollback";
+
+function identityBackupRoot(timestamp: string): string {
+  return join(minkRoot(), IDENTITY_BACKUP_DIRNAME, timestamp);
+}
+
+function ensureIdentityBackupTimestamp(): string {
+  const now = new Date();
+  return `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}${String(
+    now.getUTCDate()
+  ).padStart(2, "0")}-${String(now.getUTCHours()).padStart(2, "0")}${String(
+    now.getUTCMinutes()
+  ).padStart(2, "0")}${String(now.getUTCSeconds()).padStart(2, "0")}`;
+}
+
+// Copies a project directory tree to the rollback backup. Skips `backups/` so
+// nested backups don't double the snapshot size. Returns the backup path or
+// null on failure (caller logs but does not abort migration on backup failure).
+function backupProjectForRollback(srcDir: string, backupDir: string): string | null {
+  try {
+    mkdirSync(backupDir, { recursive: true });
+    copyDirRecursive(srcDir, backupDir, new Set(["backups"]));
+    return backupDir;
+  } catch {
+    return null;
+  }
+}
+
+function copyDirRecursive(src: string, dest: string, excludeNames: Set<string>): void {
+  mkdirSync(dest, { recursive: true });
+  const entries = readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    if (excludeNames.has(entry.name)) continue;
+    const srcPath = join(src, entry.name);
+    const destPath = join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, destPath, excludeNames);
+    } else if (entry.isFile()) {
+      writeFileSync(destPath, readFileSync(srcPath));
+    }
+  }
+}
+
+function migrateProjectIdentities(deviceId: string): {
+  renamed: number;
+  visited: number;
+  backupDir: string | null;
+} {
+  if (resolveConfigValue("projects.identity").value !== "git-remote") {
+    return { renamed: 0, visited: 0, backupDir: null };
+  }
+
+  const plan = planIdentityMigration();
+  const willRename = plan.filter((p) => p.action === "rename");
+
+  // Compute the backup root up-front so all snapshots for this migration pass
+  // land in one timestamped directory the user can find and reason about.
+  let backupRoot: string | null = null;
+  if (willRename.length > 0) {
+    backupRoot = identityBackupRoot(ensureIdentityBackupTimestamp());
+  }
+
+  let renamed = 0;
+  let visited = plan.length;
+  const projectsRoot = join(minkRoot(), "projects");
+
+  for (const entry of plan) {
+    const oldProjDir = join(projectsRoot, entry.oldId);
+
+    // Lift cwd into pathsByDevice for every project we can see, even
+    // skip-unchanged ones, so older records gain the multi-device shape.
+    if (entry.cwd && entry.action !== "skip-no-cwd") {
       try {
-        addProjectAlias(newProjDir, oldId);
-        setProjectPathForDevice(newProjDir, deviceId, meta.cwd);
+        setProjectPathForDevice(oldProjDir, deviceId, entry.cwd);
+      } catch {
+        // best-effort
+      }
+    }
+
+    if (entry.action === "skip-converged" && entry.newId) {
+      const newProjDir = join(projectsRoot, entry.newId);
+      try {
+        addProjectAlias(newProjDir, entry.oldId);
+        if (entry.cwd) {
+          setProjectPathForDevice(newProjDir, deviceId, entry.cwd);
+        }
       } catch {
         // best-effort
       }
       continue;
     }
 
+    if (entry.action !== "rename" || !entry.newId) continue;
+
+    // Snapshot the project before the rename so the user can recover if the
+    // alias-based rollback ever fails.
+    if (backupRoot) {
+      backupProjectForRollback(oldProjDir, join(backupRoot, entry.oldId));
+    }
+
+    const newProjDir = join(projectsRoot, entry.newId);
     const moved =
       gitSafe(`mv "${oldProjDir}" "${newProjDir}"`) !== null ||
       (() => {
@@ -322,15 +430,96 @@ function migrateProjectIdentities(deviceId: string): {
     if (!moved) continue;
 
     try {
-      addProjectAlias(newProjDir, oldId);
-      setProjectPathForDevice(newProjDir, deviceId, meta.cwd);
+      addProjectAlias(newProjDir, entry.oldId);
+      if (entry.cwd) {
+        setProjectPathForDevice(newProjDir, deviceId, entry.cwd);
+      }
     } catch {
       // best-effort
     }
     renamed++;
   }
 
-  return { renamed, visited };
+  return { renamed, visited, backupDir: backupRoot };
+}
+
+// ── v3 identity rollback ──────────────────────────────────────────────────
+//
+// Reverses the most recent identity rename for every project that has at
+// least one alias recorded. Picks the most recently appended alias as the
+// target id, renames the project directory back, and pops that entry from
+// the alias list. Idempotent: a project with no aliases is left alone.
+//
+// This is the primary rollback path. The pre-migration backup is a fallback
+// for when alias-based rollback can't proceed (e.g. metadata corruption).
+
+export interface RollbackEntry {
+  currentId: string;
+  restoredId: string;
+  ok: boolean;
+}
+
+export function rollbackProjectIdentities(): RollbackEntry[] {
+  const results: RollbackEntry[] = [];
+  const projectsRoot = join(minkRoot(), "projects");
+  if (!existsSync(projectsRoot)) return results;
+
+  let entries: string[];
+  try {
+    entries = readdirSync(projectsRoot);
+  } catch {
+    return results;
+  }
+
+  for (const currentId of entries) {
+    const projDir = join(projectsRoot, currentId);
+    try {
+      if (!statSync(projDir).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+
+    const meta = getProjectMeta(projDir);
+    if (!meta || !meta.aliases || meta.aliases.length === 0) continue;
+
+    const restoredId = meta.aliases[meta.aliases.length - 1];
+    const targetDir = join(projectsRoot, restoredId);
+
+    if (existsSync(targetDir)) {
+      // Refuse to overwrite an existing directory at the target id.
+      results.push({ currentId, restoredId, ok: false });
+      continue;
+    }
+
+    // Pop the alias before renaming so the resulting on-disk metadata file
+    // reflects the rolled-back state even if the rename itself succeeds.
+    const remainingAliases = meta.aliases.slice(0, -1);
+    const metaPath = join(projDir, "project-meta.json");
+    try {
+      const raw = safeReadJson(metaPath);
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        const obj = raw as Record<string, unknown>;
+        obj.aliases = remainingAliases;
+        atomicWriteJson(metaPath, obj);
+      }
+    } catch {
+      // best-effort; rollback continues
+    }
+
+    const moved =
+      gitSafe(`mv "${projDir}" "${targetDir}"`) !== null ||
+      (() => {
+        try {
+          renameSync(projDir, targetDir);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+
+    results.push({ currentId, restoredId, ok: moved });
+  }
+  return results;
 }
 
 export interface MigrateResult {
@@ -463,7 +652,70 @@ export function migrateSyncLayout(): MigrateResult {
   }
 }
 
-export function syncMigrateCommand(): void {
+export function syncMigrateCommand(args: string[] = []): void {
+  const dryRun = args.includes("--dry-run");
+  const rollback = args.includes("--rollback");
+
+  if (rollback && dryRun) {
+    console.error("[mink] --rollback and --dry-run cannot be combined");
+    process.exit(1);
+  }
+
+  if (dryRun) {
+    const plan = planIdentityMigration();
+    if (plan.length === 0) {
+      console.log(
+        "[mink] sync migrate --dry-run: no projects to rename (flag is off or no projects on disk)"
+      );
+      return;
+    }
+    const renames = plan.filter((p) => p.action === "rename");
+    const converged = plan.filter((p) => p.action === "skip-converged");
+    const skippedNoCwd = plan.filter((p) => p.action === "skip-no-cwd");
+    const unchanged = plan.filter((p) => p.action === "skip-unchanged");
+
+    console.log(
+      `[mink] sync migrate --dry-run: ${renames.length} rename(s), ${converged.length} alias-only, ${skippedNoCwd.length} skipped (no cwd), ${unchanged.length} unchanged`
+    );
+    for (const p of renames) {
+      console.log(`  rename: ${p.oldId} → ${p.newId}`);
+    }
+    for (const p of converged) {
+      console.log(`  alias:  ${p.oldId} → ${p.newId} (already on disk)`);
+    }
+    for (const p of skippedNoCwd) {
+      console.log(`  skip:   ${p.oldId} — ${p.reason}`);
+    }
+    return;
+  }
+
+  if (rollback) {
+    const results = rollbackProjectIdentities();
+    if (results.length === 0) {
+      console.log("[mink] sync migrate --rollback: nothing to roll back");
+      return;
+    }
+    const ok = results.filter((r) => r.ok);
+    const failed = results.filter((r) => !r.ok);
+    console.log(
+      `[mink] sync migrate --rollback: ${ok.length} restored, ${failed.length} failed`
+    );
+    for (const r of ok) {
+      console.log(`  restored: ${r.currentId} → ${r.restoredId}`);
+    }
+    for (const r of failed) {
+      console.log(
+        `  failed:   ${r.currentId} → ${r.restoredId} (destination already exists or rename blocked)`
+      );
+    }
+    if (ok.length > 0) {
+      console.log(
+        "\n[mink] tip: set projects.identity=path-derived to prevent the next session-start from re-migrating"
+      );
+    }
+    return;
+  }
+
   const result = migrateSyncLayout();
   if (!result.ranMigration) {
     console.log(`[mink] sync migrate: ${result.message ?? "no-op"}`);

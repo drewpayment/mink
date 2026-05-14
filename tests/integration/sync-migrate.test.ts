@@ -338,3 +338,135 @@ describe("sync v2 → v3 identity migration", () => {
     }
   });
 });
+
+describe("identity migration safety: dry-run, backup, rollback", () => {
+  function seedRenameableProject(): { cwd: string; oldId: string } {
+    const cwd = mkdtempSync(join(tmpdir(), "mink-safety-"));
+    execSync(`git init -q "${cwd}"`);
+    execSync(`git -C "${cwd}" remote add origin git@github.com:owner/repo.git`);
+
+    // Compute the path-derived id and seed the project at that location.
+    const oldId = require("../../src/core/project-id").generateProjectId(cwd);
+    const projDir = join(mockRoot, "projects", oldId);
+    mkdirSync(projDir, { recursive: true });
+    writeFileSync(
+      join(projDir, "project-meta.json"),
+      JSON.stringify({ cwd, name: "repo", initTimestamp: "x", version: "0.1.0" })
+    );
+    writeFileSync(join(projDir, "marker.txt"), "before migration");
+    return { cwd, oldId };
+  }
+
+  test("--dry-run prints the rename plan without touching disk", async () => {
+    const { cwd, oldId } = seedRenameableProject();
+    try {
+      process.env.MINK_PROJECTS_IDENTITY = "git-remote";
+      try {
+        const { planIdentityMigration } = await import(
+          "../../src/commands/sync-migrate"
+        );
+        const plan = planIdentityMigration();
+        expect(plan.length).toBe(1);
+        expect(plan[0].action).toBe("rename");
+        expect(plan[0].oldId).toBe(oldId);
+        expect(plan[0].newId).not.toBe(oldId);
+
+        // Disk untouched
+        expect(existsSync(join(mockRoot, "projects", oldId))).toBe(true);
+        expect(
+          existsSync(join(mockRoot, "projects", plan[0].newId!))
+        ).toBe(false);
+      } finally {
+        delete process.env.MINK_PROJECTS_IDENTITY;
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("migration writes a per-project backup under .identity-rollback before renaming", async () => {
+    const { cwd, oldId } = seedRenameableProject();
+    try {
+      process.env.MINK_PROJECTS_IDENTITY = "git-remote";
+      try {
+        const { migrateSyncLayout } = await import(
+          "../../src/commands/sync-migrate"
+        );
+        migrateSyncLayout();
+
+        const backupRoot = join(mockRoot, ".identity-rollback");
+        expect(existsSync(backupRoot)).toBe(true);
+        const stamps = require("fs").readdirSync(backupRoot);
+        expect(stamps.length).toBeGreaterThanOrEqual(1);
+        const snapshot = join(backupRoot, stamps[0], oldId);
+        expect(existsSync(join(snapshot, "marker.txt"))).toBe(true);
+        expect(
+          require("fs")
+            .readFileSync(join(snapshot, "marker.txt"), "utf-8")
+            .toString()
+        ).toBe("before migration");
+      } finally {
+        delete process.env.MINK_PROJECTS_IDENTITY;
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("--rollback renames back, pops the alias, leaves the project usable", async () => {
+    const { cwd, oldId } = seedRenameableProject();
+    try {
+      process.env.MINK_PROJECTS_IDENTITY = "git-remote";
+      try {
+        const { migrateSyncLayout, rollbackProjectIdentities, planIdentityMigration } =
+          await import("../../src/commands/sync-migrate");
+
+        const plan = planIdentityMigration();
+        const newId = plan[0].newId!;
+
+        migrateSyncLayout();
+        expect(existsSync(join(mockRoot, "projects", newId))).toBe(true);
+        expect(existsSync(join(mockRoot, "projects", oldId))).toBe(false);
+
+        const results = rollbackProjectIdentities();
+        const ok = results.filter((r) => r.ok);
+        expect(ok.length).toBe(1);
+        expect(ok[0].currentId).toBe(newId);
+        expect(ok[0].restoredId).toBe(oldId);
+
+        // After rollback: original dir name restored, marker preserved, alias gone.
+        expect(existsSync(join(mockRoot, "projects", oldId))).toBe(true);
+        expect(existsSync(join(mockRoot, "projects", newId))).toBe(false);
+        expect(
+          require("fs")
+            .readFileSync(
+              join(mockRoot, "projects", oldId, "marker.txt"),
+              "utf-8"
+            )
+            .toString()
+        ).toBe("before migration");
+        const meta = JSON.parse(
+          require("fs")
+            .readFileSync(
+              join(mockRoot, "projects", oldId, "project-meta.json"),
+              "utf-8"
+            )
+            .toString()
+        );
+        expect(meta.aliases ?? []).toEqual([]);
+      } finally {
+        delete process.env.MINK_PROJECTS_IDENTITY;
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("--rollback is a no-op when nothing has aliases", async () => {
+    const { rollbackProjectIdentities } = await import(
+      "../../src/commands/sync-migrate"
+    );
+    const results = rollbackProjectIdentities();
+    expect(results.length).toBe(0);
+  });
+});

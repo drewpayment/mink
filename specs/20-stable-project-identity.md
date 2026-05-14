@@ -145,6 +145,16 @@ A user who upgrades to the new version, migrates, and then downgrades to the pre
 
 A user whose two machines run different Mink versions during the rollout window must not see data corruption. The newer version writes the new fields; the older version ignores them; the existing sync merge drivers tolerate the schema difference.
 
+### Safety Mechanisms
+
+Because the migration rewrites on-disk directory names, three safety mechanisms protect the user from an unwanted outcome:
+
+- **Dry-run** — A user-invokable command prints the proposed rename plan (which projects would be renamed, which would be left alone, and why) without touching the filesystem. The user inspects the plan before opting in.
+- **Pre-migration backup** — Before the first rename in a migration pass, the migration snapshots every project directory that is about to be renamed into a timestamped backup folder under the Mink root. The snapshot is per-project (only projects that will actually change identity) so its cost is bounded, and it survives the migration so a user who discovers a problem later still has a snapshot to inspect or restore from.
+- **Rollback command** — A user-invokable command walks every project whose alias list is non-empty, renames the project directory back to the most recently appended alias, and pops that entry from the list. Rollback uses the alias list as the primary source of truth (which was written atomically with the rename) and falls back to the pre-migration backup only if alias-based rollback cannot proceed.
+
+Rollback alone is sufficient to recover from a botched migration. The pre-migration backup is a belt-and-suspenders safeguard in case the alias list itself is corrupted.
+
 ## Acceptance Criteria
 
 ```
@@ -280,6 +290,35 @@ GIVEN the user runs the init command in a fresh repo with the flag on
 WHEN init completes
 THEN the printed project identifier reflects the git-derived form
 AND if the repo has no remote yet, the printed identifier is the path-derived fallback and a short note explains how to stabilize it
+
+GIVEN the user invokes the migration with the dry-run option
+WHEN the command runs
+THEN the proposed rename plan is printed
+AND no project directory is renamed
+AND no alias is recorded
+AND no backup is written
+
+GIVEN a real migration pass is about to rename a project directory
+WHEN the rename is attempted
+THEN a snapshot of the project's contents is first written to a timestamped backup folder under the Mink root
+AND the snapshot survives the migration so it can be inspected or restored from later
+
+GIVEN a user invokes the rollback command after a migration ran
+WHEN the command processes a project whose alias list is non-empty
+THEN the project directory is renamed back to the most recently appended alias
+AND that alias is popped from the list
+AND the project's files are unchanged from before the original migration
+
+GIVEN the rollback target directory already exists for some project
+WHEN the rollback command tries to rename onto it
+THEN the rollback for that project is reported as failed
+AND no destination directory is overwritten
+AND rollback continues processing other projects
+
+GIVEN no project on disk has a non-empty alias list
+WHEN the rollback command runs
+THEN the command reports there is nothing to roll back
+AND exits cleanly with no filesystem changes
 ```
 
 ## Edge Cases

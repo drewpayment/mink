@@ -52,14 +52,17 @@ export async function sync(args: string[]): Promise<void> {
 
     case "migrate": {
       const { syncMigrateCommand } = await import("./sync-migrate");
-      syncMigrateCommand();
+      syncMigrateCommand(args.slice(1));
       return;
     }
 
     default:
       console.error(`[mink] unknown sync subcommand: ${subcommand}`);
       console.error(
-        "Usage: mink sync [init|status|push|pull|pause|resume|disconnect|reconcile|migrate|merge-driver]"
+        "Usage: mink sync [init|status|push|pull|pause|resume|disconnect|reconcile|merge-driver]"
+      );
+      console.error(
+        "       mink sync migrate [--dry-run|--rollback]"
       );
       process.exit(1);
   }
