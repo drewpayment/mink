@@ -5,6 +5,12 @@ on:
     branches: [main]
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      dist_tag:
+        description: "npm dist-tag (leave blank to derive from the pre-release identifier in package.json)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -91,3 +97,73 @@ jobs:
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-prerelease:
+    # Manual pre-release publish from any branch. Refuses to run unless the
+    # version in package.json carries a pre-release identifier (e.g.,
+    # 0.11.0-beta.1) so it can never collide with the `latest` dist-tag that
+    # release-please drives off main.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Resolve version and dist-tag
+        id: resolve
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ ! "$VERSION" =~ -([a-z]+)\.[0-9]+$ ]]; then
+            echo "::error::package.json version '$VERSION' is not a pre-release. Expected form like 0.11.0-beta.1, -rc.1, or -alpha.1."
+            exit 1
+          fi
+          DERIVED="${BASH_REMATCH[1]}"
+          INPUT_TAG="${{ inputs.dist_tag }}"
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG="$DERIVED"
+          fi
+          if [ "$TAG" = "latest" ]; then
+            echo "::error::Refusing to publish a pre-release under the 'latest' dist-tag."
+            exit 1
+          fi
+          echo "dist_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $VERSION under dist-tag '$TAG'"
+
+      - name: Build
+        run: bun run build
+
+      - name: Build dashboard
+        run: |
+          cd dashboard
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Test
+        run: bun test
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish to npm with pre-release dist-tag
+        run: npm publish --tag "${{ steps.resolve.outputs.dist_tag }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "Published @drewpayment/mink@${{ steps.resolve.outputs.version }} → dist-tag '${{ steps.resolve.outputs.dist_tag }}'" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Install with:" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "npm i -g @drewpayment/mink@${{ steps.resolve.outputs.dist_tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
