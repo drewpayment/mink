@@ -2,8 +2,10 @@ import { execSync } from "child_process";
 import { mkdirSync, existsSync } from "fs";
 import { resolve, dirname, basename, join } from "path";
 import { projectDir, projectMetaPath } from "../core/paths";
-import { generateProjectId } from "../core/project-id";
+import { resolveProjectIdentity } from "../core/project-id";
 import { atomicWriteJson, atomicWriteText, safeReadJson } from "../core/fs-utils";
+import { getOrCreateDeviceId } from "../core/device";
+import { getRepoRoot, getRepoRemote } from "../core/git-identity";
 import {
   isWikiEnabled,
   isVaultInitialized,
@@ -176,21 +178,32 @@ export async function init(cwd: string): Promise<void> {
 
   mkdirSync(dir, { recursive: true });
 
-  const projectId = generateProjectId(cwd);
+  const identity = resolveProjectIdentity(cwd);
+  const projectId = identity.id;
 
   // Detect notes project type
   const isNotesProject =
     isWikiEnabled() && isVaultInitialized() && isInsideVault(cwd);
 
-  // Write project metadata
+  // Write project metadata. Lift cwd into the per-device map alongside the
+  // legacy singular field so older mink versions (which only read `cwd`) keep
+  // working after a downgrade and new versions can track each device's path.
   const metaPath = projectMetaPath(cwd);
   const existingMeta = safeReadJson(metaPath) as Record<string, unknown> | null;
+  const deviceId = getOrCreateDeviceId();
+  const existingPathsByDevice =
+    existingMeta?.pathsByDevice &&
+    typeof existingMeta.pathsByDevice === "object" &&
+    !Array.isArray(existingMeta.pathsByDevice)
+      ? (existingMeta.pathsByDevice as Record<string, string>)
+      : {};
   atomicWriteJson(metaPath, {
     ...(existingMeta ?? {}),
     cwd,
     name: basename(cwd),
     initTimestamp: existingMeta?.initTimestamp ?? new Date().toISOString(),
     version: "0.1.0",
+    pathsByDevice: { ...existingPathsByDevice, [deviceId]: cwd },
     ...(isNotesProject ? { projectType: "notes" } : {}),
   });
 
@@ -201,11 +214,23 @@ export async function init(cwd: string): Promise<void> {
     console.log(`  rule:     ${rulePath}`);
   } else {
     console.log(`[mink] initialized`);
-    console.log(`  project:  ${projectId}`);
+    console.log(`  project:  ${projectId} (${identity.source})`);
     console.log(`  state:    ${dir}`);
     console.log(`  runtime:  ${runtime}`);
     console.log(`  hooks:    ${settingsPath}`);
     console.log(`  rule:     ${rulePath}`);
+  }
+
+  // Surface a one-time hint when the project is in a git repo with no remote
+  // configured — that's the only case where stable cross-machine identity is
+  // a config-fix away.
+  if (identity.source === "path-derived") {
+    const root = getRepoRoot(cwd);
+    if (root && !getRepoRemote(cwd)) {
+      console.log(
+        `  note:     this repo has no remote configured. Project state will not unify across machines until you add one and run \`mink config projects.identity git-remote\`.`
+      );
+    }
   }
 
   // Run initial scan

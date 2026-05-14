@@ -6,7 +6,7 @@ import {
   resolveVaultPath,
 } from "../core/vault";
 import { resolveConfigValue } from "../core/global-config";
-import { generateProjectId } from "../core/project-id";
+import { projectIdFor } from "../core/project-id";
 import {
   createNote,
   appendToDaily,
@@ -180,7 +180,7 @@ function detectSourceProject(cwd: string): string | undefined {
     const vaultPath = resolveVaultPath();
     // Don't mark notes created from within the vault itself
     if (cwd.startsWith(vaultPath)) return undefined;
-    return generateProjectId(cwd);
+    return projectIdFor(cwd);
   } catch {
     return undefined;
   }

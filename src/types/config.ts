@@ -17,6 +17,7 @@ export interface GlobalConfig {
   "cli.auto-update"?: string;
   "cli.auto-update-schedule"?: string;
   "cli.auto-update-package-manager"?: string;
+  "projects.identity"?: string;
 }
 
 export type ConfigKey = keyof GlobalConfig & string;
@@ -169,6 +170,14 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     envVar: "MINK_CLI_AUTO_UPDATE_PACKAGE_MANAGER",
     description: "Force a package manager (auto|npm|bun) for self-upgrade installs",
     scope: "local",
+  },
+  {
+    key: "projects.identity",
+    default: "path-derived",
+    envVar: "MINK_PROJECTS_IDENTITY",
+    description:
+      "Project identity strategy: path-derived (legacy) or git-remote (stable across machines)",
+    scope: "shared",
   },
 ];
 

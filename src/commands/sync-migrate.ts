@@ -25,6 +25,16 @@ import {
 } from "../core/sync";
 import { getOrCreateDeviceId } from "../core/device";
 import { atomicWriteJson, safeReadJson } from "../core/fs-utils";
+import {
+  resolveProjectIdentity,
+  generateProjectId,
+} from "../core/project-id";
+import {
+  getProjectMeta,
+  addProjectAlias,
+  setProjectPathForDevice,
+} from "../core/project-registry";
+import { resolveConfigValue } from "../core/global-config";
 import type { FileIndex } from "../types/file-index";
 
 const MIGRATE_LOCK = ".sync-migrate.lock";
@@ -210,6 +220,119 @@ function listProjectsNeedingMigration(): string[] {
   return listProjects().filter(projectNeedsMigration);
 }
 
+// ── v3 identity migration ─────────────────────────────────────────────────
+//
+// When `projects.identity = git-remote`, walks every project on disk and:
+//   1. Computes its new identifier from the recorded working-copy path.
+//   2. If the new identifier differs from the on-disk directory name, renames
+//      the directory (preferring `git mv` so history is preserved when sync
+//      is initialised), records the old identifier as an alias, and lifts the
+//      singular `cwd` into the per-device path map keyed by this device.
+//   3. If the working-copy path is missing from the local filesystem (the
+//      project's repo was cloned on a different machine), the project is left
+//      alone — the device that owns the cwd will migrate it.
+//
+// Idempotent: re-running after a clean pass walks every project, finds every
+// id matches its directory name, and does nothing.
+function migrateProjectIdentities(deviceId: string): {
+  renamed: number;
+  visited: number;
+} {
+  if (resolveConfigValue("projects.identity").value !== "git-remote") {
+    return { renamed: 0, visited: 0 };
+  }
+
+  let renamed = 0;
+  let visited = 0;
+  const projectsRoot = join(minkRoot(), "projects");
+  if (!existsSync(projectsRoot)) return { renamed, visited };
+
+  let entries: string[];
+  try {
+    entries = readdirSync(projectsRoot);
+  } catch {
+    return { renamed, visited };
+  }
+
+  for (const oldId of entries) {
+    const oldProjDir = join(projectsRoot, oldId);
+    let isDir = false;
+    try {
+      isDir = statSync(oldProjDir).isDirectory();
+    } catch {
+      continue;
+    }
+    if (!isDir) continue;
+    visited++;
+
+    const meta = getProjectMeta(oldProjDir);
+    if (!meta) continue;
+
+    // Skip projects whose cwd isn't reachable on this device — we cannot
+    // reliably re-resolve identity without the underlying filesystem. The
+    // device that owns the cwd will handle the rename and sync will carry it.
+    if (!existsSync(meta.cwd)) continue;
+
+    let resolution;
+    try {
+      resolution = resolveProjectIdentity(meta.cwd);
+    } catch {
+      continue;
+    }
+
+    const newId = resolution.id;
+
+    // Always lift the singular cwd into the per-device map so older records
+    // gain the multi-device shape even when their identifier hasn't changed.
+    try {
+      setProjectPathForDevice(oldProjDir, deviceId, meta.cwd);
+    } catch {
+      // best-effort; keep going
+    }
+
+    if (newId === oldId) continue;
+
+    const newProjDir = join(projectsRoot, newId);
+    if (existsSync(newProjDir)) {
+      // A previous device already migrated this project and the new directory
+      // arrived via sync. Record the old id as an alias on the new directory,
+      // then remove the now-redundant old directory's metadata pointer. Leave
+      // the actual files for the cross-device sync merge to reconcile rather
+      // than blind-deleting.
+      try {
+        addProjectAlias(newProjDir, oldId);
+        setProjectPathForDevice(newProjDir, deviceId, meta.cwd);
+      } catch {
+        // best-effort
+      }
+      continue;
+    }
+
+    const moved =
+      gitSafe(`mv "${oldProjDir}" "${newProjDir}"`) !== null ||
+      (() => {
+        try {
+          renameSync(oldProjDir, newProjDir);
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+
+    if (!moved) continue;
+
+    try {
+      addProjectAlias(newProjDir, oldId);
+      setProjectPathForDevice(newProjDir, deviceId, meta.cwd);
+    } catch {
+      // best-effort
+    }
+    renamed++;
+  }
+
+  return { renamed, visited };
+}
+
 export interface MigrateResult {
   ranMigration: boolean;
   fromVersion: number;
@@ -221,13 +344,21 @@ export interface MigrateResult {
 // session-start auto-trigger when readSyncVersion() < MINK_SYNC_VERSION.
 //
 // We treat the version marker as a hint, not a gate — a previous partial run
-// (interrupted by the budget cap) may have written v2 with projects still
-// pending. We re-run as long as any project on disk still has legacy files at
-// its top level, regardless of marker.
+// (interrupted by the budget cap) may have written the latest version with
+// projects still pending. We re-run as long as any project on disk still has
+// legacy files at its top level, regardless of marker. The v3 identity step
+// also runs whenever projects.identity=git-remote so a user who flips the
+// flag after the version has already stamped to 3 still gets their projects
+// migrated.
 export function migrateSyncLayout(): MigrateResult {
   const fromVersion = readSyncVersion();
   const pending = listProjectsNeedingMigration();
-  if (fromVersion >= MINK_SYNC_VERSION && pending.length === 0) {
+  const identityMode = resolveConfigValue("projects.identity").value;
+  if (
+    fromVersion >= MINK_SYNC_VERSION &&
+    pending.length === 0 &&
+    identityMode !== "git-remote"
+  ) {
     return {
       ranMigration: false,
       fromVersion,
@@ -288,6 +419,16 @@ export function migrateSyncLayout(): MigrateResult {
       }
     }
 
+    // v3 identity migration: rename per-project directories to their stable
+    // git-derived identifier when the user has opted in. Cheap no-op when the
+    // flag is off or every project's identifier already matches its directory.
+    let identity = { renamed: 0, visited: 0 };
+    try {
+      identity = migrateProjectIdentities(deviceId);
+    } catch {
+      // best-effort; never block the rest of migration
+    }
+
     // Only stamp the version marker once nothing is left to migrate. If we
     // still have pending projects, leave the marker as-is so the next session
     // knows to keep going.
@@ -295,12 +436,16 @@ export function migrateSyncLayout(): MigrateResult {
       writeSyncVersion(MINK_SYNC_VERSION);
     }
 
-    if (isSyncInitialized() && processed > 0) {
+    if (isSyncInitialized() && (processed > 0 || identity.renamed > 0)) {
       // Skip the lock file — it's part of migration coordination, not state.
       gitSafe("add -A");
       gitSafe(`reset HEAD ".sync-migrate.lock"`);
+      const summary =
+        identity.renamed > 0
+          ? `${processed} projects, ${identity.renamed} renamed for identity v3`
+          : `${processed} projects`;
       gitSafe(
-        `commit -m "mink: migrate sync layout v${fromVersion} -> v${MINK_SYNC_VERSION} (device ${deviceId.slice(0, 8)}, ${processed} projects)"`
+        `commit -m "mink: migrate sync layout v${fromVersion} -> v${MINK_SYNC_VERSION} (device ${deviceId.slice(0, 8)}, ${summary})"`
       );
     }
 
