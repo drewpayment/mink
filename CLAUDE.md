@@ -26,6 +26,6 @@ Key domains:
 
 ## Git Workflow
 
-- **Never push directly to `main`.** All work must go on a feature branch with a PR targeting `main`.
-- Only human intervention should push directly to `main`.
-- Feature branches should be created for each spec or logical unit of work.
+- **Always commit and push work to a feature branch.** When work is ready to share, commit it, push the branch, and open a PR targeting `main` without waiting for further confirmation.
+- **Never push directly to `main`.** Only human intervention pushes to `main`. Claude must never push to `main`, force-push to `main`, or merge a PR into `main`.
+- Feature branches should be created for each spec or logical unit of work. Use the existing naming convention (`spec/...`, `feat/...`, `fix/...`, `docs/...`, `chore/...`).
