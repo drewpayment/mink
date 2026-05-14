@@ -337,6 +337,72 @@ describe("sync v2 → v3 identity migration", () => {
       delete process.env.MINK_PROJECTS_IDENTITY;
     }
   });
+
+  // Regression: with sync initialised, migrateSyncLayout stashes uncommitted
+  // edits before running so the migration commit stays clean. If the user has
+  // an uncommitted `projects.identity=git-remote` write in ~/.mink/config, the
+  // stash temporarily reverts the working tree to the committed config (which
+  // doesn't have the key). Reading the flag inside the stash window then
+  // returns "path-derived" (the default), the identity migration no-ops, and
+  // the user reports "I set the flag and migrate but nothing happens." The
+  // fix: snapshot the identity mode BEFORE the stash and thread it through
+  // planIdentityMigration / migrateProjectIdentities / resolveProjectIdentity
+  // so all downstream decisions agree with the caller's intent.
+  test("renames when projects.identity was set but not yet committed", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "mink-v3-stash-bug-"));
+    try {
+      execSync(`git init -q "${cwd}"`);
+      execSync(`git -C "${cwd}" remote add origin git@github.com:owner/repo.git`);
+
+      const { generateProjectId } = await import("../../src/core/project-id");
+      const oldId = generateProjectId(cwd);
+      const projDir = join(mockRoot, "projects", oldId);
+      mkdirSync(projDir, { recursive: true });
+      writeFileSync(
+        join(projDir, "project-meta.json"),
+        JSON.stringify({ cwd, name: "repo", initTimestamp: "x", version: "0.1.0" })
+      );
+
+      // Commit ~/.mink with the original config (no projects.identity) so the
+      // stash has a meaningful "last committed" version to revert to.
+      const configPath = join(mockRoot, "config");
+      writeFileSync(configPath, JSON.stringify({ "sync.enabled": "true" }));
+      execSync(`git init -q "${mockRoot}"`);
+      execSync(`git -C "${mockRoot}" config user.email "t@t"`);
+      execSync(`git -C "${mockRoot}" config user.name "t"`);
+      execSync(`git -C "${mockRoot}" add -A`);
+      execSync(`git -C "${mockRoot}" commit -q -m initial`);
+
+      // Now write projects.identity=git-remote into the working tree but DO
+      // NOT commit it. This is exactly what `mink config projects.identity
+      // git-remote` produces: a dirty config file.
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          "sync.enabled": "true",
+          "projects.identity": "git-remote",
+        })
+      );
+
+      const { migrateSyncLayout } = await import(
+        "../../src/commands/sync-migrate"
+      );
+      const result = migrateSyncLayout();
+      expect(result.ranMigration).toBe(true);
+
+      // The bug: pre-fix, the dir would NOT be renamed because the migration
+      // re-read the (stashed) config and saw path-derived → newId === oldId.
+      const { resolveProjectIdentity } = await import(
+        "../../src/core/project-id"
+      );
+      const newId = resolveProjectIdentity(cwd, "git-remote").id;
+      expect(newId).not.toBe(oldId);
+      expect(existsSync(join(mockRoot, "projects", newId))).toBe(true);
+      expect(existsSync(projDir)).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("identity migration safety: dry-run, backup, rollback", () => {

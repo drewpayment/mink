@@ -136,8 +136,16 @@ function readIdentityMode(): "path-derived" | "git-remote" {
   return "path-derived";
 }
 
-export function resolveProjectIdentity(cwd: string): ProjectIdentity {
-  const mode = readIdentityMode();
+// Accepts an optional `modeOverride` so callers that have already snapshotted
+// `projects.identity` (e.g. the v3 migration, which runs inside a git-stash
+// window where the config file's uncommitted writes are hidden from disk) can
+// pass the snapshot in. Without the override, the internal mode read can
+// disagree with the caller's view of the world and produce the wrong id.
+export function resolveProjectIdentity(
+  cwd: string,
+  modeOverride?: "path-derived" | "git-remote"
+): ProjectIdentity {
+  const mode = modeOverride ?? readIdentityMode();
   if (mode === "path-derived") {
     return { id: generateProjectId(cwd), source: "path-derived" };
   }

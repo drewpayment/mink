@@ -248,9 +248,15 @@ export interface IdentityPlanEntry {
 
 // Walks every project on disk and returns the rename plan without touching it.
 // Backbone for both --dry-run and the real migration so they share logic.
-export function planIdentityMigration(): IdentityPlanEntry[] {
+//
+// Accepts an optional `flagOverride` so callers that have already snapshotted
+// `projects.identity` (e.g. migrateSyncLayout, before its git-stash) can pass
+// the snapshot in rather than re-reading from disk inside a stash window where
+// the config file's uncommitted writes are temporarily hidden.
+export function planIdentityMigration(flagOverride?: string): IdentityPlanEntry[] {
   const plan: IdentityPlanEntry[] = [];
-  if (resolveConfigValue("projects.identity").value !== "git-remote") {
+  const flag = flagOverride ?? resolveConfigValue("projects.identity").value;
+  if (flag !== "git-remote") {
     return plan;
   }
 
@@ -288,7 +294,10 @@ export function planIdentityMigration(): IdentityPlanEntry[] {
 
     let newId: string;
     try {
-      newId = resolveProjectIdentity(meta.cwd).id;
+      newId = resolveProjectIdentity(
+        meta.cwd,
+        flag === "git-remote" || flag === "path-derived" ? flag : undefined
+      ).id;
     } catch {
       continue;
     }
@@ -358,16 +367,25 @@ function copyDirRecursive(src: string, dest: string, excludeNames: Set<string>):
   }
 }
 
-function migrateProjectIdentities(deviceId: string): {
+// Accepts the identity-mode value as a parameter so the caller can snapshot it
+// before any disk side-effects (notably the migrating git-stash in
+// migrateSyncLayout, which would hide uncommitted writes to the config file
+// that drives this very decision). Falls back to a fresh read for callers that
+// don't operate inside a stash window (e.g. session-start triggers and the
+// --dry-run path).
+function migrateProjectIdentities(
+  deviceId: string,
+  flag: string = resolveConfigValue("projects.identity").value
+): {
   renamed: number;
   visited: number;
   backupDir: string | null;
 } {
-  if (resolveConfigValue("projects.identity").value !== "git-remote") {
+  if (flag !== "git-remote") {
     return { renamed: 0, visited: 0, backupDir: null };
   }
 
-  const plan = planIdentityMigration();
+  const plan = planIdentityMigration(flag);
   const willRename = plan.filter((p) => p.action === "rename");
 
   // Compute the backup root up-front so all snapshots for this migration pass
@@ -542,6 +560,11 @@ export interface MigrateResult {
 export function migrateSyncLayout(): MigrateResult {
   const fromVersion = readSyncVersion();
   const pending = listProjectsNeedingMigration();
+  // Snapshot the identity mode BEFORE the migrating stash below. The stash
+  // hides any uncommitted edits to ~/.mink/config — including the very
+  // `projects.identity = git-remote` write that should be driving this
+  // migration. Reading the flag after the stash would see the stale,
+  // last-committed config and the v3 identity step would no-op.
   const identityMode = resolveConfigValue("projects.identity").value;
   if (
     fromVersion >= MINK_SYNC_VERSION &&
@@ -611,9 +634,11 @@ export function migrateSyncLayout(): MigrateResult {
     // v3 identity migration: rename per-project directories to their stable
     // git-derived identifier when the user has opted in. Cheap no-op when the
     // flag is off or every project's identifier already matches its directory.
+    // Pass the pre-stash snapshot of identityMode so we don't re-read the
+    // config from a stash-hidden working tree.
     let identity = { renamed: 0, visited: 0 };
     try {
-      identity = migrateProjectIdentities(deviceId);
+      identity = migrateProjectIdentities(deviceId, identityMode);
     } catch {
       // best-effort; never block the rest of migration
     }
