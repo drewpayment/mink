@@ -403,6 +403,195 @@ describe("sync v2 → v3 identity migration", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  // Regression: skip-converged eviction policy + idempotent planner.
+  //
+  // Convergence happens when another device finished the rename and the new
+  // dir arrived via sync, so both old and new dirs exist locally. Pre-fix the
+  // migrator would record the alias but leave the old dir on disk; dry-run
+  // would then keep proposing the same skip-converged action forever because
+  // it only checked "is the old dir still here?". Post-fix the migrator
+  // evicts the old dir to .identity-rollback/ and the planner short-circuits
+  // to skip-unchanged on subsequent runs.
+  test("skip-converged evicts the old dir and a second migrate is a no-op", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "mink-v3-converge-evict-"));
+    try {
+      execSync(`git init -q "${cwd}"`);
+      execSync(`git -C "${cwd}" remote add origin git@github.com:owner/repo.git`);
+
+      const { generateProjectId } = await import("../../src/core/project-id");
+      const oldId = generateProjectId(cwd);
+      const oldProjDir = join(mockRoot, "projects", oldId);
+
+      process.env.MINK_PROJECTS_IDENTITY = "git-remote";
+      try {
+        const { resolveProjectIdentity } = await import(
+          "../../src/core/project-id"
+        );
+        const newId = resolveProjectIdentity(cwd, "git-remote").id;
+        const newProjDir = join(mockRoot, "projects", newId);
+
+        // Seed both old (path-derived) and new (git-derived) directories to
+        // simulate the converged-via-sync state.
+        mkdirSync(oldProjDir, { recursive: true });
+        writeFileSync(
+          join(oldProjDir, "project-meta.json"),
+          JSON.stringify({
+            cwd,
+            name: "repo",
+            initTimestamp: "x",
+            version: "0.1.0",
+          })
+        );
+        writeFileSync(join(oldProjDir, "marker.txt"), "local-only-state");
+
+        mkdirSync(newProjDir, { recursive: true });
+        writeFileSync(
+          join(newProjDir, "project-meta.json"),
+          JSON.stringify({
+            cwd,
+            name: "repo",
+            initTimestamp: "x",
+            version: "0.1.0",
+          })
+        );
+
+        const { migrateSyncLayout, planIdentityMigration } = await import(
+          "../../src/commands/sync-migrate"
+        );
+
+        // First plan: skip-converged (record alias + evict).
+        const planBefore = planIdentityMigration("git-remote").filter(
+          (p) => p.oldId === oldId
+        );
+        expect(planBefore.length).toBe(1);
+        expect(planBefore[0].action).toBe("skip-converged");
+
+        // Run the migration.
+        const result = migrateSyncLayout();
+        expect(result.ranMigration).toBe(true);
+
+        // Old dir evicted; alias recorded on new meta.
+        expect(existsSync(oldProjDir)).toBe(false);
+        const newMeta = JSON.parse(
+          readFileSync(join(newProjDir, "project-meta.json"), "utf-8")
+        );
+        expect(newMeta.aliases).toContain(oldId);
+
+        // Eviction backup contains the local-only state we seeded.
+        const rollbackRoot = join(mockRoot, ".identity-rollback");
+        expect(existsSync(rollbackRoot)).toBe(true);
+        const snapshots = require("fs")
+          .readdirSync(rollbackRoot)
+          .filter((n: string) => existsSync(join(rollbackRoot, n, oldId)));
+        expect(snapshots.length).toBeGreaterThan(0);
+        const evictedMarker = join(
+          rollbackRoot,
+          snapshots[0],
+          oldId,
+          "marker.txt"
+        );
+        expect(readFileSync(evictedMarker, "utf-8")).toBe("local-only-state");
+
+        // Second plan: nothing left for this project — old dir is gone.
+        const planAfter = planIdentityMigration("git-remote").filter(
+          (p) => p.oldId === oldId
+        );
+        expect(planAfter.length).toBe(0);
+      } finally {
+        delete process.env.MINK_PROJECTS_IDENTITY;
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  // Regression: skip-evict action — alias was already recorded by a prior
+  // partial run, the old dir is still on disk. The planner used to keep
+  // proposing skip-converged in this case, so dry-run was never idempotent.
+  // Now the planner classifies it as skip-evict and the migrator removes the
+  // leftover directory.
+  test("skip-evict cleans up a leftover old dir whose alias is already recorded", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "mink-v3-evict-only-"));
+    try {
+      execSync(`git init -q "${cwd}"`);
+      execSync(`git -C "${cwd}" remote add origin git@github.com:owner/repo.git`);
+
+      const { generateProjectId, resolveProjectIdentity } = await import(
+        "../../src/core/project-id"
+      );
+      const oldId = generateProjectId(cwd);
+      const newId = resolveProjectIdentity(cwd, "git-remote").id;
+
+      const oldProjDir = join(mockRoot, "projects", oldId);
+      const newProjDir = join(mockRoot, "projects", newId);
+
+      // Old dir exists.
+      mkdirSync(oldProjDir, { recursive: true });
+      writeFileSync(
+        join(oldProjDir, "project-meta.json"),
+        JSON.stringify({ cwd, name: "repo", initTimestamp: "x", version: "0.1.0" })
+      );
+
+      // New dir exists AND already has the alias recorded — the partial-state
+      // we'd land in if a prior migration recorded the alias but failed to
+      // evict.
+      mkdirSync(newProjDir, { recursive: true });
+      writeFileSync(
+        join(newProjDir, "project-meta.json"),
+        JSON.stringify({
+          cwd,
+          name: "repo",
+          initTimestamp: "x",
+          version: "0.1.0",
+          aliases: [oldId],
+        })
+      );
+
+      process.env.MINK_PROJECTS_IDENTITY = "git-remote";
+      try {
+        const { migrateSyncLayout, planIdentityMigration } = await import(
+          "../../src/commands/sync-migrate"
+        );
+
+        const planBefore = planIdentityMigration("git-remote").filter(
+          (p) => p.oldId === oldId
+        );
+        expect(planBefore.length).toBe(1);
+        expect(planBefore[0].action).toBe("skip-evict");
+
+        migrateSyncLayout();
+
+        // Old dir evicted; alias still recorded (untouched).
+        expect(existsSync(oldProjDir)).toBe(false);
+        const newMeta = JSON.parse(
+          readFileSync(join(newProjDir, "project-meta.json"), "utf-8")
+        );
+        expect(newMeta.aliases).toContain(oldId);
+
+        // Subsequent plan: nothing left.
+        const planAfter = planIdentityMigration("git-remote").filter(
+          (p) => p.oldId === oldId
+        );
+        expect(planAfter.length).toBe(0);
+      } finally {
+        delete process.env.MINK_PROJECTS_IDENTITY;
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  // Regression: .identity-rollback/ must be in the synced .gitignore so
+  // per-device recovery snapshots don't propagate. Reporter saw machine A's
+  // rollback dir appear on machine B via sync, which made it look like
+  // machine B silently evicted dirs.
+  test(".identity-rollback/ is excluded by the synced .gitignore", async () => {
+    const { ensureGitignore } = await import("../../src/core/sync");
+    ensureGitignore();
+    const gitignore = readFileSync(join(mockRoot, ".gitignore"), "utf-8");
+    expect(gitignore).toContain(".identity-rollback/");
+  });
 });
 
 describe("identity migration safety: dry-run, backup, rollback", () => {

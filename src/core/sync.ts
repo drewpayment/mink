@@ -51,6 +51,13 @@ config.local
 # Migration coordination — never sync this
 .sync-migrate.lock
 
+# Per-device identity migration recovery snapshots — local recovery state
+# for the migrating device, not authoritative project state. A device that
+# needs to recover from its migration must do so from its own snapshot;
+# syncing would make rollback dirs appear on devices that never produced
+# the corresponding migration.
+.identity-rollback/
+
 # Local backups and per-device caches — machine-specific snapshots
 projects/*/backups/
 projects/*/session.json

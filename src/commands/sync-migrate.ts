@@ -6,6 +6,7 @@ import {
   writeFileSync,
   readFileSync,
   renameSync,
+  rmSync,
   unlinkSync,
 } from "fs";
 import { join } from "path";
@@ -236,7 +237,24 @@ function listProjectsNeedingMigration(): string[] {
 // Idempotent: re-running after a clean pass walks every project, finds every
 // id matches its directory name, and does nothing.
 
-export type IdentityPlanAction = "rename" | "skip-converged" | "skip-no-cwd" | "skip-unchanged";
+// Plan actions:
+//   rename          old dir present, new dir absent → rename old → new, record alias.
+//   skip-converged  old dir + new dir both present, alias NOT yet recorded → record
+//                   alias on new meta and evict old dir to .identity-rollback/. Named
+//                   "skip-converged" because the rename itself is unnecessary; the
+//                   convergence work (alias + eviction) is the action.
+//   skip-evict      old dir + new dir both present, alias already recorded → only
+//                   evict the old dir. Reached when a previous migration recorded
+//                   the alias but didn't (or couldn't) finish evicting. Without
+//                   this, dry-run would keep proposing skip-converged forever.
+//   skip-no-cwd     project's working-copy path is on a different device — leave alone.
+//   skip-unchanged  newId === oldId — no work needed at all.
+export type IdentityPlanAction =
+  | "rename"
+  | "skip-converged"
+  | "skip-evict"
+  | "skip-no-cwd"
+  | "skip-unchanged";
 
 export interface IdentityPlanEntry {
   oldId: string;
@@ -309,12 +327,23 @@ export function planIdentityMigration(flagOverride?: string): IdentityPlanEntry[
 
     const newProjDir = join(projectsRoot, newId);
     if (existsSync(newProjDir)) {
+      // If the canonical (new) project already records this oldId in its
+      // aliases list, the convergence bookkeeping is already done — only the
+      // leftover old directory remains to be cleaned up. Surfacing this as a
+      // distinct action (skip-evict) makes dry-run idempotent: once the alias
+      // is recorded AND the old directory is gone, the planner stops seeing
+      // the project entirely. Pre-fix it would keep proposing the same
+      // skip-converged action forever.
+      const newMeta = getProjectMeta(newProjDir);
+      const aliasAlreadyRecorded = newMeta?.aliases?.includes(oldId) ?? false;
       plan.push({
         oldId,
         newId,
         cwd: meta.cwd,
-        action: "skip-converged",
-        reason: "destination already exists (from sync); alias-only update",
+        action: aliasAlreadyRecorded ? "skip-evict" : "skip-converged",
+        reason: aliasAlreadyRecorded
+          ? "alias already recorded; will evict leftover old directory"
+          : "destination already exists (from sync); will record alias and evict old directory",
       });
       continue;
     }
@@ -373,29 +402,55 @@ function copyDirRecursive(src: string, dest: string, excludeNames: Set<string>):
 // that drives this very decision). Falls back to a fresh read for callers that
 // don't operate inside a stash window (e.g. session-start triggers and the
 // --dry-run path).
+export interface IdentityMigrationOutcome {
+  renamed: number;
+  converged: number;
+  evicted: number;
+  visited: number;
+  backupDir: string | null;
+  renames: Array<{ from: string; to: string }>;
+  evictions: string[];
+}
+
 function migrateProjectIdentities(
   deviceId: string,
   flag: string = resolveConfigValue("projects.identity").value
-): {
-  renamed: number;
-  visited: number;
-  backupDir: string | null;
-} {
+): IdentityMigrationOutcome {
   if (flag !== "git-remote") {
-    return { renamed: 0, visited: 0, backupDir: null };
+    return {
+      renamed: 0,
+      converged: 0,
+      evicted: 0,
+      visited: 0,
+      backupDir: null,
+      renames: [],
+      evictions: [],
+    };
   }
 
   const plan = planIdentityMigration(flag);
-  const willRename = plan.filter((p) => p.action === "rename");
+  // Any action that moves an old directory aside needs a backup destination.
+  // rename, skip-converged (record alias + evict), and skip-evict (alias
+  // already recorded; only evict) all qualify.
+  const willTouchOldDir = plan.filter(
+    (p) =>
+      p.action === "rename" ||
+      p.action === "skip-converged" ||
+      p.action === "skip-evict"
+  );
 
   // Compute the backup root up-front so all snapshots for this migration pass
   // land in one timestamped directory the user can find and reason about.
   let backupRoot: string | null = null;
-  if (willRename.length > 0) {
+  if (willTouchOldDir.length > 0) {
     backupRoot = identityBackupRoot(ensureIdentityBackupTimestamp());
   }
 
   let renamed = 0;
+  let converged = 0;
+  let evicted = 0;
+  const renames: Array<{ from: string; to: string }> = [];
+  const evictions: string[] = [];
   let visited = plan.length;
   const projectsRoot = join(minkRoot(), "projects");
 
@@ -412,15 +467,52 @@ function migrateProjectIdentities(
       }
     }
 
-    if (entry.action === "skip-converged" && entry.newId) {
+    if (
+      (entry.action === "skip-converged" || entry.action === "skip-evict") &&
+      entry.newId
+    ) {
       const newProjDir = join(projectsRoot, entry.newId);
+      // Record the alias and lift the device path before evicting — if the
+      // canonical meta is broken (read returns null in addProjectAlias), the
+      // safer path is to leave the old directory alone rather than discard
+      // it without ever surfacing the alias. We detect that case below.
+      let aliasOnRecord = false;
       try {
-        addProjectAlias(newProjDir, entry.oldId);
+        if (entry.action === "skip-evict") {
+          aliasOnRecord = true;
+        } else {
+          addProjectAlias(newProjDir, entry.oldId);
+          const newMeta = getProjectMeta(newProjDir);
+          aliasOnRecord = newMeta?.aliases?.includes(entry.oldId) ?? false;
+        }
         if (entry.cwd) {
           setProjectPathForDevice(newProjDir, deviceId, entry.cwd);
         }
       } catch {
         // best-effort
+      }
+
+      if (aliasOnRecord && backupRoot) {
+        // Snapshot the old dir before eviction so any local-only state
+        // (writes that landed here before sync converged) is recoverable.
+        const ok = backupProjectForRollback(
+          oldProjDir,
+          join(backupRoot, entry.oldId)
+        );
+        if (ok) {
+          let removed = false;
+          try {
+            rmSync(oldProjDir, { recursive: true, force: true });
+            removed = true;
+          } catch {
+            // best-effort; leave the directory rather than partially deleted
+          }
+          if (removed) {
+            evictions.push(entry.oldId);
+            evicted++;
+            if (entry.action === "skip-converged") converged++;
+          }
+        }
       }
       continue;
     }
@@ -456,9 +548,18 @@ function migrateProjectIdentities(
       // best-effort
     }
     renamed++;
+    renames.push({ from: entry.oldId, to: entry.newId });
   }
 
-  return { renamed, visited, backupDir: backupRoot };
+  return {
+    renamed,
+    converged,
+    evicted,
+    visited,
+    backupDir: backupRoot,
+    renames,
+    evictions,
+  };
 }
 
 // ── v3 identity rollback ──────────────────────────────────────────────────
@@ -545,6 +646,7 @@ export interface MigrateResult {
   fromVersion: number;
   toVersion: number;
   message?: string;
+  identity?: IdentityMigrationOutcome;
 }
 
 // Idempotent. Safe to invoke from `mink sync migrate` directly or from a
@@ -636,7 +738,15 @@ export function migrateSyncLayout(): MigrateResult {
     // flag is off or every project's identifier already matches its directory.
     // Pass the pre-stash snapshot of identityMode so we don't re-read the
     // config from a stash-hidden working tree.
-    let identity = { renamed: 0, visited: 0 };
+    let identity: IdentityMigrationOutcome = {
+      renamed: 0,
+      converged: 0,
+      evicted: 0,
+      visited: 0,
+      backupDir: null,
+      renames: [],
+      evictions: [],
+    };
     try {
       identity = migrateProjectIdentities(deviceId, identityMode);
     } catch {
@@ -650,16 +760,19 @@ export function migrateSyncLayout(): MigrateResult {
       writeSyncVersion(MINK_SYNC_VERSION);
     }
 
-    if (isSyncInitialized() && (processed > 0 || identity.renamed > 0)) {
+    if (
+      isSyncInitialized() &&
+      (processed > 0 || identity.renamed > 0 || identity.evicted > 0)
+    ) {
       // Skip the lock file — it's part of migration coordination, not state.
       gitSafe("add -A");
       gitSafe(`reset HEAD ".sync-migrate.lock"`);
-      const summary =
-        identity.renamed > 0
-          ? `${processed} projects, ${identity.renamed} renamed for identity v3`
-          : `${processed} projects`;
+      const identityNote =
+        identity.renamed > 0 || identity.evicted > 0
+          ? `, ${identity.renamed} renamed + ${identity.evicted} evicted for identity v3`
+          : "";
       gitSafe(
-        `commit -m "mink: migrate sync layout v${fromVersion} -> v${MINK_SYNC_VERSION} (device ${deviceId.slice(0, 8)}, ${summary})"`
+        `commit -m "mink: migrate sync layout v${fromVersion} -> v${MINK_SYNC_VERSION} (device ${deviceId.slice(0, 8)}, ${processed} projects${identityNote})"`
       );
     }
 
@@ -671,6 +784,7 @@ export function migrateSyncLayout(): MigrateResult {
       ranMigration: true,
       fromVersion,
       toVersion: MINK_SYNC_VERSION,
+      identity,
     };
   } finally {
     releaseLock();
@@ -696,20 +810,24 @@ export function syncMigrateCommand(args: string[] = []): void {
     }
     const renames = plan.filter((p) => p.action === "rename");
     const converged = plan.filter((p) => p.action === "skip-converged");
+    const evictOnly = plan.filter((p) => p.action === "skip-evict");
     const skippedNoCwd = plan.filter((p) => p.action === "skip-no-cwd");
     const unchanged = plan.filter((p) => p.action === "skip-unchanged");
 
     console.log(
-      `[mink] sync migrate --dry-run: ${renames.length} rename(s), ${converged.length} alias-only, ${skippedNoCwd.length} skipped (no cwd), ${unchanged.length} unchanged`
+      `[mink] sync migrate --dry-run: ${renames.length} rename(s), ${converged.length} converge (alias + evict), ${evictOnly.length} evict-only, ${skippedNoCwd.length} skipped (no cwd), ${unchanged.length} unchanged`
     );
     for (const p of renames) {
-      console.log(`  rename: ${p.oldId} → ${p.newId}`);
+      console.log(`  rename:   ${p.oldId} → ${p.newId}`);
     }
     for (const p of converged) {
-      console.log(`  alias:  ${p.oldId} → ${p.newId} (already on disk)`);
+      console.log(`  converge: ${p.oldId} → ${p.newId} (record alias on ${p.newId}, evict ${p.oldId} to .identity-rollback/)`);
+    }
+    for (const p of evictOnly) {
+      console.log(`  evict:    ${p.oldId} → .identity-rollback/ (alias already on ${p.newId})`);
     }
     for (const p of skippedNoCwd) {
-      console.log(`  skip:   ${p.oldId} — ${p.reason}`);
+      console.log(`  skip:     ${p.oldId} — ${p.reason}`);
     }
     return;
   }
@@ -749,4 +867,19 @@ export function syncMigrateCommand(args: string[] = []): void {
   console.log(
     `[mink] sync migrate: v${result.fromVersion} → v${result.toVersion} complete`
   );
+  const identity = result.identity;
+  if (identity && (identity.renamed > 0 || identity.evicted > 0)) {
+    console.log(
+      `  identity: ${identity.renamed} renamed, ${identity.converged} converged, ${identity.evicted} evicted`
+    );
+    for (const r of identity.renames) {
+      console.log(`    renamed: ${r.from} → ${r.to}`);
+    }
+    for (const id of identity.evictions) {
+      console.log(`    evicted: ${id} → .identity-rollback/`);
+    }
+    if (identity.backupDir) {
+      console.log(`  rollback snapshot: ${identity.backupDir}`);
+    }
+  }
 }
