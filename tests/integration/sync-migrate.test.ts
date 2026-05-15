@@ -582,6 +582,93 @@ describe("sync v2 → v3 identity migration", () => {
     }
   });
 
+  // Regression: when the new (git-derived) dir exists but has no
+  // project-meta.json, addProjectAlias would silently no-op and the old dir
+  // would be stranded forever — dry-run would keep proposing the same
+  // converge action forever, and the migrate's converged-count stayed at 0.
+  // Real-world trigger: the running daemon writes state to the new path
+  // under the git-derived id before any init or migrate has run, leaving a
+  // dir with state files but no meta. The migrator must repair the meta
+  // forward from the old dir so convergence can complete.
+  test("skip-converged repairs a meta-less new dir from the old meta", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "mink-v3-repair-meta-"));
+    try {
+      execSync(`git init -q "${cwd}"`);
+      execSync(`git -C "${cwd}" remote add origin git@github.com:owner/repo.git`);
+
+      const { generateProjectId, resolveProjectIdentity } = await import(
+        "../../src/core/project-id"
+      );
+      const oldId = generateProjectId(cwd);
+      const newId = resolveProjectIdentity(cwd, "git-remote").id;
+
+      const oldProjDir = join(mockRoot, "projects", oldId);
+      const newProjDir = join(mockRoot, "projects", newId);
+
+      // Old dir: full project-meta.json (this is the source of truth).
+      mkdirSync(oldProjDir, { recursive: true });
+      writeFileSync(
+        join(oldProjDir, "project-meta.json"),
+        JSON.stringify({
+          cwd,
+          name: "repo",
+          initTimestamp: "2026-04-01T00:00:00.000Z",
+          version: "0.1.0",
+        })
+      );
+
+      // New dir: exists with daemon-written state but NO project-meta.json.
+      // Includes a state shard so v1→v2 migration skips it — mirroring the
+      // real-world condition where the daemon was writing to a v2-shaped
+      // dir at the git-derived id before any init recorded a meta.
+      const { getOrCreateDeviceId } = await import("../../src/core/device");
+      const deviceId = getOrCreateDeviceId();
+      mkdirSync(join(newProjDir, "state", deviceId), { recursive: true });
+      writeFileSync(
+        join(newProjDir, "file-index.json"),
+        JSON.stringify({ header: {}, entries: {} })
+      );
+      writeFileSync(
+        join(newProjDir, "state", deviceId, "action-log.md"),
+        "# Action log\n"
+      );
+
+      process.env.MINK_PROJECTS_IDENTITY = "git-remote";
+      try {
+        const { migrateSyncLayout } = await import(
+          "../../src/commands/sync-migrate"
+        );
+        const result = migrateSyncLayout();
+        expect(result.ranMigration).toBe(true);
+
+        // New dir now has a meta, with the alias recorded.
+        const repairedMeta = JSON.parse(
+          readFileSync(join(newProjDir, "project-meta.json"), "utf-8")
+        );
+        expect(repairedMeta.aliases).toContain(oldId);
+        expect(repairedMeta.cwd).toBe(cwd);
+        expect(repairedMeta.name).toBe("repo");
+
+        // Daemon-written state preserved (not overwritten by the meta-repair).
+        expect(existsSync(join(newProjDir, "file-index.json"))).toBe(true);
+        expect(
+          existsSync(join(newProjDir, "state", deviceId, "action-log.md"))
+        ).toBe(true);
+
+        // Old dir evicted.
+        expect(existsSync(oldProjDir)).toBe(false);
+
+        // Outcome reports the converge.
+        expect(result.identity?.converged).toBeGreaterThanOrEqual(1);
+        expect(result.identity?.evicted).toBeGreaterThanOrEqual(1);
+      } finally {
+        delete process.env.MINK_PROJECTS_IDENTITY;
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   // Regression: .identity-rollback/ must be in the synced .gitignore so
   // per-device recovery snapshots don't propagate. Reporter saw machine A's
   // rollback dir appear on machine B via sync, which made it look like

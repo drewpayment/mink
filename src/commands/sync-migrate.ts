@@ -472,17 +472,34 @@ function migrateProjectIdentities(
       entry.newId
     ) {
       const newProjDir = join(projectsRoot, entry.newId);
-      // Record the alias and lift the device path before evicting — if the
-      // canonical meta is broken (read returns null in addProjectAlias), the
-      // safer path is to leave the old directory alone rather than discard
-      // it without ever surfacing the alias. We detect that case below.
+      // Record the alias and lift the device path before evicting. If the new
+      // dir has no project-meta.json (e.g. the daemon wrote state under the
+      // git-derived id before any init or migrate ran), addProjectAlias would
+      // silently no-op and we'd leave the old dir stranded forever. Repair
+      // that case by writing the old meta forward — the daemon-authored
+      // payload state under the new dir is preserved; only the missing meta
+      // gets reconstructed, with the alias already in place.
       let aliasOnRecord = false;
       try {
         if (entry.action === "skip-evict") {
           aliasOnRecord = true;
         } else {
           addProjectAlias(newProjDir, entry.oldId);
-          const newMeta = getProjectMeta(newProjDir);
+          let newMeta = getProjectMeta(newProjDir);
+          if (!newMeta) {
+            const oldMeta = getProjectMeta(oldProjDir);
+            if (oldMeta) {
+              atomicWriteJson(join(newProjDir, "project-meta.json"), {
+                cwd: oldMeta.cwd,
+                name: oldMeta.name,
+                initTimestamp: oldMeta.initTimestamp,
+                version: oldMeta.version,
+                aliases: [...(oldMeta.aliases ?? []), entry.oldId],
+                pathsByDevice: oldMeta.pathsByDevice,
+              });
+              newMeta = getProjectMeta(newProjDir);
+            }
+          }
           aliasOnRecord = newMeta?.aliases?.includes(entry.oldId) ?? false;
         }
         if (entry.cwd) {
