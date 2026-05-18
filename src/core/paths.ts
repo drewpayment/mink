@@ -1,6 +1,7 @@
 import { join } from "path";
+import { existsSync } from "fs";
 import { homedir } from "os";
-import { generateProjectId } from "./project-id";
+import { projectIdFor } from "./project-id";
 
 // Resolved per-call so tests can override via MINK_ROOT_OVERRIDE without
 // reloading modules. Production callers get the default homedir/.mink path.
@@ -19,9 +20,24 @@ export function minkRoot(): string {
   return MINK_ROOT;
 }
 
+// Locates the on-disk project state directory for `cwd`. Walks the alias list
+// when the primary identifier's directory does not exist, so historical
+// references (notes, dashboard URLs) keep resolving after a v3 migration
+// renames the project directory.
 export function projectDir(cwd: string): string {
-  const id = generateProjectId(cwd);
-  return join(minkRoot(), "projects", id);
+  const id = projectIdFor(cwd);
+  const primary = join(minkRoot(), "projects", id);
+  if (existsSync(primary)) return primary;
+  // Lazy require: project-registry imports paths, so a top-level import would
+  // create a cycle. Only walk aliases on a cold miss.
+  try {
+    const { findProjectDirByIdOrAlias } = require("./project-registry");
+    const aliased = findProjectDirByIdOrAlias(id);
+    if (aliased) return aliased;
+  } catch {
+    // best-effort
+  }
+  return primary;
 }
 
 export function sessionPath(cwd: string): string {

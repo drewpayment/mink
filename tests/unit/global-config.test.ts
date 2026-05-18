@@ -36,8 +36,8 @@ describe("config types", () => {
     expect(isValidConfigKey("wiki")).toBe(false);
   });
 
-  test("CONFIG_KEYS has 18 entries", () => {
-    expect(CONFIG_KEYS.length).toBe(18);
+  test("CONFIG_KEYS has 19 entries", () => {
+    expect(CONFIG_KEYS.length).toBe(19);
   });
 
   test("each CONFIG_KEY has required fields", () => {
@@ -138,7 +138,7 @@ describe("resolveConfigValue", () => {
       delete process.env[meta.envVar];
     }
     const all = resolveAllConfig();
-    expect(all.length).toBe(18);
+    expect(all.length).toBe(19);
     for (const entry of all) {
       expect(entry.key).toBeTruthy();
       expect(entry.value).toBeDefined();

@@ -35,7 +35,7 @@ import {
   triggerIngestFile,
 } from "./dashboard-api";
 import { listRegisteredProjects, getProjectMeta } from "./project-registry";
-import { generateProjectId } from "./project-id";
+import { projectIdFor } from "./project-id";
 import { runtimeFile, runtimeServe, runtimeSpawn } from "./runtime";
 import type { StateFileId, StateChangeEvent } from "../types/dashboard";
 import type { RegisteredProject } from "./project-registry";
@@ -154,10 +154,14 @@ function resolveProjectCwd(
 
   // If the requested project matches the currently active project, use it directly
   // (handles startup projects that may not be in the registry yet)
-  if (projectId === generateProjectId(defaultCwd)) return defaultCwd;
+  if (projectId === projectIdFor(defaultCwd)) return defaultCwd;
 
   const projects = listRegisteredProjects();
-  const match = projects.find((p) => p.id === projectId);
+  // Match against primary id first, then walk alias lists so historical
+  // dashboard URLs continue routing after a v3 identity migration.
+  const match =
+    projects.find((p) => p.id === projectId) ??
+    projects.find((p) => p.aliases.includes(projectId));
   if (!match) return null;
 
   return match.cwd;
@@ -170,11 +174,11 @@ function getProjectsList(
   projects: RegisteredProject[];
   activeProjectId: string;
 } {
-  const activeId = generateProjectId(activeCwd);
+  const activeId = projectIdFor(activeCwd);
   const registered = listRegisteredProjects();
 
   // Ensure startup project is always in the list
-  const startupId = generateProjectId(startupCwd);
+  const startupId = projectIdFor(startupCwd);
   const hasStartup = registered.some((p) => p.id === startupId);
   if (!hasStartup) {
     const meta = getProjectMeta(projectDir(startupCwd));
@@ -183,6 +187,8 @@ function getProjectsList(
       cwd: startupCwd,
       name: meta?.name ?? basename(startupCwd),
       version: meta?.version ?? "0.1.0",
+      aliases: meta?.aliases ?? [],
+      pathsByDevice: meta?.pathsByDevice ?? {},
     });
   }
 
@@ -196,6 +202,8 @@ function getProjectsList(
         cwd: activeCwd,
         name: meta?.name ?? basename(activeCwd),
         version: meta?.version ?? "0.1.0",
+        aliases: meta?.aliases ?? [],
+        pathsByDevice: meta?.pathsByDevice ?? {},
       });
     }
   }

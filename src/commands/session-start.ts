@@ -24,10 +24,16 @@ export function sessionStart(cwd: string): void {
     // Never crash hooks
   }
 
-  // One-shot migration to sync layout v2. Idempotent re-run is a no-op.
+  // One-shot migration to the current sync layout. Idempotent re-run is a
+  // no-op. We also re-trigger when projects.identity=git-remote so a user who
+  // flips the flag after the version has stamped still gets project directories
+  // renamed to their stable identifier on the next session-start.
   try {
     const { readSyncVersion, MINK_SYNC_VERSION } = require("../core/sync");
-    if (readSyncVersion() < MINK_SYNC_VERSION) {
+    const { resolveConfigValue } = require("../core/global-config");
+    const identityOn =
+      resolveConfigValue("projects.identity").value === "git-remote";
+    if (readSyncVersion() < MINK_SYNC_VERSION || identityOn) {
       const { migrateSyncLayout } = require("./sync-migrate");
       migrateSyncLayout();
     }

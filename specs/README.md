@@ -29,6 +29,7 @@ Mink is a hidden presence that moves alongside the developer. It has two mission
 | 17 | [Companion Channels](./17-companion-channels.md) | Wiki |
 | 18 | [Configuration Surface](./18-configuration-surface.md) | Core |
 | 19 | [CLI Self-Update](./19-self-update.md) | Automation |
+| 20 | [Stable Project Identity](./20-stable-project-identity.md) | Core |
 
 ## Active Delivery Plans
 

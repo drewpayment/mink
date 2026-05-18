@@ -15,7 +15,13 @@ const FETCH_TIMEOUT = 15_000;
 // Sync layout version. Bumped when the on-disk shape of `~/.mink/` changes in
 // a way that older devices cannot read. Migration runs on first session-start
 // after upgrade when readSyncVersion() < MINK_SYNC_VERSION.
-export const MINK_SYNC_VERSION = 2;
+//
+// v1 → v2: per-device shards under projects/<id>/state/<deviceId>/
+// v2 → v3: stable identity — adds aliases[] and pathsByDevice{} on project-meta;
+//          when projects.identity=git-remote, renames per-project directories
+//          from path-derived IDs to git-derived IDs and records prior ID as
+//          alias. Migration is a no-op when the flag is off.
+export const MINK_SYNC_VERSION = 3;
 
 export function readSyncVersion(): number {
   try {
@@ -44,6 +50,13 @@ config.local
 
 # Migration coordination — never sync this
 .sync-migrate.lock
+
+# Per-device identity migration recovery snapshots — local recovery state
+# for the migrating device, not authoritative project state. A device that
+# needs to recover from its migration must do so from its own snapshot;
+# syncing would make rollback dirs appear on devices that never produced
+# the corresponding migration.
+.identity-rollback/
 
 # Local backups and per-device caches — machine-specific snapshots
 projects/*/backups/
