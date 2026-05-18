@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.11.0](https://github.com/drewpayment/mink/compare/v0.10.1...v0.11.0) (2026-05-18)
+
+
+### Features
+
+* **identity:** add safety mechanisms — dry-run, backup, rollback ([4e1f552](https://github.com/drewpayment/mink/commit/4e1f552a08d398f1b69667090608ca568e76190f))
+* **identity:** implement spec 20 — stable project identity ([eaa6a7b](https://github.com/drewpayment/mink/commit/eaa6a7b140198e9634005017dc954fd4ed634e0b))
+* **identity:** spec 20 + implementation — stable project identity (closes [#72](https://github.com/drewpayment/mink/issues/72)) ([9cf3a79](https://github.com/drewpayment/mink/commit/9cf3a79a99e62d714e258db4aaadd6621aff5de1))
+
+
+### Bug Fixes
+
+* **identity:** evict converged old dirs and make planner idempotent ([ef8a210](https://github.com/drewpayment/mink/commit/ef8a210ce42054a7733da4a36c42801e8642d937))
+* **identity:** repair missing new-dir meta on converge ([6a7b49f](https://github.com/drewpayment/mink/commit/6a7b49f8270d6e5f1d4d45a66ac3f9503df89db6))
+* **identity:** snapshot identity flag before stash window ([ba944f2](https://github.com/drewpayment/mink/commit/ba944f2afc807a8448a5cc8821daca9f244c6095))
+
 ## [0.10.1](https://github.com/drewpayment/mink/compare/v0.10.0...v0.10.1) (2026-05-09)
 
 
