@@ -4,10 +4,14 @@
   "description": "A hidden presence that moves alongside the developer — token efficiency and cross-project wiki for AI coding assistants",
   "type": "module",
   "bin": {
-    "mink": "./dist/cli.js"
+    "mink": "./dist/cli.node.js",
+    "mink-bun": "./dist/cli.bun.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
   },
   "scripts": {
-    "build": "bun build src/cli.ts --outfile dist/cli.js --target node --format esm && node -e \"const f=require('fs');let c=f.readFileSync('dist/cli.js','utf8');c=c.replace(/^#!.*\\n/,'');f.writeFileSync('dist/cli.js','#!/usr/bin/env node\\n'+c);f.chmodSync('dist/cli.js',0o755)\"",
+    "build": "node scripts/build.mjs",
     "postinstall": "bun run build 2>/dev/null || true",
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test",
@@ -17,7 +21,9 @@
   },
   "files": [
     "src/**/*.ts",
-    "dist/cli.js",
+    "dist/cli.node.js",
+    "dist/cli.bun.js",
+    "scripts/build.mjs",
     "skills/**/*",
     "agents/**/*",
     "dashboard/out"

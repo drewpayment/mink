@@ -65,6 +65,12 @@ projects/*/scheduler-manifest.json
 projects/*/design-captures/
 projects/*/.mink-state-counters.json
 
+# SQLite write-ahead log + shared-memory sidecars — local-only, must not
+# travel with the main mink.db (WAL is checkpointed before push).
+projects/*/mink.db-wal
+projects/*/mink.db-shm
+projects/*/mink.db-journal
+
 # Wiki derived/regenerable pages — each device rebuilds locally
 wiki/_index.md
 wiki/.mink-index.json
