@@ -186,6 +186,18 @@ export class FileIndexRepo implements IndexLookup {
     return stale;
   }
 
+  // Cheap content_hash lookup — used by `mink scan` to detect
+  // touch-without-edit cases (mtime changed, content didn't) and skip
+  // re-extraction in that case.
+  contentHashFor(filePath: string): string | null {
+    const row = this.db
+      .prepare("SELECT content_hash FROM file_index WHERE file_path = ?")
+      .get(filePath);
+    if (!row) return null;
+    const hash = (row as { content_hash: string | null }).content_hash;
+    return hash ?? null;
+  }
+
   // Mirrors checkStaleness() under the JSON store: which files are on disk
   // but not in the index (missing), and which are in the index but absent
   // from disk (orphaned).
