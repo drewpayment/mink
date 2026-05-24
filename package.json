@@ -1,11 +1,10 @@
 {
   "name": "@drewpayment/mink",
-  "version": "0.12.0-beta.1",
+  "version": "0.12.0-beta.2",
   "description": "A hidden presence that moves alongside the developer — token efficiency and cross-project wiki for AI coding assistants",
   "type": "module",
   "bin": {
-    "mink": "./dist/cli.node.js",
-    "mink-bun": "./dist/cli.bun.js"
+    "mink": "./dist/cli.js"
   },
   "engines": {
     "node": ">=22.5.0"
@@ -21,9 +20,11 @@
   },
   "files": [
     "src/**/*.ts",
+    "dist/cli.js",
     "dist/cli.node.js",
     "dist/cli.bun.js",
     "scripts/build.mjs",
+    "scripts/cli-shim.mjs",
     "skills/**/*",
     "agents/**/*",
     "dashboard/out"

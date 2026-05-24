@@ -1,19 +1,18 @@
 #!/usr/bin/env node
-// Build both runtime bundles. Each invocation feeds `bun build` a
+// Build both runtime bundles, plus a Node shim that dispatches to whichever
+// runtime is available at exec time. Each `bun build` invocation feeds a
 // `--define MINK_RUNTIME=...` value that the storage driver dispatcher in
 // `src/storage/driver.ts` constant-folds, so the unused branch's
 // `require("bun:sqlite")` / `require("node:sqlite")` is never executed at
 // runtime — even though both strings are present in the bundle source.
 //
 // Outputs:
-//   dist/cli.bun.js   — #!/usr/bin/env bun  (faster startup, recommended)
-//   dist/cli.node.js  — #!/usr/bin/env node (works wherever Node ≥22.5 is)
-//
-// `package.json:bin` maps the user-visible `mink` command to the Node
-// bundle (broadest compat) and `mink-bun` to the Bun bundle.
+//   dist/cli.bun.js   — bun bundle (faster startup when Bun is installed)
+//   dist/cli.node.js  — node bundle (works wherever Node ≥22.5 is)
+//   dist/cli.js       — Node shim, the only entry exposed via `bin`
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { chmodSync, copyFileSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 const SRC = "src/cli.ts";
@@ -45,3 +44,7 @@ for (const t of TARGETS) {
   chmodSync(t.outfile, 0o755);
   console.log(`built ${t.outfile} (${t.runtime})`);
 }
+
+copyFileSync("scripts/cli-shim.mjs", "dist/cli.js");
+chmodSync("dist/cli.js", 0o755);
+console.log("built dist/cli.js (shim)");
