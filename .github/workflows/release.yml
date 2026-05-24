@@ -161,7 +161,7 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: Publish to npm with pre-release dist-tag
-        run: npm publish --tag "${{ steps.resolve.outputs.dist_tag }}"
+        run: npm publish --tag "${{ steps.resolve.outputs.dist_tag }}" --provenance
 
       - name: Summary
         run: |
