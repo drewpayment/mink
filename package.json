@@ -31,6 +31,10 @@
   "publishConfig": {
     "access": "public"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drewpayment/mink.git"
+  },
   "license": "MIT",
   "dependencies": {
     "puppeteer-core": "^24.0.0"
