@@ -129,8 +129,10 @@ describe("status command", () => {
   test("handles corrupt files gracefully", () => {
     const stateDir = projectDir(testCwd);
     mkdirSync(stateDir, { recursive: true });
-    writeFileSync(join(stateDir, "file-index.json"), "not json{{{");
-    writeFileSync(join(stateDir, "token-ledger.json"), "corrupt");
+    // mink.db is the integrity-checked SQLite store as of Phase 4 —
+    // a corrupt DB header should be reported.
+    writeFileSync(join(stateDir, "mink.db"), "not-a-sqlite-file");
+    writeFileSync(join(stateDir, "config.json"), "not json{{{");
 
     status(testCwd);
 

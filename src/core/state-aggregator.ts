@@ -75,14 +75,29 @@ function addLifetime(target: LifetimeCounters, source: LifetimeCounters): void {
 }
 
 export function aggregateTokenLedgerAt(projDir: string): TokenLedger {
+  // Phase 4: token_ledger lives in mink.db. The legacy JSON aggregation
+  // is preserved as a fallback for unit tests and pre-migration projects.
+  const dbPath = join(projDir, "mink.db");
+  if (existsSync(dbPath)) {
+    try {
+      const { openDriver } = require("../storage/driver") as typeof import("../storage/driver");
+      const { applySchema } = require("../storage/schema") as typeof import("../storage/schema");
+      const { TokenLedgerRepo } = require("../repositories/token-ledger-repo") as typeof import("../repositories/token-ledger-repo");
+      const db = openDriver(dbPath);
+      try {
+        applySchema(db);
+        return new TokenLedgerRepo(db).snapshot();
+      } finally {
+        db.close();
+      }
+    } catch {
+      // Fall through to JSON aggregation if the DB read fails.
+    }
+  }
+
   const merged = createEmptyLedger();
   const seenSessions = new Set<string>();
 
-  // Sum lifetime counters from every source (each shard + legacy). Lifetime
-  // persists across archive cycles, so deriving from active sessions alone
-  // would lose archived totals. Migration atomically moves legacy → shard
-  // (`git mv`), so a session never lives in both simultaneously and lifetime
-  // counters do not double-count in production.
   const sources = [
     ...listDeviceShardsAt(projDir).map((id) =>
       shardPath(projDir, id, "token-ledger.json")
@@ -90,8 +105,6 @@ export function aggregateTokenLedgerAt(projDir: string): TokenLedger {
     join(projDir, "token-ledger.json"),
   ];
 
-  // Track waste-flags across sources, deduped by (pattern, detectedAt) so
-  // each device's flags remain visible without spamming duplicates.
   const seenFlagKeys = new Set<string>();
   const wasteFlags: NonNullable<TokenLedger["wasteFlags"]> = [];
 
@@ -131,6 +144,25 @@ export function aggregateTokenLedger(cwd: string): TokenLedger {
 export function aggregateTokenLedgerArchiveAt(
   projDir: string
 ): LedgerSession[] {
+  // Phase 4: archive is `archived = 1` in ledger_sessions.
+  const dbPath = join(projDir, "mink.db");
+  if (existsSync(dbPath)) {
+    try {
+      const { openDriver } = require("../storage/driver") as typeof import("../storage/driver");
+      const { applySchema } = require("../storage/schema") as typeof import("../storage/schema");
+      const { TokenLedgerRepo } = require("../repositories/token-ledger-repo") as typeof import("../repositories/token-ledger-repo");
+      const db = openDriver(dbPath);
+      try {
+        applySchema(db);
+        return new TokenLedgerRepo(db).archivedSessions();
+      } finally {
+        db.close();
+      }
+    } catch {
+      // Fall through to JSON aggregation.
+    }
+  }
+
   const seen = new Set<string>();
   const archived: LedgerSession[] = [];
 

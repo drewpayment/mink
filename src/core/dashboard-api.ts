@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "fs";
 import {
   projectDir,
   projectDbPath,
-  tokenLedgerPath,
   actionLogPath,
   learningMemoryPath,
   projectMetaPath,
@@ -182,7 +181,6 @@ export function loadOverview(cwd: string): OverviewPayload {
     checkDbFile("mink.db", projectDbPath(cwd)),
     checkJsonFile("config.json", configPath(cwd)),
     checkTextFile("learning-memory.md", learningMemoryPath(cwd)),
-    checkJsonFile("token-ledger.json", tokenLedgerPath(cwd)),
     checkTextFile("action-log.md", actionLogPath(cwd)),
     checkJsonFile("scheduler-manifest.json", schedulerManifestPath(cwd)),
   ];

@@ -39,9 +39,10 @@ The system must calculate estimated token savings using:
 
 ### Data Integrity
 
-- The ledger must be append-only for session records — existing sessions are never modified or deleted.
-- Lifetime counters are updated atomically with each session append.
-- The ledger file must survive partial writes (write to temp, then rename).
+- Sessions are append-only as observed by other devices: the cross-device merge driver treats existing session ids as immutable (first-writer-wins). The in-process device may call `updateSession()` to replace its own latest session totals while the session is still active; once it ships in a sync push, it's frozen.
+- Sessions past the retention threshold are flagged `archived = 1` in the ledger store rather than moved to a separate file. The archive query is `SELECT * FROM ledger_sessions WHERE archived = 1`.
+- Lifetime counters are stored per device and updated transactionally with each session insert/update. The project-wide lifetime is the SUM across devices.
+- The ledger is stored in `mink.db` (SQLite, WAL mode). Crash safety comes from the WAL — partial writes are rolled back automatically.
 
 ## Acceptance Criteria
 

@@ -4,7 +4,6 @@ import {
   projectDbPath,
   configPath,
   learningMemoryPath,
-  tokenLedgerPath,
   actionLogPath,
 } from "../core/paths";
 import { safeReadJson } from "../core/fs-utils";
@@ -70,15 +69,15 @@ export function status(cwd: string): void {
     // Migration failures are non-fatal — report the DB as corrupt below.
   }
 
-  // Section 1: State directory integrity. file-index and bug-memory now
-  // live inside mink.db; the token-ledger JSON check remains until
-  // Phase 4 takes ownership.
+  // Section 1: State directory integrity. file-index, bug-memory, and
+  // token-ledger all live inside mink.db. The remaining JSON/MD files
+  // are intentionally separate — session is per-process, config is
+  // user-editable, learning-memory and action-log are human-readable.
   const checks: FileCheck[] = [
     checkJsonFile("session.json", sessionPath(cwd)),
     checkDbFile("mink.db", projectDbPath(cwd)),
     checkJsonFile("config.json", configPath(cwd)),
     checkTextFile("learning-memory.md", learningMemoryPath(cwd)),
-    checkJsonFile("token-ledger.json", tokenLedgerPath(cwd)),
     checkTextFile("action-log.md", actionLogPath(cwd)),
   ];
 

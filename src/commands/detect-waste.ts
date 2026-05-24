@@ -1,10 +1,7 @@
 import { statSync } from "fs";
-import {
-  tokenLedgerShardPath,
-  learningMemoryPath,
-} from "../core/paths";
-import { loadLedger, saveLedger } from "../core/token-ledger";
+import { learningMemoryPath } from "../core/paths";
 import { FileIndexRepo } from "../repositories/file-index-repo";
+import { TokenLedgerRepo } from "../repositories/token-ledger-repo";
 import {
   aggregateTokenLedger,
   aggregateActionLog,
@@ -64,13 +61,10 @@ export function detectWaste(cwd: string): void {
     learningMemoryMtimeMs
   );
 
-  // Persist flags in THIS device's shard ledger so it's the only writer for
-  // that file. The aggregator unions wasteFlags across shards on read, so
-  // every device's view stays current without merge conflicts.
-  const shardLedgerPath = tokenLedgerShardPath(cwd, getOrCreateDeviceId());
-  const shardLedger = loadLedger(shardLedgerPath);
-  shardLedger.wasteFlags = flags;
-  saveLedger(shardLedgerPath, shardLedger);
+  // Persist flags in THIS device's waste_flags rows. The merge driver
+  // unions across devices on sync; replaceWasteFlagsForDevice clears
+  // and rewrites this device's set on every detection run.
+  TokenLedgerRepo.for(cwd).replaceWasteFlagsForDevice(getOrCreateDeviceId(), flags);
 
   // Output summary
   if (flags.length === 0) {

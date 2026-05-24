@@ -154,15 +154,15 @@ describe("migrate-json", () => {
       .all();
     expect(lifetime).toEqual([{ device_id: "legacy", total_tokens: 1000 }]);
 
-    // Sources moved to legacy-backup/legacy/. Phases 2 and 3 move the
-    // file-index and bug-memory JSONs; token-ledger stays until Phase 4
-    // so the existing ledger aggregator keeps returning data.
+    // As of Phase 4, every JSON store has been migrated. All sources
+    // move to legacy-backup/legacy/.
     const backupDir = join(projDir, "legacy-backup", "legacy");
     expect(existsSync(join(backupDir, "file-index.json"))).toBe(true);
     expect(existsSync(join(backupDir, "bug-memory.json"))).toBe(true);
+    expect(existsSync(join(backupDir, "token-ledger.json"))).toBe(true);
     expect(existsSync(join(projDir, "file-index.json"))).toBe(false);
     expect(existsSync(join(projDir, "bug-memory.json"))).toBe(false);
-    expect(existsSync(join(projDir, "token-ledger.json"))).toBe(true);
+    expect(existsSync(join(projDir, "token-ledger.json"))).toBe(false);
   });
 
   test("device shards preserve device_id attribution", () => {

@@ -1,3 +1,4 @@
+import { existsSync } from "fs";
 import { join } from "path";
 import type { TokenLedger, LedgerSession, LifetimeCounters } from "../types/token-ledger";
 import type { SessionFinalizer, SessionSummary } from "../types/session";
@@ -158,15 +159,60 @@ export function saveArchive(archivePath: string, newlyArchived: LedgerSession[])
 
 // ── Task 6: Ledger Finalizer Factory ─────────────────────────────────────────
 
+// Phase 4 of the SQLite migration: every projectDir that has a mink.db
+// uses TokenLedgerRepo. Legacy JSON paths still get a finalizer for
+// pre-migration projects (and for unit tests that don't open a DB).
 export function createLedgerFinalizer(
   projectDir: string,
   deviceIdOrThreshold?: string | number,
   archiveThreshold: number = 1000
 ): SessionFinalizer {
-  // Backward compat: callers that pass `(projectDir)` or
-  // `(projectDir, threshold)` still work and write to the legacy path. New
-  // callers pass `(projectDir, deviceId, threshold?)` to write into the
-  // per-device shard at projectDir/state/<deviceId>/...
+  const dbPath = join(projectDir, "mink.db");
+
+  if (existsSync(dbPath)) {
+    // Route through the SQLite repo. We open a fresh handle so this
+    // module doesn't depend on the per-process cache used by hooks.
+    const { openDriver } = require("../storage/driver") as typeof import("../storage/driver");
+    const { applySchema } = require("../storage/schema") as typeof import("../storage/schema");
+    const { TokenLedgerRepo } = require("../repositories/token-ledger-repo") as typeof import("../repositories/token-ledger-repo");
+
+    const deviceId = typeof deviceIdOrThreshold === "string" ? deviceIdOrThreshold : undefined;
+    const threshold = typeof deviceIdOrThreshold === "number"
+      ? deviceIdOrThreshold
+      : archiveThreshold;
+
+    return {
+      appendSession(summary: SessionSummary): void {
+        const db = openDriver(dbPath);
+        try {
+          db.exec("PRAGMA journal_mode = WAL");
+          db.exec("PRAGMA foreign_keys = ON");
+          applySchema(db);
+          const repo = new TokenLedgerRepo(db);
+          repo.appendSession(summary, deviceId);
+          repo.archive(threshold);
+        } finally {
+          db.close();
+        }
+      },
+
+      updateSession(summary: SessionSummary): void {
+        const db = openDriver(dbPath);
+        try {
+          db.exec("PRAGMA journal_mode = WAL");
+          db.exec("PRAGMA foreign_keys = ON");
+          applySchema(db);
+          new TokenLedgerRepo(db).updateSession(summary, deviceId);
+        } finally {
+          db.close();
+        }
+      },
+    };
+  }
+
+  // ── Legacy JSON fallback ────────────────────────────────────────────
+  // Tests + pre-migration projects continue to write to disk. The
+  // `(projectDir)` and `(projectDir, threshold)` signatures still work.
   let ledgerPath: string;
   let archivePath: string;
   let threshold: number;
