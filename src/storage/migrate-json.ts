@@ -398,12 +398,12 @@ export function migrateJsonIfNeeded(db: DbDriver, cwd: string): void {
     writeMeta(db, "migrated_from_json_at", now);
   });
 
-  // Move successfully-imported sources to legacy-backup. Only file-index
-  // moves in Phase 2 — bug-memory and token-ledger JSONs stay in place
-  // until Phases 3 and 4 take ownership of those stores, so the existing
-  // aggregators keep returning data during the migration window.
+  // Move successfully-imported sources to legacy-backup. file-index
+  // moved in Phase 2, bug-memory in Phase 3; token-ledger waits for
+  // Phase 4 so the existing ledger aggregator keeps working.
   for (const src of sources) {
     if (src.fileIndex) moveSourceToBackup(src.fileIndex, backupRoot, src.deviceId);
+    if (src.bugMemory) moveSourceToBackup(src.bugMemory, backupRoot, src.deviceId);
   }
 }
 

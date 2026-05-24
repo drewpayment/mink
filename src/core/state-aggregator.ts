@@ -161,6 +161,31 @@ export function aggregateTokenLedgerArchive(cwd: string): LedgerSession[] {
 // ── Bug memory ─────────────────────────────────────────────────────────────
 
 export function aggregateBugMemoryAt(projDir: string): BugMemory {
+  // Phase 3 of the SQLite migration: bug_memory lives in mink.db. The
+  // legacy JSON aggregation below is preserved as a fallback for tests /
+  // pre-migration projects, but new call sites should read from
+  // BugMemoryRepo directly.
+  const dbPath = join(projDir, "mink.db");
+  if (existsSync(dbPath)) {
+    try {
+      // Use a fresh handle so we don't disturb the per-process cache used
+      // by hook commands. Lazy-require to keep state-aggregator free of
+      // a hard storage-layer dependency for tests that mock paths.
+      const { openDriver } = require("../storage/driver") as typeof import("../storage/driver");
+      const { applySchema } = require("../storage/schema") as typeof import("../storage/schema");
+      const { BugMemoryRepo } = require("../repositories/bug-memory-repo") as typeof import("../repositories/bug-memory-repo");
+      const db = openDriver(dbPath);
+      try {
+        applySchema(db); // tolerate older DBs missing newer tables
+        return new BugMemoryRepo(db).snapshot();
+      } finally {
+        db.close();
+      }
+    } catch {
+      // Fall through to JSON aggregation if the DB read fails.
+    }
+  }
+
   const byId = new Map<string, BugEntry>();
   let maxNextId = 1;
 

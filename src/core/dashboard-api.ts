@@ -3,7 +3,6 @@ import {
   projectDir,
   projectDbPath,
   tokenLedgerPath,
-  bugMemoryPath,
   actionLogPath,
   learningMemoryPath,
   projectMetaPath,
@@ -184,7 +183,6 @@ export function loadOverview(cwd: string): OverviewPayload {
     checkJsonFile("config.json", configPath(cwd)),
     checkTextFile("learning-memory.md", learningMemoryPath(cwd)),
     checkJsonFile("token-ledger.json", tokenLedgerPath(cwd)),
-    checkJsonFile("bug-memory.json", bugMemoryPath(cwd)),
     checkTextFile("action-log.md", actionLogPath(cwd)),
     checkJsonFile("scheduler-manifest.json", schedulerManifestPath(cwd)),
   ];

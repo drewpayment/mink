@@ -1,18 +1,15 @@
-import { safeReadJson, atomicWriteJson } from "./fs-utils";
+// Wrapper over the SQLite bug-memory storage layer. The function-based
+// API below stays compatible with existing unit tests (which build
+// in-memory BugMemory objects), while the repo-aware paths route through
+// BugMemoryRepo so 20k+ bug histories stay searchable in milliseconds.
+//
+// FTS5 is the search backbone — see BugMemoryRepo.searchBugs for the
+// query semantics, score normalization, and false-positive guards.
+
 import type { BugEntry, BugMemory, SimilarityMatch } from "../types/bug-memory";
 
 export function createEmptyBugMemory(): BugMemory {
   return { entries: [], nextId: 1 };
-}
-
-export function loadBugMemory(path: string): BugMemory {
-  const raw = safeReadJson(path);
-  if (raw !== null && isBugMemory(raw)) return raw;
-  return createEmptyBugMemory();
-}
-
-export function saveBugMemory(path: string, memory: BugMemory): void {
-  atomicWriteJson(path, memory);
 }
 
 export function isBugMemory(value: unknown): value is BugMemory {
@@ -24,6 +21,8 @@ export function isBugMemory(value: unknown): value is BugMemory {
 export function generateBugId(nextId: number): string {
   return `bug-${String(nextId).padStart(3, "0")}`;
 }
+
+// ── In-memory operations (used by unit tests and the JSON migration importer) ──
 
 export function findDuplicate(
   memory: BugMemory,
@@ -42,9 +41,7 @@ export function addBugEntry(
   fields: Omit<BugEntry, "id" | "createdAt" | "lastSeenAt" | "occurrenceCount">
 ): BugMemory {
   const existing = findDuplicate(memory, fields.errorMessage, fields.filePath);
-  if (existing) {
-    return updateOccurrence(memory, existing.id);
-  }
+  if (existing) return updateOccurrence(memory, existing.id);
 
   const now = new Date().toISOString();
   const entry: BugEntry = {
@@ -73,14 +70,11 @@ export function updateOccurrence(memory: BugMemory, id: string): BugMemory {
   };
 }
 
-// --- Similarity scoring ---
+// ── Similarity scoring (in-memory) ────────────────────────────────────────
 
 function tokenize(text: string): Set<string> {
   return new Set(
-    text
-      .toLowerCase()
-      .split(/\W+/)
-      .filter((w) => w.length > 0)
+    text.toLowerCase().split(/\W+/).filter((w) => w.length > 0)
   );
 }
 
@@ -101,18 +95,12 @@ export function computeSimilarity(
   const matchReasons: string[] = [];
   let score = 0;
 
-  // 1. Exact substring match on error message
-  if (
-    entry.errorMessage.length > 0 &&
-    entry.errorMessage.includes(query)
-  ) {
+  if (entry.errorMessage.length > 0 && entry.errorMessage.includes(query)) {
     score += 1.0;
     matchReasons.push("exact_error_match");
   }
 
-  // 2. Word overlap (Jaccard) across searchable fields
   const queryTokens = tokenize(query);
-
   const fields: [string, string][] = [
     ["error_message", entry.errorMessage],
     ["root_cause", entry.rootCause],
@@ -142,6 +130,8 @@ function hasTagOverlap(entry: BugEntry, query: string): boolean {
   return entry.tags.some((tag) => queryTokens.has(tag.toLowerCase()));
 }
 
+// Pure-memory search — kept for unit tests that don't open a DB. Production
+// call sites use BugMemoryRepo.searchBugs which goes through FTS5.
 export function searchBugs(
   memory: BugMemory,
   query: string,
@@ -153,23 +143,16 @@ export function searchBugs(
 
   for (const entry of memory.entries) {
     const match = computeSimilarity(query, entry);
-
-    // False positive guard: require file-path match OR tag overlap
     const fileMatch = hasFilePathMatch(entry, options?.filePath);
     const tagMatch = hasTagOverlap(entry, query);
     if (!fileMatch && !tagMatch && match.score <= 0.3) continue;
-
-    // Boost same-file matches
     if (fileMatch) {
       match.score += 0.2;
       if (!match.matchReasons.includes("file_path")) {
         match.matchReasons.push("file_path");
       }
     }
-
-    if (match.score > 0.3) {
-      results.push(match);
-    }
+    if (match.score > 0.3) results.push(match);
   }
 
   return results.sort((a, b) => b.score - a.score);
@@ -220,4 +203,19 @@ export function hasBugForFileInSession(
       e.filePath === filePath &&
       new Date(e.createdAt).getTime() >= sessionStart
   );
+}
+
+// ── JSON shim — kept so the migration importer + state-aggregator can still
+// read legacy files during the rollout window. New writes go through the repo.
+
+import { safeReadJson, atomicWriteJson } from "./fs-utils";
+
+export function loadBugMemory(path: string): BugMemory {
+  const raw = safeReadJson(path);
+  if (raw !== null && isBugMemory(raw)) return raw;
+  return createEmptyBugMemory();
+}
+
+export function saveBugMemory(path: string, memory: BugMemory): void {
+  atomicWriteJson(path, memory);
 }
