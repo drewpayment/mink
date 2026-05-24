@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "fs";
 import {
   sessionPath,
-  fileIndexPath,
+  projectDbPath,
   configPath,
   learningMemoryPath,
   tokenLedgerPath,
@@ -9,10 +9,8 @@ import {
   actionLogPath,
 } from "../core/paths";
 import { safeReadJson } from "../core/fs-utils";
-import { isFileIndex } from "../core/index-store";
-import { loadLedger } from "../core/token-ledger";
-import { parseLearningMemory, totalEntryCount } from "../core/learning-memory";
-import { loadBugMemory } from "../core/bug-memory";
+import { FileIndexRepo } from "../repositories/file-index-repo";
+import { openProjectDb } from "../storage/db";
 import {
   aggregateTokenLedger,
   aggregateBugMemory,
@@ -20,6 +18,7 @@ import {
 } from "../core/state-aggregator";
 import { loadCounters } from "../core/state-counters";
 import { getDaemonStatus } from "../core/daemon";
+import { totalEntryCount } from "../core/learning-memory";
 
 interface FileCheck {
   name: string;
@@ -45,14 +44,40 @@ function checkTextFile(name: string, filePath: string): FileCheck {
   }
 }
 
+function checkDbFile(name: string, filePath: string): FileCheck {
+  if (!existsSync(filePath)) return { name, path: filePath, status: "missing" };
+  try {
+    const header = readFileSync(filePath).slice(0, 16).toString("utf-8");
+    if (!header.startsWith("SQLite format 3")) {
+      return { name, path: filePath, status: "corrupt" };
+    }
+    return { name, path: filePath, status: "ok" };
+  } catch {
+    return { name, path: filePath, status: "corrupt" };
+  }
+}
+
 export function status(cwd: string): void {
   console.log("[mink] project status");
   console.log();
 
-  // Section 1: State directory integrity
+  // Open the project DB up-front so the lazy JSON → SQLite migration
+  // runs before checkDbFile inspects mink.db. Otherwise the integrity
+  // section would always report "missing" on a project that has only
+  // legacy JSON state.
+  try {
+    openProjectDb(cwd);
+  } catch {
+    // Migration failures are non-fatal — report the DB as corrupt below.
+  }
+
+  // Section 1: State directory integrity. file-index, bug-memory, and
+  // token-ledger now live inside mink.db; the JSON checks below remain
+  // for projects still mid-migration (bug-memory and token-ledger move
+  // in Phases 3 and 4).
   const checks: FileCheck[] = [
     checkJsonFile("session.json", sessionPath(cwd)),
-    checkJsonFile("file-index.json", fileIndexPath(cwd), isFileIndex),
+    checkDbFile("mink.db", projectDbPath(cwd)),
     checkJsonFile("config.json", configPath(cwd)),
     checkTextFile("learning-memory.md", learningMemoryPath(cwd)),
     checkJsonFile("token-ledger.json", tokenLedgerPath(cwd)),
@@ -73,24 +98,22 @@ export function status(cwd: string): void {
   }
   console.log();
 
-  // Section 2: File index
+  // Section 2: File index — sourced from mink.db.
   try {
-    const raw = safeReadJson(fileIndexPath(cwd));
-    if (raw && isFileIndex(raw)) {
-      const h = raw.header;
-      // Hit/miss counters live in the per-device counter file, fall back to
-      // legacy header counters for unmigrated repos.
-      const counters = loadCounters(cwd);
-      const hits = counters.fileIndexHits || h.lifetimeHits;
-      const misses = counters.fileIndexMisses || h.lifetimeMisses;
-      const total = hits + misses;
-      const ratio = total > 0 ? ((hits / total) * 100).toFixed(1) : "N/A";
-      console.log("  File index:");
-      console.log(`    Files: ${h.totalFiles}`);
-      console.log(`    Last scan: ${h.lastScanTimestamp || "never"}`);
-      console.log(`    Hit/miss ratio: ${ratio}${total > 0 ? "%" : ""} (${hits} hits, ${misses} misses)`);
-    } else {
+    const repo = FileIndexRepo.for(cwd);
+    const total = repo.totalFiles();
+    if (total === 0) {
       console.log("  File index: not available");
+    } else {
+      const counters = loadCounters(cwd);
+      const hits = counters.fileIndexHits;
+      const misses = counters.fileIndexMisses;
+      const totalLookups = hits + misses;
+      const ratio = totalLookups > 0 ? ((hits / totalLookups) * 100).toFixed(1) : "N/A";
+      console.log("  File index:");
+      console.log(`    Files: ${total}`);
+      console.log(`    Last scan: ${repo.getLastScanTimestamp() || "never"}`);
+      console.log(`    Hit/miss ratio: ${ratio}${totalLookups > 0 ? "%" : ""} (${hits} hits, ${misses} misses)`);
     }
   } catch {
     console.log("  File index: error reading");

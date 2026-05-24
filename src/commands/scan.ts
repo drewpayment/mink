@@ -1,7 +1,6 @@
 import { readFileSync } from "fs";
 import { join, relative } from "path";
-import { fileIndexPath, configPath } from "../core/paths";
-import { atomicWriteJson, safeReadJson } from "../core/fs-utils";
+import { configPath } from "../core/paths";
 import {
   scanProject,
   scanProjectWithStats,
@@ -10,45 +9,34 @@ import {
 } from "../core/scanner";
 import { extractDescription } from "../core/description";
 import { estimateTokens } from "../core/token-estimate";
-import {
-  createEmptyIndex,
-  isFileIndex,
-  upsertEntry,
-  checkStaleness,
-} from "../core/index-store";
-import type { FileIndex, FileIndexEntry } from "../types/file-index";
+import { FileIndexRepo } from "../repositories/file-index-repo";
+import type { FileIndexEntry } from "../types/file-index";
 
 function configRelativePath(cfgPath: string, cwd: string): string {
   const rel = relative(cwd, cfgPath);
   return rel.startsWith("..") ? cfgPath : rel;
 }
 
-function loadExistingIndex(indexPath: string): FileIndex {
-  const raw = safeReadJson(indexPath);
-  if (isFileIndex(raw)) return raw;
-  if (raw !== null) {
-    console.error("[mink] file-index.json is corrupt — starting fresh");
-  }
-  return createEmptyIndex();
-}
-
 export function scan(cwd: string, options: { check: boolean }): void {
-  const idxPath = fileIndexPath(cwd);
   const cfgPath = configPath(cwd);
   const config = loadConfig(cfgPath);
   const excludes = getExcludes(config);
-  const maxFiles = config.maxFiles ?? 500;
+  // Default cap removed in Phase 5 of the SQLite migration — the per-row
+  // write cost is now flat in index size. Users who still want a cap can
+  // set `maxFiles` in config.json; otherwise scan indexes everything the
+  // exclude rules pass.
+  const maxFiles = config.maxFiles;
+  const repo = FileIndexRepo.for(cwd);
 
   if (options.check) {
-    const existing = safeReadJson(idxPath);
-    if (!isFileIndex(existing)) {
+    if (repo.totalFiles() === 0) {
       console.error("[mink] no index found — run mink scan first");
       process.exit(1);
     }
 
     const scanned = scanProject(cwd, excludes, maxFiles);
     const scannedPaths = scanned.map((f) => f.relativePath);
-    const report = checkStaleness(existing, scannedPaths);
+    const report = repo.checkStaleness(scannedPaths);
 
     if (!report.isStale) {
       console.log("[mink] index is up to date");
@@ -70,18 +58,18 @@ export function scan(cwd: string, options: { check: boolean }): void {
     process.exit(1);
   }
 
-  // Full scan
+  // Full scan — Phase 5 adds the mtime/content-hash-driven incremental
+  // path on top of this loop. For now we still read every file's content;
+  // the SQLite write side is already batched via repo.upsertMany().
   const start = Date.now();
-  const index = loadExistingIndex(idxPath);
 
   const stats = scanProjectWithStats(cwd, excludes, maxFiles);
   const scanned = stats.files;
 
-  // Build new entries, preserving lifetime counters
-  const newIndex = createEmptyIndex();
-  newIndex.header.lifetimeHits = index.header.lifetimeHits;
-  newIndex.header.lifetimeMisses = index.header.lifetimeMisses;
-
+  const batch: Array<{
+    entry: FileIndexEntry;
+    opts: { mtimeMs: number; sizeBytes: number };
+  }> = [];
   for (const file of scanned) {
     const fullPath = join(cwd, file.relativePath);
     let content: string;
@@ -98,17 +86,25 @@ export function scan(cwd: string, options: { check: boolean }): void {
       lastModified: new Date(file.mtimeMs).toISOString(),
       lastIndexed: new Date().toISOString(),
     };
-    upsertEntry(newIndex, entry);
+    batch.push({
+      entry,
+      opts: { mtimeMs: Math.floor(file.mtimeMs), sizeBytes: content.length },
+    });
   }
 
-  newIndex.header.lastScanTimestamp = new Date().toISOString();
+  // Single transaction — ~50x faster than per-file commits at 20k files.
+  repo.upsertMany(batch);
 
-  atomicWriteJson(idxPath, newIndex);
+  // Prune orphans: every entry whose file is no longer on disk.
+  repo.retainOnly(scanned.map((f) => f.relativePath));
+
+  repo.setLastScanTimestamp(new Date().toISOString());
 
   const elapsed = Date.now() - start;
+  const indexed = repo.totalFiles();
   if (stats.truncated > 0) {
     console.log(
-      `[mink] scanned ${stats.totalScanned} files; indexed ${newIndex.header.totalFiles} most recent in ${elapsed}ms`
+      `[mink] scanned ${stats.totalScanned} files; indexed ${indexed} most recent in ${elapsed}ms`
     );
     console.log(
       `  ${stats.truncated} files past maxFiles=${maxFiles} were not indexed`
@@ -117,8 +113,6 @@ export function scan(cwd: string, options: { check: boolean }): void {
       `  raise the cap by setting "maxFiles" in ${configRelativePath(cfgPath, cwd)}`
     );
   } else {
-    console.log(
-      `[mink] indexed ${newIndex.header.totalFiles} files in ${elapsed}ms`
-    );
+    console.log(`[mink] indexed ${indexed} files in ${elapsed}ms`);
   }
 }

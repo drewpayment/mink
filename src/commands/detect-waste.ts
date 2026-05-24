@@ -1,24 +1,21 @@
 import { statSync } from "fs";
 import {
   tokenLedgerShardPath,
-  fileIndexPath,
   learningMemoryPath,
 } from "../core/paths";
 import { loadLedger, saveLedger } from "../core/token-ledger";
-import { isFileIndex, createEmptyIndex } from "../core/index-store";
+import { FileIndexRepo } from "../repositories/file-index-repo";
 import {
   aggregateTokenLedger,
   aggregateActionLog,
 } from "../core/state-aggregator";
 import { loadCounters } from "../core/state-counters";
-import { safeReadJson } from "../core/fs-utils";
 import { runDetection } from "../core/waste-detection";
 import { getOrCreateDeviceId } from "../core/device";
 import type { TokenLedger } from "../types/token-ledger";
-import type { FileIndex } from "../types/file-index";
+import type { FileIndexEntry } from "../types/file-index";
 
 export function detectWaste(cwd: string): void {
-  const idxPath = fileIndexPath(cwd);
   const lmPath = learningMemoryPath(cwd);
 
   // Aggregated ledger (across all device shards + legacy). Aggregator returns
@@ -27,14 +24,14 @@ export function detectWaste(cwd: string): void {
   // already logged by loadLedger.
   const ledger: TokenLedger = aggregateTokenLedger(cwd);
 
-  // Load file index
-  const rawIndex = safeReadJson(idxPath);
-  let fileIndex: FileIndex;
-  if (rawIndex !== null && isFileIndex(rawIndex)) {
-    fileIndex = rawIndex;
-  } else {
-    fileIndex = createEmptyIndex();
-  }
+  // Load file index — read every entry into the map shape the waste
+  // detector expects. listAll() walks the table once; under 20k rows it
+  // returns in single-digit ms.
+  const repo = FileIndexRepo.for(cwd);
+  const entries: Record<string, FileIndexEntry> = {};
+  for (const e of repo.listAll()) entries[e.filePath] = e;
+  const totalFiles = repo.totalFiles();
+  const lastScanTimestamp = repo.getLastScanTimestamp();
 
   // Aggregated action log content (across all device shards + legacy)
   const actionLogContent = aggregateActionLog(cwd);
@@ -47,20 +44,21 @@ export function detectWaste(cwd: string): void {
     // File missing — will be flagged as stale
   }
 
-  // Pull hit/miss telemetry from the per-device counter file, falling back to
-  // the legacy header counters when unmigrated. We feed runDetection a synthetic
-  // header so it works without knowing about the split.
+  // Pull hit/miss telemetry from the SQLite counters table. We synthesize
+  // the header shape the detector expects (lifetimeHits/Misses lived in
+  // the JSON header pre-migration).
   const counters = loadCounters(cwd);
   const headerForDetection = {
-    ...fileIndex.header,
-    lifetimeHits: counters.fileIndexHits || fileIndex.header.lifetimeHits,
-    lifetimeMisses: counters.fileIndexMisses || fileIndex.header.lifetimeMisses,
+    lastScanTimestamp,
+    totalFiles,
+    lifetimeHits: counters.fileIndexHits,
+    lifetimeMisses: counters.fileIndexMisses,
   };
 
   // Run detection on the aggregated cross-device view
   const flags = runDetection(
     ledger,
-    fileIndex.entries,
+    entries,
     headerForDetection,
     actionLogContent,
     learningMemoryMtimeMs

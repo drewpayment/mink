@@ -1,14 +1,14 @@
 import { relative } from "path";
 import { readStdinJson } from "../core/stdin";
-import { sessionPath, fileIndexPath, actionLogShardPath } from "../core/paths";
+import { sessionPath, actionLogShardPath } from "../core/paths";
 import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { createSessionState, isSessionState, recordRead } from "../core/session";
-import { isFileIndex, lookupEntry } from "../core/index-store";
+import { FileIndexRepo } from "../repositories/file-index-repo";
 import { estimateTokens, isBinaryFile } from "../core/token-estimate";
 import { createActionLogWriter } from "../core/action-log";
 import { getOrCreateDeviceId } from "../core/device";
 import type { SessionState } from "../types/session";
-import type { FileIndex } from "../types/file-index";
+import type { IndexLookup } from "../types/file-index";
 import type { PostToolUseInput } from "../types/hook-input";
 
 export interface PostReadResult {
@@ -20,17 +20,17 @@ export interface PostReadResult {
 export function analyzePostRead(
   filePath: string,
   content: string | null,
-  index: FileIndex | null
+  index: IndexLookup | null
 ): PostReadResult {
   // Binary file — skip token estimation
   if (isBinaryFile(filePath, content ?? undefined)) {
-    const entry = index ? lookupEntry(index, filePath) : null;
+    const entry = index ? index.lookupEntry(filePath) : null;
     return { estimatedTokens: 0, indexHit: !!entry, source: "none" };
   }
 
   // Content available — estimate from actual content
   if (content !== null && content.length > 0) {
-    const entry = index ? lookupEntry(index, filePath) : null;
+    const entry = index ? index.lookupEntry(filePath) : null;
     return {
       estimatedTokens: estimateTokens(content, filePath),
       indexHit: !!entry,
@@ -40,7 +40,7 @@ export function analyzePostRead(
 
   // No content — try file index fallback
   if (index) {
-    const entry = lookupEntry(index, filePath);
+    const entry = index.lookupEntry(filePath);
     if (entry) {
       return {
         estimatedTokens: entry.estimatedTokens,
@@ -89,14 +89,13 @@ export async function postRead(cwd: string): Promise<void> {
       ? rawState
       : createSessionState();
 
-    // Load file index for token fallback and indexHit determination
-    const rawIndex = safeReadJson(fileIndexPath(cwd));
-    const index: FileIndex | null = isFileIndex(rawIndex) ? rawIndex : null;
+    // File index repository — one-key lookup, no whole-index load.
+    const repo = FileIndexRepo.for(cwd);
 
     // Extract content from tool output
     const content = extractContent(input);
 
-    const result = analyzePostRead(filePath, content, index);
+    const result = analyzePostRead(filePath, content, repo);
 
     // Record the read in session state
     recordRead(state, filePath, result.estimatedTokens, result.indexHit);

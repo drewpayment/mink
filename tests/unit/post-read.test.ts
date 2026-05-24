@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { analyzePostRead } from "../../src/commands/post-read";
-import { createEmptyIndex, upsertEntry } from "../../src/core/index-store";
+import { createEmptyIndex, upsertEntry, indexAsLookup } from "../../src/core/index-store";
 import type { FileIndexEntry } from "../../src/types/file-index";
 
 function makeEntry(filePath: string, estimatedTokens: number): FileIndexEntry {
@@ -50,7 +50,7 @@ describe("analyzePostRead", () => {
     const index = createEmptyIndex();
     upsertEntry(index, makeEntry("src/app.ts", 500));
 
-    const result = analyzePostRead("src/app.ts", null, index);
+    const result = analyzePostRead("src/app.ts", null, indexAsLookup(index));
 
     expect(result.estimatedTokens).toBe(500);
     expect(result.indexHit).toBe(true);
@@ -68,7 +68,7 @@ describe("analyzePostRead", () => {
   test("content unavailable and file not in index returns 0", () => {
     const index = createEmptyIndex();
 
-    const result = analyzePostRead("src/unknown.ts", null, index);
+    const result = analyzePostRead("src/unknown.ts", null, indexAsLookup(index));
 
     expect(result.estimatedTokens).toBe(0);
     expect(result.indexHit).toBe(false);
@@ -95,7 +95,7 @@ describe("analyzePostRead", () => {
     upsertEntry(index, makeEntry("src/app.ts", 500));
 
     const content = "a".repeat(1000);
-    const result = analyzePostRead("src/app.ts", content, index);
+    const result = analyzePostRead("src/app.ts", content, indexAsLookup(index));
 
     expect(result.indexHit).toBe(true);
     expect(result.source).toBe("content");
@@ -105,7 +105,7 @@ describe("analyzePostRead", () => {
     const index = createEmptyIndex();
 
     const content = "a".repeat(1000);
-    const result = analyzePostRead("src/unknown.ts", content, index);
+    const result = analyzePostRead("src/unknown.ts", content, indexAsLookup(index));
 
     expect(result.indexHit).toBe(false);
     expect(result.source).toBe("content");

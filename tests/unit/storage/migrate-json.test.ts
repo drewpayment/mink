@@ -154,12 +154,14 @@ describe("migrate-json", () => {
       .all();
     expect(lifetime).toEqual([{ device_id: "legacy", total_tokens: 1000 }]);
 
-    // Sources moved to legacy-backup/legacy/
+    // Sources moved to legacy-backup/legacy/. Phase 2 only moves
+    // file-index.json — bug-memory.json and token-ledger.json stay in
+    // place until Phases 3 and 4 take ownership.
     const backupDir = join(projDir, "legacy-backup", "legacy");
     expect(existsSync(join(backupDir, "file-index.json"))).toBe(true);
-    expect(existsSync(join(backupDir, "bug-memory.json"))).toBe(true);
-    expect(existsSync(join(backupDir, "token-ledger.json"))).toBe(true);
     expect(existsSync(join(projDir, "file-index.json"))).toBe(false);
+    expect(existsSync(join(projDir, "bug-memory.json"))).toBe(true);
+    expect(existsSync(join(projDir, "token-ledger.json"))).toBe(true);
   });
 
   test("device shards preserve device_id attribution", () => {

@@ -12,8 +12,8 @@ The file index must:
 
 1. Organize entries by directory, with each directory as a named section.
 2. Each entry contains: relative file path, one-line description (max 100 characters), and estimated token cost.
-3. Include a header with: last scan timestamp, total tracked file count, lifetime hit count, and lifetime miss count.
-4. Be stored in a human-readable format that the AI assistant naturally consumes (not a binary or deeply nested structure).
+3. Track project-wide state (last scan timestamp) and per-device telemetry (hit count, miss count).
+4. Be stored in a structured store (SQLite) optimized for per-entry update and lookup. The assistant consults the index via `mink lookup <path>` / `mink status` rather than by reading the store directly — the per-row read/write cost stays flat as the index grows, so hooks remain fast at 20k+ files.
 
 ### Auto-Update on Write
 
@@ -42,8 +42,8 @@ On initialization and on a configurable schedule (default: every 6 hours), the s
 1. Walk the project directory tree.
 2. Exclude configured patterns (dependency directories, build output, lock files, binary assets, version control directories, the system's own state directory).
 3. For each discovered file: extract description, estimate tokens, create index entry.
-4. Cap the total tracked files at a configurable maximum (default: 500).
-5. Write the complete index atomically.
+4. No default cap on tracked file count — the SQLite store keeps per-row write cost flat as the index grows. Callers that want a cap may set `maxFiles` in `config.json`.
+5. Persist all entries via a single bulk transaction; orphan entries for files no longer on disk are pruned in the same scan.
 
 ### Staleness Detection
 

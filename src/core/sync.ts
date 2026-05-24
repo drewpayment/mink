@@ -80,6 +80,8 @@ wiki/projects/*/architecture.md
 
 const GITATTRIBUTES_CONTENTS = `# Sync v2 — merge drivers eliminate conflicts on shared files.
 # Drivers are registered in .git/config by ensureMergeDriversRegistered().
+projects/*/mink.db merge=mink-db-merge
+projects/*/mink.db binary
 projects/*/file-index.json merge=mink-json-union
 projects/*/learning-memory.*.md merge=union
 projects/*/learning-memory.md merge=mink-learning-memory
@@ -126,6 +128,7 @@ export function ensureGitAttributes(): void {
 
 const MERGE_DRIVERS = [
   "mink-json-union",
+  "mink-db-merge",
   "mink-learning-memory",
   "mink-devices",
 ] as const;

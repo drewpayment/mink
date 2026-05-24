@@ -189,11 +189,15 @@ function importBugMemory(db: DbDriver, mem: JsonBugMemory, deviceId: string): vo
     "INSERT OR IGNORE INTO bug_related (bug_id, related_bug_id) VALUES (?, ?)"
   );
 
+  const now = new Date().toISOString();
   for (const e of mem.entries ?? []) {
+    // Skip entries without a stable id — there's nothing to merge against
+    // and tag/related rows would have no parent.
+    if (!e || typeof e.id !== "string" || e.id.length === 0) continue;
     upsertBug.run(
       e.id,
-      e.createdAt,
-      e.lastSeenAt,
+      e.createdAt ?? now,
+      e.lastSeenAt ?? e.createdAt ?? now,
       e.errorMessage ?? "",
       e.filePath ?? "",
       e.lineNumber ?? null,
@@ -394,14 +398,12 @@ export function migrateJsonIfNeeded(db: DbDriver, cwd: string): void {
     writeMeta(db, "migrated_from_json_at", now);
   });
 
-  // Move successfully-imported sources to legacy-backup. This happens
-  // outside the transaction so a crash here leaves the meta marker set —
-  // re-running is a no-op (sources just remain in place; harmless).
+  // Move successfully-imported sources to legacy-backup. Only file-index
+  // moves in Phase 2 — bug-memory and token-ledger JSONs stay in place
+  // until Phases 3 and 4 take ownership of those stores, so the existing
+  // aggregators keep returning data during the migration window.
   for (const src of sources) {
     if (src.fileIndex) moveSourceToBackup(src.fileIndex, backupRoot, src.deviceId);
-    if (src.bugMemory) moveSourceToBackup(src.bugMemory, backupRoot, src.deviceId);
-    if (src.ledger) moveSourceToBackup(src.ledger, backupRoot, src.deviceId);
-    if (src.archive) moveSourceToBackup(src.archive, backupRoot, src.deviceId);
   }
 }
 

@@ -97,8 +97,13 @@ describe("status command", () => {
     const output = logs.join("\n");
     expect(output).toContain("[mink] project status");
     expect(output).toContain("session.json: ok");
-    expect(output).toContain("file-index.json: ok");
-    expect(output).toContain("Files: 42");
+    // Spec 17 (Phase 2): file_index moved into mink.db. The state-file
+    // integrity check reports the DB instead of file-index.json.
+    expect(output).toContain("mink.db: ok");
+    // The seeded file-index.json had an empty entries map, so post-
+    // migration the file_index table has 0 rows. Status reports the
+    // file index as "not available" when there are no entries.
+    expect(output).toContain("File index: not available");
     expect(output).toContain("Sessions: 3");
     expect(output).toContain("5,000");
     expect(output).toContain("1,500");
