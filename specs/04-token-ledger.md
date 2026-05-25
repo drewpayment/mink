@@ -81,6 +81,15 @@ THEN the result equals (total_index_hits × 200) + sum(all repeated_read_token_c
 - Very large ledger (1000+ sessions) — consider archiving old sessions to a separate file to keep the active ledger performant.
 - Token estimate is zero for a file (empty file read) — record it but do not count toward savings.
 
+## Prompt-Cache Stability
+
+The active ledger now lives in SQLite (`mink.db`), so the raw store is never injected into model context — eliminating the historic prefix-cache risk for the JSON ledger. However, any human/agent-readable **derived markdown** (status digests, dashboards exported to markdown, cost reports an LLM may load) must follow the layout rule:
+
+- **Top:** stable structure — title, table headers, fixed schema/legend.
+- **Bottom:** volatile aggregates — `lifetime_tokens`, `last_session_at`, `last_updated`, per-device counters — under a footer marker.
+
+Rationale: Anthropic's prompt cache hashes from the prefix forward; a volatile aggregate at the top of a status digest invalidates the entire downstream cache on every re-render.
+
 ## Test Requirements
 
 - Unit: Lifetime counter arithmetic — incrementing each counter correctly.

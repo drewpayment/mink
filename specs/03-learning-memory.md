@@ -95,6 +95,34 @@ THEN a reminder is emitted suggesting the learning memory may need updating
 - Reflection task encounters an entry it cannot classify as redundant or unique — preserve it (err on the side of keeping).
 - User explicitly contradicts a Do-Not-Repeat entry — the AI should update the entry, not just ignore it.
 
+## Prompt-Cache Stability
+
+The learning memory is read into model context every session by the AI assistant — making its prefix one of the most cache-sensitive files Mink emits. Anthropic's prompt cache hashes from the start of the prompt forward, so volatile content at the top (a "last updated" timestamp, a session counter, a reflection-run ID) invalidates the entire downstream cache and multiplies token cost.
+
+**Layout rule:**
+
+- **Top (stable, cached):** `# Learning Memory — <project>` title, then the four section headings (`## User Preferences`, `## Key Learnings`, `## Do-Not-Repeat`, `## Decision Log`) in fixed order, followed by their entries.
+- **Bottom (volatile, must not appear in the prefix):** any `last_updated`, `reflection_run_at`, or counter fields belong in a footer block — e.g. an HTML-comment marker followed by a `> Last reflection: <ISO>` line.
+
+Note: dated Do-Not-Repeat and Decision Log entries are not "volatile" in the cache sense — they accumulate append-only inside their section and the prefix above them stays stable.
+
+**Before / after example:**
+
+```diff
+- # Learning Memory — mink
+- > Last updated: 2026-05-25T20:14:11Z
+- > Reflection run: 47
+-
+- ## User Preferences
++ # Learning Memory — mink
++
++ ## User Preferences
+  - prefer arrow functions
++
++ <!-- mink:footer (volatile — keep at end of file) -->
++ > Last reflection: 2026-05-25T20:14:11Z (run 47)
+```
+
 ## Test Requirements
 
 - Unit: Pattern extraction from Do-Not-Repeat entries — quoted strings, "never use X", "avoid X" phrases.

@@ -80,6 +80,30 @@ THEN the old state is overwritten with fresh state
 - Multiple rapid stop events — idempotent handling, no duplicate ledger entries.
 - Clock skew or timezone changes mid-session — use UTC consistently.
 
+## Prompt-Cache Stability
+
+Anthropic's prompt cache hashes from the **start** of the prompt forward; any volatile content at the top of a file Mink emits (timestamps, session IDs, counters, "last updated" fields) silently invalidates downstream cache hits and multiplies token cost. Any generated markdown produced by session lifecycle code that may be loaded into model context (for example, per-day vault session files written by `session-stop`) **must** keep volatile fields out of the prefix.
+
+**Layout rule (applies to all markdown emitted by this spec):**
+
+- Stable structure at the top: title (`#`), section headings (`##`), schemas, tables of contents.
+- Volatile fields at the bottom: ISO timestamps, session IDs, run counters, "last updated" lines.
+- Frontmatter `created`/`updated` keys are acceptable **only** when written exactly once at creation and never rewritten (current behavior of the per-day session file is OK).
+
+**Before / after example:**
+
+```diff
+- ---
+- updated: "2026-05-25T20:14:11.221Z"
+- ---
+-
+- # Sessions — mink — 2026-05-25
++ # Sessions — mink — 2026-05-25
++ ...
++ <!-- mink:footer (volatile — keep at end of file) -->
++ > Last session appended: 2026-05-25T20:14:11.221Z
+```
+
 ## Test Requirements
 
 - Unit: Session ID generation produces unique, timestamp-based identifiers.

@@ -102,6 +102,15 @@ THEN the description includes the component name and mentions form/table element
 - Index file itself should never appear as an entry in the index.
 - Concurrent writes to the index from multiple hooks — atomic write prevents corruption, last writer wins.
 
+## Prompt-Cache Stability
+
+The file index now lives in SQLite, so the historic risk of a volatile JSON/markdown header busting Anthropic's prefix prompt cache is gone — the assistant never reads the raw store. However, any **derived** markdown surface (e.g. an exported `file-index.md` summary, a status digest, or a CLI report that an LLM may later load) must follow the same layout rule:
+
+- Stable structure (directory section headings, schema/legend, column headers) at the top.
+- Volatile fields (`last scan at`, `total files`, per-device hit/miss counters) at the bottom in a `<!-- mink:footer -->` block.
+
+Rationale: prompt caches hash from the prompt prefix forward. Putting a volatile `last_scan: <ISO>` line at line 2 invalidates every cached subsequent token — typically a 10x cost multiplier on hook-rich sessions.
+
 ## Test Requirements
 
 - Unit: Description extraction for each supported file pattern (doc comments, headings, exports, components, configs, CI files, fallback).
