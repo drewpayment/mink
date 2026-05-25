@@ -1,20 +1,26 @@
 import { relative } from "path";
+import { readFileSync } from "fs";
 import { readStdinJson } from "../core/stdin";
 import { sessionPath, actionLogShardPath } from "../core/paths";
 import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { createSessionState, isSessionState, recordRead } from "../core/session";
 import { FileIndexRepo } from "../repositories/file-index-repo";
 import { estimateTokens, isBinaryFile } from "../core/token-estimate";
+import { extractDescription } from "../core/description";
 import { createActionLogWriter } from "../core/action-log";
 import { getOrCreateDeviceId } from "../core/device";
 import type { SessionState } from "../types/session";
-import type { IndexLookup } from "../types/file-index";
+import type { FileIndexEntry, IndexLookup } from "../types/file-index";
 import type { PostToolUseInput } from "../types/hook-input";
 
 export interface PostReadResult {
   estimatedTokens: number;
   indexHit: boolean;
   source: "content" | "index-fallback" | "none";
+  // Populated when content was available and the file was not already in
+  // the index — lets the caller seed the index lazily so that read-only
+  // browsing sessions don't accumulate zero index hits.
+  indexEntry: FileIndexEntry | null;
 }
 
 export function analyzePostRead(
@@ -25,16 +31,42 @@ export function analyzePostRead(
   // Binary file — skip token estimation
   if (isBinaryFile(filePath, content ?? undefined)) {
     const entry = index ? index.lookupEntry(filePath) : null;
-    return { estimatedTokens: 0, indexHit: !!entry, source: "none" };
+    return {
+      estimatedTokens: 0,
+      indexHit: !!entry,
+      source: "none",
+      indexEntry: null,
+    };
   }
 
   // Content available — estimate from actual content
   if (content !== null && content.length > 0) {
     const entry = index ? index.lookupEntry(filePath) : null;
+    const tokens = estimateTokens(content, filePath);
+    // On miss, build a seed entry so the index grows from reads, not just
+    // writes and scans. Description failures must never throw out the read.
+    let indexEntry: FileIndexEntry | null = null;
+    if (!entry) {
+      let description = "";
+      try {
+        description = extractDescription(filePath, content);
+      } catch {
+        description = "";
+      }
+      const now = new Date().toISOString();
+      indexEntry = {
+        filePath,
+        description,
+        estimatedTokens: tokens,
+        lastModified: now,
+        lastIndexed: now,
+      };
+    }
     return {
-      estimatedTokens: estimateTokens(content, filePath),
+      estimatedTokens: tokens,
       indexHit: !!entry,
       source: "content",
+      indexEntry,
     };
   }
 
@@ -46,11 +78,17 @@ export function analyzePostRead(
         estimatedTokens: entry.estimatedTokens,
         indexHit: true,
         source: "index-fallback",
+        indexEntry: null,
       };
     }
   }
 
-  return { estimatedTokens: 0, indexHit: false, source: "none" };
+  return {
+    estimatedTokens: 0,
+    indexHit: false,
+    source: "none",
+    indexEntry: null,
+  };
 }
 
 function isPostToolUseInput(value: unknown): value is PostToolUseInput {
@@ -61,9 +99,32 @@ function isPostToolUseInput(value: unknown): value is PostToolUseInput {
   return true;
 }
 
-function extractContent(input: PostToolUseInput): string | null {
-  if (!input.tool_output) return null;
-  if (typeof input.tool_output.content === "string") {
+// Pull file content out of the PostToolUse payload. Claude Code has shipped
+// at least two payload shapes for the Read tool:
+//   • legacy: `tool_output.content` is a plain string
+//   • current: `tool_response` carries the content — either as a string, as
+//     a Content[]-style array (`{ type: "text", text: "..." }`), or nested
+//     under `tool_response.file.content`
+// We accept any of them so a hook contract drift can't silently zero out
+// token estimation again.
+export function extractContent(input: PostToolUseInput): string | null {
+  // Current shape — tool_response
+  const tr = input.tool_response;
+  if (tr) {
+    if (typeof tr.content === "string") return tr.content;
+    if (Array.isArray(tr.content)) {
+      const parts = tr.content
+        .map((p) => (p && typeof p.text === "string" ? p.text : ""))
+        .filter((s) => s.length > 0);
+      if (parts.length > 0) return parts.join("");
+    }
+    if (tr.file && typeof tr.file.content === "string") {
+      return tr.file.content;
+    }
+    if (typeof tr.text === "string") return tr.text;
+  }
+  // Legacy shape — tool_output
+  if (input.tool_output && typeof input.tool_output.content === "string") {
     return input.tool_output.content;
   }
   return null;
@@ -92,10 +153,34 @@ export async function postRead(cwd: string): Promise<void> {
     // File index repository — one-key lookup, no whole-index load.
     const repo = FileIndexRepo.for(cwd);
 
-    // Extract content from tool output
-    const content = extractContent(input);
+    // Primary path: read content from disk by file path. This is the
+    // cleanest source because it doesn't depend on Claude Code's evolving
+    // hook payload schema (which has silently dropped `tool_output.content`
+    // in favor of nested `tool_response` shapes, breaking token
+    // measurement). Mirrors post-write.ts's approach.
+    let content: string | null = null;
+    try {
+      content = readFileSync(absolutePath, "utf-8");
+    } catch {
+      // File unreadable (permissions, deleted between read and hook) —
+      // fall back to whatever the payload carries.
+    }
+    if (content === null) {
+      content = extractContent(input);
+    }
 
     const result = analyzePostRead(filePath, content, repo);
+
+    // Seed the file index on a miss. Read-only browsing sessions otherwise
+    // accumulate zero index hits because the index only grows via
+    // `mink scan` (capped) or post-write.
+    if (result.indexEntry) {
+      try {
+        repo.upsert(result.indexEntry);
+      } catch {
+        // Never crash the hook over an index upsert failure.
+      }
+    }
 
     // Record the read in session state
     recordRead(state, filePath, result.estimatedTokens, result.indexHit);
