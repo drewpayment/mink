@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.1](https://github.com/drewpayment/mink/compare/v0.11.0...v0.11.1) (2026-05-27)
+
+
+### Bug Fixes
+
+* **status:** report sharded action-log and learning-memory as ok ([b3f01bb](https://github.com/drewpayment/mink/commit/b3f01bb814fc34e9ee884e058a1fcfb1dcc9d165))
+* **status:** report sharded action-log and learning-memory as ok ([94a3109](https://github.com/drewpayment/mink/commit/94a3109222a362a532bae991882aeaa746cc28ea))
+
 ## [0.11.0](https://github.com/drewpayment/mink/compare/v0.10.1...v0.11.0) (2026-05-18)
 
 
