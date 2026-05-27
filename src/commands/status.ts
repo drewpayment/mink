@@ -5,6 +5,7 @@ import {
   configPath,
   learningMemoryPath,
   actionLogPath,
+  projectDir,
 } from "../core/paths";
 import { safeReadJson } from "../core/fs-utils";
 import { FileIndexRepo } from "../repositories/file-index-repo";
@@ -13,6 +14,9 @@ import {
   aggregateTokenLedger,
   aggregateBugMemory,
   aggregateLearningMemory,
+  listDeviceShardsAt,
+  listLearningMemorySidecarPathsAt,
+  shardPath,
 } from "../core/state-aggregator";
 import { loadCounters } from "../core/state-counters";
 import { getDaemonStatus } from "../core/daemon";
@@ -32,16 +36,6 @@ function checkJsonFile(name: string, filePath: string, validator?: (v: unknown) 
   return { name, path: filePath, status: "ok" };
 }
 
-function checkTextFile(name: string, filePath: string): FileCheck {
-  if (!existsSync(filePath)) return { name, path: filePath, status: "missing" };
-  try {
-    readFileSync(filePath, "utf-8");
-    return { name, path: filePath, status: "ok" };
-  } catch {
-    return { name, path: filePath, status: "corrupt" };
-  }
-}
-
 function checkDbFile(name: string, filePath: string): FileCheck {
   if (!existsSync(filePath)) return { name, path: filePath, status: "missing" };
   try {
@@ -53,6 +47,37 @@ function checkDbFile(name: string, filePath: string): FileCheck {
   } catch {
     return { name, path: filePath, status: "corrupt" };
   }
+}
+
+// Reports "ok" when canonical OR any device shard / sidecar exists with content.
+// action-log and learning-memory live in per-device shards; checking only the
+// canonical path made initialized projects look empty.
+function checkShardedText(name: string, candidatePaths: string[]): FileCheck {
+  const canonical = candidatePaths[0];
+  for (const p of candidatePaths) {
+    if (!existsSync(p)) continue;
+    try {
+      if (statSync(p).size === 0) continue;
+      readFileSync(p, "utf-8");
+      return { name, path: p, status: "ok" };
+    } catch {
+      return { name, path: p, status: "corrupt" };
+    }
+  }
+  return { name, path: canonical, status: "missing" };
+}
+
+function actionLogCandidates(cwd: string): string[] {
+  const dir = projectDir(cwd);
+  return [
+    actionLogPath(cwd),
+    ...listDeviceShardsAt(dir).map((id) => shardPath(dir, id, "action-log.md")),
+  ];
+}
+
+function learningMemoryCandidates(cwd: string): string[] {
+  const dir = projectDir(cwd);
+  return [learningMemoryPath(cwd), ...listLearningMemorySidecarPathsAt(dir)];
 }
 
 export function status(cwd: string): void {
@@ -77,8 +102,8 @@ export function status(cwd: string): void {
     checkJsonFile("session.json", sessionPath(cwd)),
     checkDbFile("mink.db", projectDbPath(cwd)),
     checkJsonFile("config.json", configPath(cwd)),
-    checkTextFile("learning-memory.md", learningMemoryPath(cwd)),
-    checkTextFile("action-log.md", actionLogPath(cwd)),
+    checkShardedText("learning-memory.md", learningMemoryCandidates(cwd)),
+    checkShardedText("action-log.md", actionLogCandidates(cwd)),
   ];
 
   console.log("  State files:");

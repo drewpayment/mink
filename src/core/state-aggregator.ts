@@ -28,7 +28,7 @@ import type {
 // projectDir(cwd)). The cwd-based variants below are thin wrappers for the
 // common case where the caller has cwd in hand.
 
-function listDeviceShardsAt(projDir: string): string[] {
+export function listDeviceShardsAt(projDir: string): string[] {
   const stateDir = join(projDir, "state");
   if (!existsSync(stateDir)) return [];
   try {
@@ -46,7 +46,7 @@ function listDeviceShardsAt(projDir: string): string[] {
 
 const SIDECAR_RE = /^learning-memory\.([^.]+)\.md$/;
 
-function listLearningMemorySidecarPathsAt(projDir: string): string[] {
+export function listLearningMemorySidecarPathsAt(projDir: string): string[] {
   if (!existsSync(projDir)) return [];
   try {
     return readdirSync(projDir)
@@ -57,7 +57,7 @@ function listLearningMemorySidecarPathsAt(projDir: string): string[] {
   }
 }
 
-function shardPath(projDir: string, deviceId: string, file: string): string {
+export function shardPath(projDir: string, deviceId: string, file: string): string {
   return join(projDir, "state", deviceId, file);
 }
 
