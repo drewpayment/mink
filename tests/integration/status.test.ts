@@ -132,4 +132,42 @@ describe("status command", () => {
     const output = logs.join("\n");
     expect(output).toContain("corrupt");
   });
+
+  test("reports action-log.md as ok when only device shards have content", () => {
+    const stateDir = projectDir(testCwd);
+    const shardDir = join(stateDir, "state", "device-abc");
+    mkdirSync(shardDir, { recursive: true });
+    writeFileSync(join(shardDir, "action-log.md"), "# Action Log\n\n## Session 1\n");
+
+    status(testCwd);
+
+    const output = logs.join("\n");
+    expect(output).toContain("action-log.md: ok");
+  });
+
+  test("reports learning-memory.md as ok when only a sidecar exists", () => {
+    const stateDir = projectDir(testCwd);
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(
+      join(stateDir, "learning-memory.device-abc.md"),
+      "# Learning Memory\n\n## User Preferences\n- pref\n"
+    );
+
+    status(testCwd);
+
+    const output = logs.join("\n");
+    expect(output).toContain("learning-memory.md: ok");
+  });
+
+  test("reports action-log.md as missing when neither canonical nor shards exist", () => {
+    const stateDir = projectDir(testCwd);
+    mkdirSync(stateDir, { recursive: true });
+    // No action-log anywhere; create one unrelated file so the project is "init'd"
+    writeFileSync(join(stateDir, "session.json"), "{}");
+
+    status(testCwd);
+
+    const output = logs.join("\n");
+    expect(output).toContain("action-log.md: missing");
+  });
 });

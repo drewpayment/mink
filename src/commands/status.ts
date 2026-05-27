@@ -17,7 +17,11 @@ import {
   aggregateTokenLedger,
   aggregateBugMemory,
   aggregateLearningMemory,
+  listDeviceShardsAt,
+  listLearningMemorySidecarPathsAt,
+  shardPath,
 } from "../core/state-aggregator";
+import { projectDir } from "../core/paths";
 import { loadCounters } from "../core/state-counters";
 import { getDaemonStatus } from "../core/daemon";
 
@@ -45,6 +49,37 @@ function checkTextFile(name: string, filePath: string): FileCheck {
   }
 }
 
+// Reports "ok" when canonical OR any device shard / sidecar exists with content.
+// action-log and learning-memory now live in per-device shards; checking only the
+// canonical path made initialized projects look empty.
+function checkShardedText(name: string, candidatePaths: string[]): FileCheck {
+  const canonical = candidatePaths[0];
+  for (const p of candidatePaths) {
+    if (!existsSync(p)) continue;
+    try {
+      if (statSync(p).size === 0) continue;
+      readFileSync(p, "utf-8");
+      return { name, path: p, status: "ok" };
+    } catch {
+      return { name, path: p, status: "corrupt" };
+    }
+  }
+  return { name, path: canonical, status: "missing" };
+}
+
+function actionLogCandidates(cwd: string): string[] {
+  const dir = projectDir(cwd);
+  return [
+    actionLogPath(cwd),
+    ...listDeviceShardsAt(dir).map((id) => shardPath(dir, id, "action-log.md")),
+  ];
+}
+
+function learningMemoryCandidates(cwd: string): string[] {
+  const dir = projectDir(cwd);
+  return [learningMemoryPath(cwd), ...listLearningMemorySidecarPathsAt(dir)];
+}
+
 export function status(cwd: string): void {
   console.log("[mink] project status");
   console.log();
@@ -54,10 +89,10 @@ export function status(cwd: string): void {
     checkJsonFile("session.json", sessionPath(cwd)),
     checkJsonFile("file-index.json", fileIndexPath(cwd), isFileIndex),
     checkJsonFile("config.json", configPath(cwd)),
-    checkTextFile("learning-memory.md", learningMemoryPath(cwd)),
+    checkShardedText("learning-memory.md", learningMemoryCandidates(cwd)),
     checkJsonFile("token-ledger.json", tokenLedgerPath(cwd)),
     checkJsonFile("bug-memory.json", bugMemoryPath(cwd)),
-    checkTextFile("action-log.md", actionLogPath(cwd)),
+    checkShardedText("action-log.md", actionLogCandidates(cwd)),
   ];
 
   console.log("  State files:");
