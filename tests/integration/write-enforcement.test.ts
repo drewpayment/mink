@@ -6,7 +6,7 @@ import { atomicWriteJson, safeReadJson } from "../../src/core/fs-utils";
 import { atomicWriteText } from "../../src/core/fs-utils";
 import { createSessionState } from "../../src/core/session";
 import { isSessionState, recordWrite } from "../../src/core/session";
-import { createEmptyIndex, upsertEntry } from "../../src/core/index-store";
+import { createEmptyIndex, upsertEntry, indexAsLookup } from "../../src/core/index-store";
 import { serializeLearningMemory, createEmptyLearningMemory, addEntry } from "../../src/core/learning-memory";
 import { analyzePreWrite } from "../../src/commands/pre-write";
 import { analyzePostWrite } from "../../src/commands/post-write";
@@ -80,7 +80,7 @@ describe("write enforcement integration", () => {
 
     // Simulate post-write for a new file
     const fileContent = "export function format(s: string) { return s.trim(); }";
-    const result = analyzePostWrite("src/utils/format.ts", fileContent, index);
+    const result = analyzePostWrite("src/utils/format.ts", fileContent, indexAsLookup(index));
 
     expect(result.excluded).toBe(false);
     expect(result.action).toBe("create");
@@ -111,7 +111,7 @@ describe("write enforcement integration", () => {
 
     // Simulate edit with new content
     const newContent = "export function main() { console.log('updated'); }";
-    const result = analyzePostWrite("src/app.ts", newContent, index);
+    const result = analyzePostWrite("src/app.ts", newContent, indexAsLookup(index));
 
     expect(result.action).toBe("edit");
     expect(result.indexEntry).not.toBeNull();
@@ -127,7 +127,7 @@ describe("write enforcement integration", () => {
     const state = createSessionState();
     const index = createEmptyIndex();
 
-    const result = analyzePostWrite(".env.local", "SECRET=abc", index);
+    const result = analyzePostWrite(".env.local", "SECRET=abc", indexAsLookup(index));
 
     expect(result.excluded).toBe(true);
 
@@ -149,17 +149,17 @@ describe("write enforcement integration", () => {
     const index = createEmptyIndex();
 
     // First write (new file)
-    const result1 = analyzePostWrite("src/a.ts", "export const a = 1;", index);
+    const result1 = analyzePostWrite("src/a.ts", "export const a = 1;", indexAsLookup(index));
     if (result1.indexEntry) upsertEntry(index, result1.indexEntry);
     recordWrite(state, "src/a.ts", result1.action, result1.estimatedTokens);
 
     // Second write (another new file)
-    const result2 = analyzePostWrite("src/b.ts", "export const b = 2;", index);
+    const result2 = analyzePostWrite("src/b.ts", "export const b = 2;", indexAsLookup(index));
     if (result2.indexEntry) upsertEntry(index, result2.indexEntry);
     recordWrite(state, "src/b.ts", result2.action, result2.estimatedTokens);
 
     // Third write (edit first file)
-    const result3 = analyzePostWrite("src/a.ts", "export const a = 'updated';", index);
+    const result3 = analyzePostWrite("src/a.ts", "export const a = 'updated';", indexAsLookup(index));
     if (result3.indexEntry) upsertEntry(index, result3.indexEntry);
     recordWrite(state, "src/a.ts", result3.action, result3.estimatedTokens);
 
@@ -178,7 +178,7 @@ describe("write enforcement integration", () => {
 
     const content = "export function newFunc() { return 42; }";
     const start = performance.now();
-    const result = analyzePostWrite("src/new-file.ts", content, index);
+    const result = analyzePostWrite("src/new-file.ts", content, indexAsLookup(index));
     const elapsed = performance.now() - start;
 
     expect(result.action).toBe("create");

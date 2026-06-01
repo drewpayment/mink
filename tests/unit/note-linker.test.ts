@@ -7,6 +7,7 @@ import {
   extractWikilinks,
   insertWikilinks,
   addBacklink,
+  updateMasterIndex,
 } from "../../src/core/note-linker";
 
 describe("note-linker", () => {
@@ -176,6 +177,73 @@ TypeScript is great.`;
       const content = readFileSync(filePath, "utf-8");
       expect(content).toContain("## Backlinks");
       expect(content).toContain("- [[Source Note]]");
+    });
+  });
+
+  describe("updateMasterIndex — prompt-cache layout", () => {
+    let prevWikiPath: string | undefined;
+    let vaultPath: string;
+    let indexPath: string;
+
+    beforeEach(() => {
+      vaultPath = join(tempDir, "wiki");
+      indexPath = join(vaultPath, "_index.md");
+      prevWikiPath = process.env.MINK_WIKI_PATH;
+      // Point the vault root at the test temp dir so updateMasterIndex
+      // writes to a location we can read back.
+      process.env.MINK_WIKI_PATH = vaultPath;
+      mkdirSync(join(vaultPath, "projects"), { recursive: true });
+      writeFileSync(join(vaultPath, "projects", "alpha.md"), "# Alpha\n");
+    });
+
+    afterEach(() => {
+      if (prevWikiPath === undefined) delete process.env.MINK_WIKI_PATH;
+      else process.env.MINK_WIKI_PATH = prevWikiPath;
+    });
+
+    test("prefix (first 5 lines) contains no volatile content", () => {
+      updateMasterIndex(vaultPath);
+
+      const content = readFileSync(indexPath, "utf-8");
+      const prefix = content.split("\n").slice(0, 5).join("\n");
+
+      // No ISO timestamps in the prefix
+      expect(prefix).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
+      // No "Last updated" / "Generated" / "updated:" anywhere in the prefix
+      expect(prefix.toLowerCase()).not.toContain("last updated");
+      expect(prefix.toLowerCase()).not.toContain("generated:");
+      expect(prefix).not.toMatch(/^updated:/m);
+      // No YAML frontmatter at the top
+      expect(prefix.startsWith("---")).toBe(false);
+      // Title must be the very first line
+      expect(content.split("\n")[0]).toBe("# Knowledge Base");
+    });
+
+    test("regenerating with different timestamps yields identical prefix bytes", () => {
+      updateMasterIndex(vaultPath);
+      const first = readFileSync(indexPath, "utf-8");
+
+      // Force the clock forward enough to produce a different ISO timestamp.
+      const realNow = Date.now;
+      try {
+        Date.now = () => realNow() + 60_000;
+        updateMasterIndex(vaultPath);
+      } finally {
+        Date.now = realNow;
+      }
+      const second = readFileSync(indexPath, "utf-8");
+
+      // The stable prefix (everything up to the footer marker) must be
+      // byte-identical across regenerations so Anthropic's prefix prompt
+      // cache stays warm.
+      const footerMarker = "<!-- mink:footer";
+      const firstPrefix = first.slice(0, first.indexOf(footerMarker));
+      const secondPrefix = second.slice(0, second.indexOf(footerMarker));
+      expect(firstPrefix).toBe(secondPrefix);
+
+      // And the footer must actually carry the volatile timestamp.
+      expect(second).toMatch(/<!-- mink:footer/);
+      expect(second).toMatch(/Last updated:/);
     });
   });
 });

@@ -226,11 +226,10 @@ describe("hook-contract e2e", () => {
 
   // Claude Code's current production payload nests tool output under
   // `tool_response` (often as an array of {type:"text", text}) rather than
-  // the legacy `tool_output.content` shape. Main does not yet read that
-  // shape — PR #80 (feat/sqlite-indexing) adds support. Once that lands,
-  // unskip this test; it guards against a regression where the extractor
-  // silently returns null and token savings stay at 0.
-  test.skip("PostToolUse/Read records a read entry given Claude Code's tool_response payload", async () => {
+  // the legacy `tool_output.content` shape. Guards against a regression
+  // where the extractor silently returns null and token savings stay at 0
+  // — the exact bug that motivated PR #80's post-read fix.
+  test("PostToolUse/Read records a read entry given Claude Code's tool_response payload", async () => {
     const startCmd = getRegisteredCommand(settings, "SessionStart", "");
     await runHook(startCmd, projectCwd, "{}", minkRoot);
 
@@ -298,14 +297,16 @@ describe("hook-contract e2e", () => {
     const result = await runHook(postWriteCmd, projectCwd, payload, minkRoot);
     expect(result.exitCode, result.stderr).toBe(0);
 
-    const { projectDir } = readProjectState(minkRoot);
-    const index = JSON.parse(
-      readFileSync(join(projectDir, "file-index.json"), "utf-8")
-    );
-    const entry = index.entries["src/feature.ts"];
-    expect(entry).toBeDefined();
-    expect(entry.estimatedTokens).toBeGreaterThan(0);
+    // file_index lives in mink.db; query through the same repo the dashboard
+    // uses, with the test's MINK_ROOT_OVERRIDE applied so paths resolve to
+    // the temp project state dir.
+    process.env.MINK_ROOT_OVERRIDE = minkRoot;
+    const { FileIndexRepo } = await import("../../src/repositories/file-index-repo");
+    const entry = FileIndexRepo.for(projectCwd).lookupEntry("src/feature.ts");
+    expect(entry).not.toBeNull();
+    expect(entry!.estimatedTokens).toBeGreaterThan(0);
 
+    const { projectDir } = readProjectState(minkRoot);
     const session = JSON.parse(
       readFileSync(join(projectDir, "session.json"), "utf-8")
     );
@@ -355,34 +356,14 @@ describe("hook-contract e2e", () => {
     const result = await runHook(stopCmd, projectCwd, "{}", minkRoot);
     expect(result.exitCode, result.stderr).toBe(0);
 
-    const { projectDir } = readProjectState(minkRoot);
-    // Stop writes the ledger to a per-device shard (state/<deviceId>/
-    // token-ledger.json). The dashboard aggregates canonical + every shard,
-    // so this test does the same: find any ledger file under the project and
-    // assert it captured the activity.
-    const ledger = findFirstLedger(projectDir);
-    expect(ledger, "no token-ledger.json found in canonical or any shard").not.toBeNull();
-    expect(ledger!.lifetime.totalSessions).toBeGreaterThanOrEqual(1);
-    expect(ledger!.lifetime.totalReads).toBeGreaterThanOrEqual(1);
+    // Token ledger may live in mink.db, in a per-device shard, or in the
+    // canonical JSON depending on migration phase. aggregateTokenLedger is
+    // the same function the dashboard uses to union all sources — that is
+    // the contract we want to validate.
+    process.env.MINK_ROOT_OVERRIDE = minkRoot;
+    const { aggregateTokenLedger } = await import("../../src/core/state-aggregator");
+    const ledger = aggregateTokenLedger(projectCwd);
+    expect(ledger.lifetime.totalSessions).toBeGreaterThanOrEqual(1);
+    expect(ledger.lifetime.totalReads).toBeGreaterThanOrEqual(1);
   });
 });
-
-interface LifetimeLedger {
-  lifetime: { totalSessions: number; totalReads: number };
-}
-
-function findFirstLedger(projectDir: string): LifetimeLedger | null {
-  const canonical = join(projectDir, "token-ledger.json");
-  if (existsSync(canonical)) {
-    return JSON.parse(readFileSync(canonical, "utf-8"));
-  }
-  const stateDir = join(projectDir, "state");
-  if (!existsSync(stateDir)) return null;
-  for (const deviceId of readdirSync(stateDir)) {
-    const shardLedger = join(stateDir, deviceId, "token-ledger.json");
-    if (existsSync(shardLedger)) {
-      return JSON.parse(readFileSync(shardLedger, "utf-8"));
-    }
-  }
-  return null;
-}

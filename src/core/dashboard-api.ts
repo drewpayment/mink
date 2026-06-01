@@ -1,9 +1,7 @@
 import { existsSync, readFileSync } from "fs";
 import {
   projectDir,
-  fileIndexPath,
-  tokenLedgerPath,
-  bugMemoryPath,
+  projectDbPath,
   actionLogPath,
   learningMemoryPath,
   projectMetaPath,
@@ -13,7 +11,8 @@ import {
   designReportPath,
 } from "./paths";
 import { safeReadJson } from "./fs-utils";
-import { isFileIndex } from "./index-store";
+import { FileIndexRepo } from "../repositories/file-index-repo";
+import { CountersRepo } from "../repositories/counters-repo";
 import { loadLedger } from "./token-ledger";
 import { parseLearningMemory } from "./learning-memory";
 import { loadBugMemory } from "./bug-memory";
@@ -125,6 +124,18 @@ function checkTextFile(name: string, filePath: string): FileStatus {
   }
 }
 
+function checkDbFile(name: string, filePath: string): FileStatus {
+  if (!existsSync(filePath)) return { name, status: "missing" };
+  try {
+    const header = readFileSync(filePath).slice(0, 16).toString("utf-8");
+    return header.startsWith("SQLite format 3")
+      ? { name, status: "ok" }
+      : { name, status: "corrupt" };
+  } catch {
+    return { name, status: "corrupt" };
+  }
+}
+
 // ── Panel Loaders ──────────────────────────────────────────────────────────
 
 export function loadOverview(cwd: string): OverviewPayload {
@@ -163,14 +174,13 @@ export function loadOverview(cwd: string): OverviewPayload {
     estimatedSavings: ledger.lifetime.totalEstimatedSavings,
   };
 
-  // State file health
+  // State file health. mink.db replaced file-index.json in Phase 2; the
+  // other JSON checks remain until Phases 3 (bug-memory) and 4 (ledger).
   const stateFiles: FileStatus[] = [
     checkJsonFile("session.json", sessionPath(cwd)),
-    checkJsonFile("file-index.json", fileIndexPath(cwd), isFileIndex),
+    checkDbFile("mink.db", projectDbPath(cwd)),
     checkJsonFile("config.json", configPath(cwd)),
     checkTextFile("learning-memory.md", learningMemoryPath(cwd)),
-    checkJsonFile("token-ledger.json", tokenLedgerPath(cwd)),
-    checkJsonFile("bug-memory.json", bugMemoryPath(cwd)),
     checkTextFile("action-log.md", actionLogPath(cwd)),
     checkJsonFile("scheduler-manifest.json", schedulerManifestPath(cwd)),
   ];
@@ -188,21 +198,33 @@ export function loadTokenLedgerPanel(cwd: string): TokenLedgerPayload {
 }
 
 export function loadFileIndexPanel(cwd: string): FileIndexPayload {
-  const raw = safeReadJson(fileIndexPath(cwd));
-  if (raw && isFileIndex(raw)) {
-    const index = raw as FileIndex;
-    const entries: FileIndexEntry[] = Object.values(index.entries);
-    return { header: index.header, entries };
+  // file_index + per-device counters now live in mink.db; we synthesize
+  // the FileIndexPayload shape the dashboard expects so the frontend
+  // doesn't need to change in this phase.
+  try {
+    const repo = FileIndexRepo.for(cwd);
+    const entries: FileIndexEntry[] = repo.listAll();
+    const totals = CountersRepo.for(cwd).totals();
+    return {
+      header: {
+        lastScanTimestamp: repo.getLastScanTimestamp(),
+        totalFiles: repo.totalFiles(),
+        lifetimeHits: totals.hits,
+        lifetimeMisses: totals.misses,
+      },
+      entries,
+    };
+  } catch {
+    return {
+      header: {
+        lastScanTimestamp: "",
+        totalFiles: 0,
+        lifetimeHits: 0,
+        lifetimeMisses: 0,
+      },
+      entries: [],
+    };
   }
-  return {
-    header: {
-      lastScanTimestamp: "",
-      totalFiles: 0,
-      lifetimeHits: 0,
-      lifetimeMisses: 0,
-    },
-    entries: [],
-  };
 }
 
 export function loadSchedulerPanel(cwd: string): SchedulerPayload {

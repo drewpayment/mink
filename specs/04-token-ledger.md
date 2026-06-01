@@ -39,9 +39,10 @@ The system must calculate estimated token savings using:
 
 ### Data Integrity
 
-- The ledger must be append-only for session records — existing sessions are never modified or deleted.
-- Lifetime counters are updated atomically with each session append.
-- The ledger file must survive partial writes (write to temp, then rename).
+- Sessions are append-only as observed by other devices: the cross-device merge driver treats existing session ids as immutable (first-writer-wins). The in-process device may call `updateSession()` to replace its own latest session totals while the session is still active; once it ships in a sync push, it's frozen.
+- Sessions past the retention threshold are flagged `archived = 1` in the ledger store rather than moved to a separate file. The archive query is `SELECT * FROM ledger_sessions WHERE archived = 1`.
+- Lifetime counters are stored per device and updated transactionally with each session insert/update. The project-wide lifetime is the SUM across devices.
+- The ledger is stored in `mink.db` (SQLite, WAL mode). Crash safety comes from the WAL — partial writes are rolled back automatically.
 
 ## Acceptance Criteria
 
@@ -79,6 +80,15 @@ THEN the result equals (total_index_hits × 200) + sum(all repeated_read_token_c
 - Ledger file is corrupted (invalid structure) — attempt recovery from last known good state, or reinitialize with a warning logged.
 - Very large ledger (1000+ sessions) — consider archiving old sessions to a separate file to keep the active ledger performant.
 - Token estimate is zero for a file (empty file read) — record it but do not count toward savings.
+
+## Prompt-Cache Stability
+
+The active ledger now lives in SQLite (`mink.db`), so the raw store is never injected into model context — eliminating the historic prefix-cache risk for the JSON ledger. However, any human/agent-readable **derived markdown** (status digests, dashboards exported to markdown, cost reports an LLM may load) must follow the layout rule:
+
+- **Top:** stable structure — title, table headers, fixed schema/legend.
+- **Bottom:** volatile aggregates — `lifetime_tokens`, `last_session_at`, `last_updated`, per-device counters — under a footer marker.
+
+Rationale: Anthropic's prompt cache hashes from the prefix forward; a volatile aggregate at the top of a status digest invalidates the entire downstream cache on every re-render.
 
 ## Test Requirements
 

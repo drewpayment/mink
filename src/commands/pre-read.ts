@@ -1,15 +1,12 @@
 import { relative } from "path";
 import { readStdinJson } from "../core/stdin";
-import { sessionPath, fileIndexPath } from "../core/paths";
+import { sessionPath } from "../core/paths";
 import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { createSessionState, isSessionState } from "../core/session";
-import { isFileIndex, lookupEntry } from "../core/index-store";
-import {
-  incrementFileIndexHit,
-  incrementFileIndexMiss,
-} from "../core/state-counters";
+import { FileIndexRepo } from "../repositories/file-index-repo";
+import { CountersRepo } from "../repositories/counters-repo";
 import type { SessionState } from "../types/session";
-import type { FileIndex, FileIndexEntry } from "../types/file-index";
+import type { FileIndexEntry, IndexLookup } from "../types/file-index";
 import type { PreToolUseInput } from "../types/hook-input";
 
 export interface PreReadResult {
@@ -22,7 +19,7 @@ export interface PreReadResult {
 export function analyzePreRead(
   filePath: string,
   state: SessionState,
-  index: FileIndex | null
+  index: IndexLookup | null
 ): PreReadResult {
   const warnings: string[] = [];
   let repeatedRead = false;
@@ -39,12 +36,12 @@ export function analyzePreRead(
     state.counters.repeatedReadWarnings++;
   }
 
-  // File index lookup. Hit/miss telemetry is persisted by the caller via
-  // increment{Hit,Miss}, not by mutating the shared index — keeping the
-  // file-index.json content-addressed by filePath so a JSON union merge driver
-  // can resolve cross-device updates without conflict.
+  // File index lookup. Hit/miss telemetry is persisted by the caller into
+  // the counters table, not by mutating the index — keeps the file_index
+  // row's last_modified stable so the sync merge driver doesn't churn it
+  // on every read.
   if (index) {
-    entry = lookupEntry(index, filePath);
+    entry = index.lookupEntry(filePath);
     if (entry) {
       indexHit = true;
       warnings.push(
@@ -84,11 +81,10 @@ export async function preRead(cwd: string): Promise<void> {
       ? rawState
       : createSessionState();
 
-    // Load file index (null if missing/corrupt)
-    const rawIndex = safeReadJson(fileIndexPath(cwd));
-    const index: FileIndex | null = isFileIndex(rawIndex) ? rawIndex : null;
+    // File index repository — one-key lookup per hook.
+    const repo = FileIndexRepo.for(cwd);
 
-    const result = analyzePreRead(filePath, state, index);
+    const result = analyzePreRead(filePath, state, repo);
 
     // Emit warnings to stderr
     for (const warning of result.warnings) {
@@ -97,13 +93,12 @@ export async function preRead(cwd: string): Promise<void> {
 
     // Persist state changes
     atomicWriteJson(sessionPath(cwd), state);
-    if (index) {
-      try {
-        if (result.indexHit) incrementFileIndexHit(cwd);
-        else incrementFileIndexMiss(cwd);
-      } catch {
-        // Counter file is best-effort telemetry — never block the read hook
-      }
+    try {
+      const counters = CountersRepo.for(cwd);
+      if (result.indexHit) counters.incrementHit();
+      else counters.incrementMiss();
+    } catch {
+      // Counter table is best-effort telemetry — never block the read hook
     }
   } catch {
     // Never crash — exit silently

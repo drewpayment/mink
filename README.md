@@ -531,6 +531,7 @@ mink sync disconnect
 - If a rebase conflict occurs, the rebase is aborted and you're warned to resolve manually
 - Push failures preserve the local commit — it will be included in the next push
 - Git operations have timeouts (5-15s) so they never block your session
+- The per-project `mink.db` (SQLite) is synced as a binary file with a custom merge driver. Because git can't store line-level deltas for a binary file, each change syncs a full copy of the database — on very large projects (20k+ files) this grows the sync repo over time. Run a periodic `git gc` inside `~/.mink` if the repo gets heavy.
 
 ### Hook integration
 
