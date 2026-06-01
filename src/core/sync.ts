@@ -80,6 +80,13 @@ wiki/projects/*/architecture.md
 
 const GITATTRIBUTES_CONTENTS = `# Sync v2 — merge drivers eliminate conflicts on shared files.
 # Drivers are registered in .git/config by ensureMergeDriversRegistered().
+#
+# NOTE (sync size tradeoff): marking mink.db 'binary' means git stores a full
+# new blob of the database on every sync rather than a line-level delta the way
+# it did for the old file-index.json/token-ledger.json. For large projects
+# (20k+ files) this grows the ~/.mink sync repo and lengthens clones over time.
+# This is an accepted cost of moving the hot-path stores into SQLite for hook
+# latency. If the repo gets heavy, run a periodic 'git gc'/repack on ~/.mink.
 projects/*/mink.db merge=mink-db-merge
 projects/*/mink.db binary
 projects/*/file-index.json merge=mink-json-union

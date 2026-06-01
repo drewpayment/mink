@@ -1,6 +1,14 @@
 // node:sqlite implementation of the DbDriver interface.
 // Selected at build time when MINK_RUNTIME === "node" and via runtime
 // detection when running unbundled under Node.
+//
+// Node engine floor (package.json `engines.node`) is pinned to >=24.0.0:
+// node:sqlite first appeared (flagged/experimental) in 22.5 and its API
+// shifted across 22.x/23.x. Node 24 is the only line we smoke-test the node
+// bundle against in CI, so it's the floor we actually validate this driver on.
+// This pin does NOT affect Bun users — Bun runs through driver.bun.ts
+// (bun:sqlite), which is always available and is the preferred, faster path;
+// `engines.node` is an npm/Node-side constraint only.
 
 import type { DbDriver, DriverModule, SqlParam, Statement } from "./driver";
 

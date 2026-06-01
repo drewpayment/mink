@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, appendFileSync, copyFileSync, unlinkSync } from "fs";
+import { readFileSync, writeFileSync, appendFileSync, copyFileSync, renameSync, unlinkSync } from "fs";
 import { join } from "path";
 import { minkRoot } from "./paths";
 import { parseLearningMemory, serializeLearningMemory } from "./learning-memory";
@@ -365,9 +365,13 @@ export function mergeDbDriver(args: DriverArgs): void {
       try { unlinkSync(`${tmp}${suffix}`); } catch { /* not present */ }
     }
 
-    // Atomic replace.
-    copyFileSync(tmp, args.oursPath);
-    try { unlinkSync(tmp); } catch { /* best effort */ }
+    // Atomic replace: rename within the same directory is atomic on POSIX, so
+    // a crash can never leave args.oursPath half-written. A plain copy is not
+    // atomic — a crash mid-copy could truncate ours.db. `tmp` is created
+    // alongside oursPath, so the rename stays on one filesystem and won't
+    // EXDEV. (The WAL/SHM sidecars were already cleaned above, so the renamed
+    // file is self-contained.)
+    renameSync(tmp, args.oursPath);
   } catch (err) {
     logWarning("mink-db-merge", args, err);
     try { if (ours) ours.close(); } catch { /* ignore */ }
