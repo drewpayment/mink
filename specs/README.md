@@ -30,6 +30,7 @@ Mink is a hidden presence that moves alongside the developer. It has two mission
 | 18 | [Configuration Surface](./18-configuration-surface.md) | Core |
 | 19 | [CLI Self-Update](./19-self-update.md) | Automation |
 | 20 | [Stable Project Identity](./20-stable-project-identity.md) | Core |
+| 21 | [Multi-Agent Adapter](./21-multi-agent-adapter.md) | Core |
 
 ## Active Delivery Plans
 
