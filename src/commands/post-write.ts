@@ -1,22 +1,17 @@
 import { relative } from "path";
 import { readFileSync } from "fs";
 import { readStdinJson } from "../core/stdin";
-import { sessionPath, fileIndexPath, actionLogShardPath } from "../core/paths";
+import { sessionPath, actionLogShardPath } from "../core/paths";
 import { getOrCreateDeviceId } from "../core/device";
 import { safeReadJson, atomicWriteJson } from "../core/fs-utils";
 import { createSessionState, isSessionState, recordWrite } from "../core/session";
-import {
-  isFileIndex,
-  lookupEntry,
-  upsertEntry,
-  createEmptyIndex,
-} from "../core/index-store";
+import { FileIndexRepo } from "../repositories/file-index-repo";
 import { extractDescription } from "../core/description";
 import { estimateTokens, isBinaryFile } from "../core/token-estimate";
 import { isWriteExcluded } from "../core/write-exclusions";
 import { createActionLogWriter } from "../core/action-log";
 import type { SessionState } from "../types/session";
-import type { FileIndex, FileIndexEntry } from "../types/file-index";
+import type { FileIndexEntry, IndexLookup } from "../types/file-index";
 import type { PostToolUseInput } from "../types/hook-input";
 
 export interface PostWriteResult {
@@ -30,7 +25,7 @@ export interface PostWriteResult {
 export function analyzePostWrite(
   filePath: string,
   fileContent: string | null,
-  index: FileIndex | null
+  index: IndexLookup | null
 ): PostWriteResult {
   // Check exclusions
   if (isWriteExcluded(filePath)) {
@@ -43,8 +38,9 @@ export function analyzePostWrite(
     };
   }
 
-  // Determine action from index presence
-  const existingEntry = index ? lookupEntry(index, filePath) : null;
+  // Determine action from index presence (one-key lookup; never loads the
+  // whole index — important for 20k-file projects).
+  const existingEntry = index ? index.lookupEntry(filePath) : null;
   const action: "create" | "edit" = existingEntry ? "edit" : "create";
 
   // Handle binary or unreadable content
@@ -117,17 +113,16 @@ export async function postWrite(cwd: string): Promise<void> {
       ? rawState
       : createSessionState();
 
-    // Load file index
-    const rawIndex = safeReadJson(fileIndexPath(cwd));
-    const index: FileIndex = isFileIndex(rawIndex) ? rawIndex : createEmptyIndex();
+    // File index repository — one-key lookup, no whole-index load.
+    const repo = FileIndexRepo.for(cwd);
 
-    const result = analyzePostWrite(filePath, fileContent, index);
+    const result = analyzePostWrite(filePath, fileContent, repo);
 
     if (result.excluded) return;
 
-    // 1. File index update
+    // 1. File index update — single-row upsert.
     if (result.indexEntry) {
-      upsertEntry(index, result.indexEntry);
+      repo.upsert(result.indexEntry);
     }
 
     // 2. Action log entry — write to this device's shard
@@ -149,9 +144,8 @@ export async function postWrite(cwd: string): Promise<void> {
     // 3. Session state update
     recordWrite(state, filePath, result.action, result.estimatedTokens);
 
-    // Persist state changes
+    // Persist session — file index already committed via repo.upsert.
     atomicWriteJson(sessionPath(cwd), state);
-    atomicWriteJson(fileIndexPath(cwd), index);
   } catch {
     // Never crash — exit silently
   } finally {

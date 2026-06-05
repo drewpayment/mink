@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { analyzePostWrite } from "../../src/commands/post-write";
-import { createEmptyIndex, upsertEntry } from "../../src/core/index-store";
+import { createEmptyIndex, upsertEntry, indexAsLookup } from "../../src/core/index-store";
 import type { FileIndexEntry } from "../../src/types/file-index";
 
 function makeEntry(filePath: string, description: string, estimatedTokens: number): FileIndexEntry {
@@ -18,7 +18,7 @@ describe("analyzePostWrite", () => {
     const index = createEmptyIndex();
     const content = "export function hello() { return 'world'; }";
 
-    const result = analyzePostWrite("src/utils/format.ts", content, index);
+    const result = analyzePostWrite("src/utils/format.ts", content, indexAsLookup(index));
 
     expect(result.excluded).toBe(false);
     expect(result.action).toBe("create");
@@ -33,7 +33,7 @@ describe("analyzePostWrite", () => {
     upsertEntry(index, makeEntry("src/app.ts", "App entry", 200));
     const content = "export function main() { console.log('updated'); }";
 
-    const result = analyzePostWrite("src/app.ts", content, index);
+    const result = analyzePostWrite("src/app.ts", content, indexAsLookup(index));
 
     expect(result.excluded).toBe(false);
     expect(result.action).toBe("edit");
@@ -67,7 +67,7 @@ describe("analyzePostWrite", () => {
 
   test("empty file content produces entry with 0 tokens", () => {
     const index = createEmptyIndex();
-    const result = analyzePostWrite("src/empty.ts", "", index);
+    const result = analyzePostWrite("src/empty.ts", "", indexAsLookup(index));
 
     expect(result.excluded).toBe(false);
     expect(result.action).toBe("create");

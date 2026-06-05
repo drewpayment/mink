@@ -1,5 +1,4 @@
-import { searchBugs } from "../core/bug-memory";
-import { aggregateBugMemory } from "../core/state-aggregator";
+import { BugMemoryRepo } from "../repositories/bug-memory-repo";
 
 export function bugSearch(cwd: string, query: string): void {
   if (!query) {
@@ -7,8 +6,7 @@ export function bugSearch(cwd: string, query: string): void {
     process.exit(1);
   }
 
-  const memory = aggregateBugMemory(cwd);
-  const results = searchBugs(memory, query);
+  const results = BugMemoryRepo.for(cwd).searchBugs(query);
 
   if (results.length === 0) {
     console.log("No matching bugs found.");

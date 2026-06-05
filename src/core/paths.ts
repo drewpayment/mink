@@ -68,6 +68,13 @@ export function bugMemoryPath(cwd: string): string {
   return join(projectDir(cwd), "bug-memory.json");
 }
 
+// SQLite-backed state introduced in spec 17 (file index + bug memory +
+// token ledger). The legacy JSON path helpers above remain valid for
+// backup / rollback during the migration window.
+export function projectDbPath(cwd: string): string {
+  return join(projectDir(cwd), "mink.db");
+}
+
 export function actionLogPath(cwd: string): string {
   return join(projectDir(cwd), "action-log.md");
 }

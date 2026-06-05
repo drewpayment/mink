@@ -328,3 +328,37 @@ THEN only one note is created
 - All wikilinks reference pages that exist.
 - Git backup never force-pushes under any circumstance.
 - Session-end hook with git backup never blocks for more than 15 seconds total.
+
+## Prompt-Cache Stability
+
+Vault files — especially the master `_index.md` (regenerated on every session-start when missing or rebuilt) and per-note frontmatter — are exactly the kind of files LLM-driven agents read into their context window. Anthropic's prompt cache hashes from the prefix forward, so volatile content at the top of these files silently invalidates the cache for every subsequent byte.
+
+**Master index (`_index.md`) layout rule:**
+
+- **Top (stable):** `# Knowledge Base` title, then category sections (`## Inbox`, `## Projects`, `## Areas`, `## Resources`, `## Archives`, `## Patterns`) with their wikilink lists.
+- **Bottom (volatile):** an HTML-comment marker (`<!-- mink:footer (volatile — keep at end of file) -->`) followed by a `> Last updated: <date> (<ISO>)` line. **Never** put `updated:` in YAML frontmatter at the top of `_index.md`, because frontmatter is the first thing the prompt cache sees.
+
+**Per-note frontmatter (templates, ingested notes, daily notes):** `created` and `updated` ISO timestamps in frontmatter are acceptable **only** when set exactly once at note creation and never rewritten. Any feature that wants to track a "last edited" timestamp on an existing note must record it in a footer block, not in frontmatter.
+
+**Before / after (`_index.md`):**
+
+```diff
+- ---
+- updated: "2026-05-25T20:14:11.221Z"
+- ---
+-
+- # Knowledge Base
+-
+- > Last updated: 2026-05-25
+-
+- ## Inbox
++ # Knowledge Base
++
++ ## Inbox
+  - [[Quick capture]]
+  ...
++ ---
++
++ <!-- mink:footer (volatile — keep at end of file) -->
++ > Last updated: 2026-05-25 (2026-05-25T20:14:11.221Z)
+```

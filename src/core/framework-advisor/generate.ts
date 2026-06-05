@@ -24,10 +24,13 @@ export function generateKnowledgeMarkdown(
 ): string {
   const parts: string[] = [];
 
+  // Prompt-cache stability: keep the title and stable summary line (counts
+  // only — no timestamps) at the top. The volatile `generatedAt` timestamp
+  // lives in the footer so regeneration doesn't bust LLM prefix caches.
   parts.push(`# Framework Advisor Knowledge Base`);
   parts.push("");
   parts.push(
-    `> Generated: ${k.generatedAt} | Version: ${k.version} | Frameworks: ${k.frameworks.length}`
+    `> Version: ${k.version} | Frameworks: ${k.frameworks.length}`
   );
   parts.push("");
 
@@ -110,6 +113,13 @@ export function generateKnowledgeMarkdown(
       parts.push("");
     }
   }
+
+  // ── Footer (volatile — must stay at end for prompt-cache stability) ──
+  parts.push(`---`);
+  parts.push(``);
+  parts.push(`<!-- mink:footer (volatile — keep at end of file) -->`);
+  parts.push(`> Generated: ${k.generatedAt}`);
+  parts.push(``);
 
   return parts.join("\n");
 }

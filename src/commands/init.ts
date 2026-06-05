@@ -51,25 +51,41 @@ export function detectRuntime(): "bun" | "node" {
   }
 }
 
-export function resolveCliPath(): string {
-  // When running from the compiled bundle, import.meta.url points to dist/cli.js
-  // When running from source, it points to src/commands/init.ts
-  const selfPath = new URL(import.meta.url).pathname;
+// Exported for unit testing — accepts the caller's effective import.meta.url
+// path so test cases can simulate every runtime form without juggling
+// real filesystem layouts.
+export function resolveCliPathFrom(selfPath: string): string {
+  // After `bun build`, import.meta.url for any bundled module points to
+  // whichever bundle was loaded:
+  //   - dist/cli.js       (legacy single-file build)
+  //   - dist/cli.bun.js   (current Bun bundle)
+  //   - dist/cli.node.js  (current Node bundle)
+  // In source-dev mode it points to src/commands/init.ts. Mapping any of the
+  // bundled forms to dist/cli.js (the bin shim) keeps buildHooksConfig on the
+  // portable `mink <subcmd>` path; only the source-dev fallback emits a
+  // `bun run <abs>/cli.ts` command.
   const selfDir = dirname(selfPath);
 
-  // If we're running from dist/cli.js, use that directly
-  if (selfPath.endsWith("dist/cli.js")) {
-    return selfPath;
+  // Running from any of the dist bundles → use the bin shim path. That file
+  // ships as the npm `bin` entry, so it always sits next to the bundles.
+  if (
+    selfPath.endsWith("dist/cli.js") ||
+    selfPath.endsWith("dist/cli.bun.js") ||
+    selfPath.endsWith("dist/cli.node.js")
+  ) {
+    return join(selfDir, "cli.js");
   }
 
-  // Check for compiled dist/cli.js relative to project root
-  // From src/commands/ go up two levels to project root
-  const projectRoot = resolve(selfDir, "../..");
-  const distPath = join(projectRoot, "dist", "cli.js");
-  if (existsSync(distPath)) return distPath;
+  // Source-dev: init.ts lives at src/commands/init.ts. Walk up to the package
+  // root and prefer dist/cli.js if a build is present, otherwise the source.
+  const packageRoot = resolve(selfDir, "..", "..");
+  const distShim = join(packageRoot, "dist", "cli.js");
+  if (existsSync(distShim)) return distShim;
+  return join(packageRoot, "src", "cli.ts");
+}
 
-  // Fall back to src/cli.ts (requires bun)
-  return resolve(selfDir, "../cli.ts");
+export function resolveCliPath(): string {
+  return resolveCliPathFrom(new URL(import.meta.url).pathname);
 }
 
 export function buildHooksConfig(cliPath: string): HooksConfig {

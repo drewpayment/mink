@@ -206,8 +206,9 @@ switch (command) {
   case "version":
   case "--version":
   case "-v": {
-    const { resolve, dirname } = await import("path");
-    const cliPath = resolve(dirname(new URL(import.meta.url).pathname));
+    const { resolve, dirname, basename } = await import("path");
+    const bundlePath = new URL(import.meta.url).pathname;
+    const cliPath = resolve(dirname(bundlePath));
     const { readFileSync } = await import("fs");
     try {
       const pkg = JSON.parse(
@@ -218,6 +219,13 @@ switch (command) {
       console.log("mink (unknown version)");
     }
     console.log(`  location: ${cliPath}`);
+    const bunVersion = (globalThis as { Bun?: { version: string } }).Bun?.version;
+    if (bunVersion) {
+      console.log(`  runtime:  bun ${bunVersion}`);
+    } else {
+      console.log(`  runtime:  node ${process.versions.node}`);
+    }
+    console.log(`  bundle:   ${basename(bundlePath)}`);
     break;
   }
 

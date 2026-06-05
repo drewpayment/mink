@@ -40,12 +40,11 @@ The AI assistant should create a bug entry when:
 
 When searching the bug log (either for surfacing during pre-write or via explicit search), the system must:
 
-1. Compute similarity scores using:
-   - Exact substring match on error messages → score 1.0.
-   - Word overlap (Jaccard index) between search terms and entry fields → score with 0.5× multiplier.
-2. Only surface matches with similarity score > 0.3.
-3. Prioritize matches from the same file path.
-4. Prevent false positives by requiring at least file-path match OR tag overlap in addition to text similarity.
+1. Use SQLite FTS5 (porter+unicode61 tokenization) over error message, root cause, fix description, and tags. The BM25-derived rank is normalized into a (0, 1+] score so the rest of the rules stay compatible with the v1 Jaccard scoring.
+2. Exact-substring match on error messages adds 1.0 to the score (same as v1).
+3. Only surface matches with similarity score > 0.3.
+4. Prioritize matches from the same file path (+0.2 boost).
+5. Prevent false positives by requiring at least file-path match OR tag overlap when the FTS score alone is borderline (≤ 0.3).
 
 ### Reminders
 
