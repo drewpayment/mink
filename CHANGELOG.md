@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.12.0](https://github.com/drewpayment/mink/compare/v0.11.0...v0.12.0) (2026-06-05)
+
+
+### Features
+
+* **bin:** collapse mink-bun into a runtime-selecting mink shim ([75c88ea](https://github.com/drewpayment/mink/commit/75c88ea8447e90df3442aa210147faf7b089ee57))
+* **cli:** show runtime and bundle in --version output ([72671cf](https://github.com/drewpayment/mink/commit/72671cf67295e9d65427da5f50461cc2bdfb3c48))
+* **scanner:** incremental scan + content-hash skip-re-extract (Phase 5) ([eab05b1](https://github.com/drewpayment/mink/commit/eab05b1e9693626df16d29e2de4622d93b73f652))
+* **storage:** add SQLite storage layer with dual-runtime build (Phase 1) ([ea14ba0](https://github.com/drewpayment/mink/commit/ea14ba09b3d10dd1a46101b65178a17deef3a227))
+* **storage:** SQLite-backed file index, bug memory, and token ledger (0.12.0) ([e37c972](https://github.com/drewpayment/mink/commit/e37c972d38febf0e928095176c57eeebaebb3d80))
+* **storage:** swap bug memory to SQLite + FTS5 (Phase 3) ([82b56e8](https://github.com/drewpayment/mink/commit/82b56e847de4c6c3438f2ad1f20f0f9487027907))
+* **storage:** swap file index to SQLite repository (Phase 2) ([efffd4c](https://github.com/drewpayment/mink/commit/efffd4c63273b18bec1d75784ded9ecccf56314f))
+* **storage:** swap token ledger to SQLite (Phase 4) ([0e2613e](https://github.com/drewpayment/mink/commit/0e2613e02c041716d8175af6cfb0fffdf8c3af01))
+
+
+### Bug Fixes
+
+* **dashboard:** allow `mink dashboard` from any directory ([792c81d](https://github.com/drewpayment/mink/commit/792c81d39cee10a86ec3399d6c0c793d390063fe))
+* **init:** resolve CLI path to the bin shim from any dist bundle ([e45e567](https://github.com/drewpayment/mink/commit/e45e567f61c0da352d8285d29499f1506e160451))
+* **post-read:** repair token-savings measurement and lazy index seeding ([e86e5dd](https://github.com/drewpayment/mink/commit/e86e5dd42218f59c4706f443f13d56ddb5040669))
+* **prompt-cache:** move volatile fields to footer in generated markdown ([7284be0](https://github.com/drewpayment/mink/commit/7284be026b7553453d06e7b1eff5aef416aa9316))
+* **status:** report sharded action-log and learning-memory as ok ([b3f01bb](https://github.com/drewpayment/mink/commit/b3f01bb814fc34e9ee884e058a1fcfb1dcc9d165))
+* **status:** report sharded action-log and learning-memory as ok ([94a3109](https://github.com/drewpayment/mink/commit/94a3109222a362a532bae991882aeaa746cc28ea))
+* **sync:** atomic db-merge replace, pin Node floor, document sync-size cost ([126b2dd](https://github.com/drewpayment/mink/commit/126b2ddf8607457caae15f220de639266b3fea2d))
+
 ## [0.11.0](https://github.com/drewpayment/mink/compare/v0.10.1...v0.11.0) (2026-05-18)
 
 
