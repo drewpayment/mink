@@ -62,6 +62,32 @@ describe("buildPiExtension", () => {
     // Spawn failures resolve to an empty advisory rather than rejecting.
     expect(src).toContain("finish(\"\")");
   });
+
+  test("uses Pi's source-verified tool input field names", () => {
+    const src = buildPiExtension("/path/cli.js");
+    // read/write/edit all key off `path` (with file_path as a legacy alias).
+    expect(src).toContain("input.path ?? input.file_path");
+    // Pi's edit tool passes an array of { oldText, newText } replacements.
+    expect(src).toContain("input.edits");
+    expect(src).toContain("newText");
+  });
+
+  test("reads tool_result content from event.content (a content-block array)", () => {
+    const src = buildPiExtension("/path/cli.js");
+    expect(src).toContain("event?.content");
+  });
+
+  test("surfaces advisories by returning a modified tool result", () => {
+    const src = buildPiExtension("/path/cli.js");
+    // Documented mechanism: return { content, details, isError } from tool_result.
+    expect(src).toContain("content: [...base,");
+    expect(src).toContain("isError: event.isError");
+  });
+
+  test("ignores extension hot-reloads when starting a session", () => {
+    const src = buildPiExtension("/path/cli.js");
+    expect(src).toContain('event?.reason === "reload"');
+  });
 });
 
 describe("installPi / removePi", () => {

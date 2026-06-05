@@ -44,12 +44,16 @@ export function buildPiExtension(cliPath: string): string {
 // into the \`mink\` CLI so Pi shares the same ~/.mink state, file index, ledger,
 // and wiki as every other assistant wired to this project.
 //
-// VERIFY-ON-UPGRADE: the tool input field names (file_path / path, content,
-// new_string), the tool-result content location, and the advisory surfacing
-// call are written against Pi's documented extension API. They are accessed
-// defensively (optional chaining + fallbacks) so a rename in a future Pi
-// release degrades to "no advisory" rather than breaking. If Pi changes these,
-// adjust toolInfo(), resultContent(), and surface() below.
+// Field shapes confirmed against pi source (earendil-works/pi,
+// packages/coding-agent): read params {path, offset, limit}; write {path,
+// content}; edit {path, edits:[{oldText,newText}]} (with legacy file_path /
+// top-level oldText,newText). tool_call/tool_result events expose toolName,
+// toolCallId, input; tool_result also exposes content (a content-block array),
+// details, isError. Advisories are surfaced by returning a modified result from
+// the tool_result handler — the documented mechanism. pi.exec has no stdin, so
+// the canonical payload is piped to \`mink\` via a spawned child process. Every
+// host-API access is defensive: the adapter never throws into Pi or blocks a
+// tool — a failure degrades to "no advisory".
 
 import { spawn } from "node:child_process";
 
@@ -92,28 +96,44 @@ function runMink(sub, payload, cwd) {
   });
 }
 
+// Pi's edit tool takes an array of { oldText, newText } replacements (legacy
+// inputs may put oldText/newText/new_string at the top level). Concatenate the
+// replacement text so Mink's write-enforcement sees everything being written.
+function editNewText(input) {
+  if (Array.isArray(input.edits)) {
+    return input.edits
+      .map((e) => e?.newText ?? e?.new_string ?? "")
+      .filter(Boolean)
+      .join("\\n");
+  }
+  return input.newText ?? input.new_string ?? input.replacement ?? "";
+}
+
 // Resolve Pi's tool name + arguments to Mink's canonical operation. Only the
 // three file operations matter; anything else returns null and is ignored.
 function toolInfo(event) {
   const name = String(event?.toolName ?? event?.tool ?? event?.name ?? "").toLowerCase();
-  const input = event?.input ?? event?.arguments ?? event?.args ?? {};
-  const filePath = input.file_path ?? input.path ?? input.filePath;
+  const input = event?.input ?? event?.arguments ?? {};
+  const filePath = input.path ?? input.file_path ?? input.filePath;
   if (!filePath) return null;
   if (name === "read") return { op: "read", filePath };
   if (name === "write") return { op: "write", filePath, content: input.content ?? input.text ?? "" };
-  if (name === "edit")
-    return {
-      op: "edit",
-      filePath,
-      newString: input.new_string ?? input.newText ?? input.replacement ?? "",
-    };
+  if (name === "edit") return { op: "edit", filePath, newString: editNewText(input) };
   return null;
 }
 
+// A tool_result's content is an array of content blocks ({ type, text }); pull
+// the text out so Mink's post-read can estimate tokens from real content.
 function resultContent(event) {
-  const r = event?.result ?? event?.output ?? event?.toolResult;
-  if (typeof r === "string") return r;
-  if (r && typeof r.content === "string") return r.content;
+  const c = event?.content;
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) {
+    const text = c
+      .map((b) => (typeof b === "string" ? b : b?.text ?? ""))
+      .filter(Boolean)
+      .join("\\n");
+    return text || null;
+  }
   return null;
 }
 
@@ -157,22 +177,10 @@ export default function (pi) {
   const pending = new Map();
   const keyOf = (event) => event?.toolCallId ?? event?.id ?? event?.callId ?? "";
 
-  // Surface Mink's advisories into the model's context, mirroring how the
-  // Claude integration feeds hook stderr back to the assistant.
-  const surface = (text) => {
-    if (!text) return;
-    try {
-      if (typeof pi.sendMessage === "function") {
-        pi.sendMessage(text);
-        return;
-      }
-    } catch {}
-    try {
-      pi.ui?.notify?.(text, "info");
-    } catch {}
-  };
-
-  pi.on?.("session_start", () => {
+  pi.on?.("session_start", (event) => {
+    // Skip hot-reloads so an extension reload mid-task doesn't reset the
+    // ephemeral session state; every genuinely new/resumed session starts fresh.
+    if (event?.reason === "reload") return;
     void runMink("session-start", null, cwd);
   });
   pi.on?.("agent_end", () => {
@@ -197,7 +205,21 @@ export default function (pi) {
     const post = await runMink(sub, payload, cwd);
     const pre = pending.get(keyOf(event)) ?? "";
     pending.delete(keyOf(event));
-    surface([pre, post].filter(Boolean).join("\\n"));
+    const advisory = [pre, post].filter(Boolean).join("\\n");
+    if (!advisory) return;
+
+    // Surface Mink's advisory into the model's context by appending a text
+    // block to the tool result — the parity of Claude feeding hook stderr back.
+    const base = Array.isArray(event.content)
+      ? event.content
+      : typeof event.content === "string"
+        ? [{ type: "text", text: event.content }]
+        : [];
+    return {
+      content: [...base, { type: "text", text: advisory }],
+      details: event.details,
+      isError: event.isError,
+    };
   });
 }
 `;
