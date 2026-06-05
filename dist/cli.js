@@ -163,19 +163,598 @@ function isSessionState(value) {
 }
 var init_session = () => {};
 
+// src/core/git-identity.ts
+import { execSync } from "child_process";
+import { existsSync, realpathSync } from "fs";
+function gitOut(cwd, args) {
+  if (!existsSync(cwd))
+    return null;
+  try {
+    return execSync(`git ${args}`, {
+      cwd,
+      timeout: GIT_TIMEOUT_MS,
+      stdio: ["pipe", "pipe", "pipe"]
+    }).toString().trim();
+  } catch {
+    return null;
+  }
+}
+function canonicalCwd(cwd) {
+  try {
+    return realpathSync(cwd);
+  } catch {
+    return cwd;
+  }
+}
+function getRepoRoot(cwd) {
+  const root = gitOut(canonicalCwd(cwd), "rev-parse --show-toplevel");
+  return root && root.length > 0 ? root : null;
+}
+function getRepoSubpath(cwd) {
+  const prefix = gitOut(canonicalCwd(cwd), "rev-parse --show-prefix");
+  if (prefix === null)
+    return "";
+  return prefix.replace(/\\/g, "/").replace(/\/+$/, "").replace(/^\/+/, "");
+}
+function getRepoRemote(cwd) {
+  const c = canonicalCwd(cwd);
+  const origin = gitOut(c, "config --get remote.origin.url");
+  if (origin && origin.length > 0)
+    return origin;
+  const list = gitOut(c, "remote");
+  if (!list)
+    return null;
+  const remotes = list.split(`
+`).map((s) => s.trim()).filter((s) => s.length > 0).sort();
+  if (remotes.length === 0)
+    return null;
+  const url = gitOut(c, `config --get remote.${remotes[0]}.url`);
+  return url && url.length > 0 ? url : null;
+}
+function normalizeRemoteUrl(url) {
+  if (!url)
+    return "";
+  let s = url.trim();
+  if (s.length === 0)
+    return "";
+  if (/^(file:|\.\.?\/|\/)/i.test(s))
+    return "";
+  const scp = s.match(/^([^@\s]+)@([^:\s]+):(.+)$/);
+  if (scp) {
+    s = `ssh://${scp[1]}@${scp[2]}/${scp[3]}`;
+  }
+  s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  s = s.replace(/^[^@/]*@/, "");
+  s = s.replace(/\/+$/, "").replace(/\.git$/i, "");
+  return s.toLowerCase();
+}
+function deriveGitIdentity(cwd) {
+  const root = getRepoRoot(cwd);
+  if (!root)
+    return null;
+  const remoteRaw = getRepoRemote(cwd);
+  if (!remoteRaw)
+    return null;
+  const remote = normalizeRemoteUrl(remoteRaw);
+  if (!remote)
+    return null;
+  const subpath = getRepoSubpath(cwd);
+  return { remote, subpath };
+}
+var GIT_TIMEOUT_MS = 2000;
+var init_git_identity = () => {};
+
+// src/core/fs-utils.ts
+var exports_fs_utils = {};
+__export(exports_fs_utils, {
+  safeReadJson: () => safeReadJson,
+  safeAppendText: () => safeAppendText,
+  atomicWriteText: () => atomicWriteText,
+  atomicWriteJson: () => atomicWriteJson
+});
+import { writeFileSync, readFileSync, appendFileSync, renameSync, mkdirSync } from "fs";
+import { dirname } from "path";
+function atomicWriteJson(filePath, data) {
+  const tmp = filePath + ".tmp";
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(tmp, JSON.stringify(data, null, 2));
+  renameSync(tmp, filePath);
+}
+function atomicWriteText(filePath, content) {
+  const tmp = filePath + ".tmp";
+  mkdirSync(dirname(filePath), { recursive: true });
+  writeFileSync(tmp, content);
+  renameSync(tmp, filePath);
+}
+function safeAppendText(filePath, content) {
+  mkdirSync(dirname(filePath), { recursive: true });
+  appendFileSync(filePath, content);
+}
+function safeReadJson(filePath) {
+  try {
+    const raw = readFileSync(filePath, "utf-8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+var init_fs_utils = () => {};
+
+// src/types/config.ts
+function isValidConfigKey(key) {
+  return VALID_KEYS.has(key);
+}
+function getConfigKeyMeta(key) {
+  return CONFIG_KEYS.find((k) => k.key === key);
+}
+var CONFIG_KEYS, VALID_KEYS;
+var init_config = __esm(() => {
+  CONFIG_KEYS = [
+    {
+      key: "wiki.path",
+      default: "~/.mink/wiki",
+      envVar: "MINK_WIKI_PATH",
+      description: "Wiki vault location",
+      scope: "local"
+    },
+    {
+      key: "wiki.enabled",
+      default: "true",
+      envVar: "MINK_WIKI_ENABLED",
+      description: "Enable/disable the wiki feature",
+      scope: "shared"
+    },
+    {
+      key: "wiki.sync-mode",
+      default: "immediate",
+      envVar: "MINK_WIKI_SYNC_MODE",
+      description: "Sync mode: immediate or batched",
+      scope: "shared"
+    },
+    {
+      key: "wiki.git-backup",
+      default: "false",
+      envVar: "MINK_WIKI_GIT_BACKUP",
+      description: "Deprecated: use sync.enabled instead",
+      scope: "shared"
+    },
+    {
+      key: "wiki.git-remote",
+      default: "origin",
+      envVar: "MINK_WIKI_GIT_REMOTE",
+      description: "Deprecated: use sync.remote-url instead",
+      scope: "shared"
+    },
+    {
+      key: "notes.default-category",
+      default: "inbox",
+      envVar: "MINK_NOTES_DEFAULT_CATEGORY",
+      description: "Default category for notes captured via CLI",
+      scope: "shared"
+    },
+    {
+      key: "sync.enabled",
+      default: "false",
+      envVar: "MINK_SYNC_ENABLED",
+      description: "Enable/disable automatic git sync of ~/.mink",
+      scope: "shared"
+    },
+    {
+      key: "sync.remote-url",
+      default: "",
+      envVar: "MINK_SYNC_REMOTE_URL",
+      description: "Git remote URL for ~/.mink sync",
+      scope: "shared"
+    },
+    {
+      key: "sync.last-push",
+      default: "",
+      envVar: "MINK_SYNC_LAST_PUSH",
+      description: "ISO timestamp of last successful sync push",
+      scope: "local"
+    },
+    {
+      key: "sync.last-pull",
+      default: "",
+      envVar: "MINK_SYNC_LAST_PULL",
+      description: "ISO timestamp of last successful sync pull",
+      scope: "local"
+    },
+    {
+      key: "channel.discord.bot-token",
+      default: "",
+      envVar: "MINK_CHANNEL_DISCORD_BOT_TOKEN",
+      description: "Discord bot token for Claude Code Channels",
+      scope: "local"
+    },
+    {
+      key: "channel.discord.enabled",
+      default: "false",
+      envVar: "MINK_CHANNEL_DISCORD_ENABLED",
+      description: "Auto-start Discord channel when daemon starts",
+      scope: "local"
+    },
+    {
+      key: "channel.discord.allowlist",
+      default: "",
+      envVar: "MINK_CHANNEL_DISCORD_ALLOWLIST",
+      description: "Comma-separated list of Discord user IDs permitted to DM the bot",
+      scope: "local"
+    },
+    {
+      key: "channel.default-platform",
+      default: "discord",
+      envVar: "MINK_CHANNEL_DEFAULT_PLATFORM",
+      description: "Default platform for mink channel start",
+      scope: "shared"
+    },
+    {
+      key: "channel.skip-permissions",
+      default: "true",
+      envVar: "MINK_CHANNEL_SKIP_PERMISSIONS",
+      description: "Pass --dangerously-skip-permissions so the channel can run without terminal prompts",
+      scope: "shared"
+    },
+    {
+      key: "cli.auto-update",
+      default: "false",
+      envVar: "MINK_CLI_AUTO_UPDATE",
+      description: "Auto-upgrade the mink CLI on schedule via the background scheduler",
+      scope: "shared"
+    },
+    {
+      key: "cli.auto-update-schedule",
+      default: "0 4 * * *",
+      envVar: "MINK_CLI_AUTO_UPDATE_SCHEDULE",
+      description: "Cron expression governing the cli-self-update scheduled task",
+      scope: "shared"
+    },
+    {
+      key: "cli.auto-update-package-manager",
+      default: "auto",
+      envVar: "MINK_CLI_AUTO_UPDATE_PACKAGE_MANAGER",
+      description: "Force a package manager (auto|npm|bun) for self-upgrade installs",
+      scope: "local"
+    },
+    {
+      key: "projects.identity",
+      default: "path-derived",
+      envVar: "MINK_PROJECTS_IDENTITY",
+      description: "Project identity strategy: path-derived (legacy) or git-remote (stable across machines)",
+      scope: "shared"
+    }
+  ];
+  VALID_KEYS = new Set(CONFIG_KEYS.map((k) => k.key));
+});
+
+// src/core/global-config.ts
+var exports_global_config = {};
+__export(exports_global_config, {
+  setConfigValue: () => setConfigValue,
+  saveLocalConfig: () => saveLocalConfig,
+  saveGlobalConfig: () => saveGlobalConfig,
+  resolveConfigValue: () => resolveConfigValue,
+  resolveAllConfig: () => resolveAllConfig,
+  resetConfigKey: () => resetConfigKey,
+  resetAllConfig: () => resetAllConfig,
+  migrateConfigIfNeeded: () => migrateConfigIfNeeded,
+  loadLocalConfig: () => loadLocalConfig,
+  loadGlobalConfig: () => loadGlobalConfig
+});
+function loadConfigFile(path) {
+  const raw = safeReadJson(path);
+  if (raw === null)
+    return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    console.warn("[mink] warning: corrupt config file at " + path);
+    return {};
+  }
+  return raw;
+}
+function loadGlobalConfig() {
+  return loadConfigFile(globalConfigPath());
+}
+function saveGlobalConfig(config) {
+  atomicWriteJson(globalConfigPath(), config);
+}
+function loadLocalConfig() {
+  return loadConfigFile(localConfigPath());
+}
+function saveLocalConfig(config) {
+  atomicWriteJson(localConfigPath(), config);
+}
+function loadConfigForScope(scope) {
+  return scope === "local" ? loadLocalConfig() : loadGlobalConfig();
+}
+function saveConfigForScope(scope, config) {
+  if (scope === "local") {
+    saveLocalConfig(config);
+  } else {
+    saveGlobalConfig(config);
+  }
+}
+function resolveConfigValue(key) {
+  const meta = getConfigKeyMeta(key);
+  const config = loadConfigForScope(meta.scope);
+  const envValue = process.env[meta.envVar];
+  const fileValue = config[key];
+  if (envValue !== undefined && envValue !== "") {
+    return {
+      value: envValue,
+      source: "environment variable",
+      scope: meta.scope,
+      configFileValue: fileValue
+    };
+  }
+  if (fileValue !== undefined) {
+    return { value: fileValue, source: "config file", scope: meta.scope };
+  }
+  return { value: meta.default, source: "default", scope: meta.scope };
+}
+function resolveAllConfig() {
+  return CONFIG_KEYS.map((meta) => ({
+    key: meta.key,
+    ...resolveConfigValue(meta.key)
+  }));
+}
+function setConfigValue(key, value) {
+  const meta = getConfigKeyMeta(key);
+  const config = loadConfigForScope(meta.scope);
+  config[key] = value;
+  saveConfigForScope(meta.scope, config);
+}
+function resetConfigKey(key) {
+  const meta = getConfigKeyMeta(key);
+  const config = loadConfigForScope(meta.scope);
+  delete config[key];
+  saveConfigForScope(meta.scope, config);
+}
+function resetAllConfig() {
+  saveGlobalConfig({});
+  saveLocalConfig({});
+}
+function migrateConfigIfNeeded() {
+  if (migrationRan)
+    return;
+  migrationRan = true;
+  const { existsSync: existsSync2 } = __require("fs");
+  if (existsSync2(localConfigPath()))
+    return;
+  const shared = loadGlobalConfig();
+  const localKeys = CONFIG_KEYS.filter((k) => k.scope === "local");
+  const localConfig = {};
+  let hasLocal = false;
+  for (const meta of localKeys) {
+    const val = shared[meta.key];
+    if (val !== undefined) {
+      localConfig[meta.key] = val;
+      delete shared[meta.key];
+      hasLocal = true;
+    }
+  }
+  if (hasLocal) {
+    saveLocalConfig(localConfig);
+    saveGlobalConfig(shared);
+  }
+}
+var migrationRan = false;
+var init_global_config = __esm(() => {
+  init_paths();
+  init_fs_utils();
+  init_config();
+});
+
 // src/core/project-id.ts
 import { createHash } from "crypto";
-import { basename } from "path";
+import { basename, join } from "path";
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
 function slugify(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+function shortHash(input) {
+  return createHash("sha256").update(input).digest("hex").slice(0, 6);
 }
 function generateProjectId(absolutePath) {
   const normalized = absolutePath.replace(/\/+$/, "");
   const slug = slugify(basename(normalized));
-  const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 6);
+  const hash = shortHash(normalized);
   return `${slug}-${hash}`;
 }
-var init_project_id = () => {};
+function validateProjectIdentifier(id) {
+  return typeof id === "string" && IDENTIFIER_PATTERN.test(id);
+}
+function readProjectOverride(cwd) {
+  const root = getRepoRoot(cwd) ?? cwd;
+  const overridePath = join(root, OVERRIDE_RELATIVE_PATH);
+  if (!existsSync2(overridePath))
+    return null;
+  let raw;
+  try {
+    raw = readFileSync2(overridePath, "utf-8");
+  } catch {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    warnInvalidOverride(overridePath, "file is not valid JSON");
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    warnInvalidOverride(overridePath, "expected a JSON object");
+    return null;
+  }
+  const id = parsed.projectId;
+  if (id === undefined)
+    return null;
+  if (!validateProjectIdentifier(id)) {
+    warnInvalidOverride(overridePath, "projectId must start with a letter or digit, contain only [a-z0-9._-], and be 1–128 characters");
+    return null;
+  }
+  return id;
+}
+function warnInvalidOverride(path, reason) {
+  if (warnedOverrides.has(path))
+    return;
+  warnedOverrides.add(path);
+  console.warn(`[mink] ignoring ${path}: ${reason}`);
+}
+function gitDerivedIdentity(cwd) {
+  const components = deriveGitIdentity(cwd);
+  if (!components)
+    return null;
+  const remoteLeaf = components.remote.split("/").filter((p) => p).pop();
+  const slugSource = components.subpath ? components.subpath.split("/").pop() : remoteLeaf ?? "project";
+  const slug = slugify(slugSource);
+  const hash = shortHash(`git:${components.remote}:${components.subpath}`);
+  return `${slug}-${hash}`;
+}
+function readIdentityMode() {
+  const envOverride = process.env.MINK_PROJECTS_IDENTITY;
+  if (envOverride === "git-remote" || envOverride === "path-derived") {
+    return envOverride;
+  }
+  try {
+    const { resolveConfigValue: resolveConfigValue2 } = (init_global_config(), __toCommonJS(exports_global_config));
+    const v = resolveConfigValue2("projects.identity").value;
+    if (v === "git-remote")
+      return "git-remote";
+  } catch {}
+  return "path-derived";
+}
+function resolveProjectIdentity(cwd, modeOverride) {
+  const mode = modeOverride ?? readIdentityMode();
+  if (mode === "path-derived") {
+    return { id: generateProjectId(cwd), source: "path-derived" };
+  }
+  const override = readProjectOverride(cwd);
+  if (override)
+    return { id: override, source: "override" };
+  const git = gitDerivedIdentity(cwd);
+  if (git)
+    return { id: git, source: "git-remote" };
+  return { id: generateProjectId(cwd), source: "path-derived" };
+}
+function projectIdFor(cwd) {
+  return resolveProjectIdentity(cwd).id;
+}
+var IDENTIFIER_PATTERN, OVERRIDE_RELATIVE_PATH = ".mink/project.json", warnedOverrides;
+var init_project_id = __esm(() => {
+  init_git_identity();
+  IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+  warnedOverrides = new Set;
+});
+
+// src/core/project-registry.ts
+var exports_project_registry = {};
+__export(exports_project_registry, {
+  setProjectPathForDevice: () => setProjectPathForDevice,
+  listRegisteredProjects: () => listRegisteredProjects,
+  getProjectMeta: () => getProjectMeta,
+  findProjectDirByIdOrAlias: () => findProjectDirByIdOrAlias,
+  addProjectAlias: () => addProjectAlias
+});
+import { readdirSync, existsSync as existsSync3 } from "fs";
+import { join as join2 } from "path";
+function projectMetaFilePath(projDir) {
+  return join2(projDir, "project-meta.json");
+}
+function getProjectMeta(projDir) {
+  const raw = safeReadJson(projectMetaFilePath(projDir));
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    return null;
+  const obj = raw;
+  if (typeof obj.cwd !== "string" || typeof obj.name !== "string")
+    return null;
+  const aliases = Array.isArray(obj.aliases) ? obj.aliases.filter((s) => typeof s === "string") : undefined;
+  const pathsByDevice = obj.pathsByDevice && typeof obj.pathsByDevice === "object" && !Array.isArray(obj.pathsByDevice) ? Object.fromEntries(Object.entries(obj.pathsByDevice).filter(([, v]) => typeof v === "string")) : undefined;
+  return {
+    cwd: obj.cwd,
+    name: obj.name,
+    initTimestamp: obj.initTimestamp ?? "",
+    version: obj.version ?? "0.1.0",
+    aliases,
+    pathsByDevice
+  };
+}
+function addProjectAlias(projDir, aliasId) {
+  const path = projectMetaFilePath(projDir);
+  const raw = safeReadJson(path);
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    return false;
+  const obj = raw;
+  const existing = Array.isArray(obj.aliases) ? obj.aliases.filter((s) => typeof s === "string") : [];
+  if (existing.includes(aliasId))
+    return false;
+  obj.aliases = [...existing, aliasId];
+  atomicWriteJson(path, obj);
+  return true;
+}
+function setProjectPathForDevice(projDir, deviceId, cwd) {
+  const path = projectMetaFilePath(projDir);
+  const raw = safeReadJson(path);
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    return;
+  const obj = raw;
+  const existing = obj.pathsByDevice && typeof obj.pathsByDevice === "object" && !Array.isArray(obj.pathsByDevice) ? { ...obj.pathsByDevice } : {};
+  if (Object.keys(existing).length === 0 && typeof obj.cwd === "string" && obj.cwd !== cwd) {
+    existing[deviceId] = obj.cwd;
+  }
+  existing[deviceId] = cwd;
+  obj.pathsByDevice = existing;
+  obj.cwd = cwd;
+  atomicWriteJson(path, obj);
+}
+function listRegisteredProjects() {
+  const projectsDir = join2(minkRoot(), "projects");
+  if (!existsSync3(projectsDir))
+    return [];
+  const entries = readdirSync(projectsDir, { withFileTypes: true });
+  const projects = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory())
+      continue;
+    const projDir = join2(projectsDir, entry.name);
+    const meta = getProjectMeta(projDir);
+    if (meta) {
+      projects.push({
+        id: entry.name,
+        cwd: meta.cwd,
+        name: meta.name,
+        version: meta.version,
+        aliases: meta.aliases ?? [],
+        pathsByDevice: meta.pathsByDevice ?? {}
+      });
+    }
+  }
+  return projects;
+}
+function findProjectDirByIdOrAlias(id) {
+  const projectsDir = join2(minkRoot(), "projects");
+  if (!existsSync3(projectsDir))
+    return null;
+  const primary = join2(projectsDir, id);
+  if (existsSync3(primary))
+    return primary;
+  let entries;
+  try {
+    entries = readdirSync(projectsDir);
+  } catch {
+    return null;
+  }
+  for (const name of entries) {
+    const projDir = join2(projectsDir, name);
+    const meta = getProjectMeta(projDir);
+    if (meta?.aliases?.includes(id))
+      return projDir;
+  }
+  return null;
+}
+var init_project_registry = __esm(() => {
+  init_paths();
+  init_fs_utils();
+});
 
 // src/core/paths.ts
 var exports_paths = {};
@@ -215,10 +794,11 @@ __export(exports_paths, {
   actionLogShardPath: () => actionLogShardPath,
   actionLogPath: () => actionLogPath
 });
-import { join } from "path";
+import { join as join3 } from "path";
+import { existsSync as existsSync4 } from "fs";
 import { homedir } from "os";
 function resolveMinkRoot() {
-  return process.env.MINK_ROOT_OVERRIDE || join(homedir(), ".mink");
+  return process.env.MINK_ROOT_OVERRIDE || join3(homedir(), ".mink");
 }
 function minkRoot() {
   if (process.env.MINK_ROOT_OVERRIDE) {
@@ -227,146 +807,119 @@ function minkRoot() {
   return MINK_ROOT;
 }
 function projectDir(cwd) {
-  const id = generateProjectId(cwd);
-  return join(minkRoot(), "projects", id);
+  const id = projectIdFor(cwd);
+  const primary = join3(minkRoot(), "projects", id);
+  if (existsSync4(primary))
+    return primary;
+  try {
+    const { findProjectDirByIdOrAlias: findProjectDirByIdOrAlias2 } = (init_project_registry(), __toCommonJS(exports_project_registry));
+    const aliased = findProjectDirByIdOrAlias2(id);
+    if (aliased)
+      return aliased;
+  } catch {}
+  return primary;
 }
 function sessionPath(cwd) {
-  return join(projectDir(cwd), "session.json");
+  return join3(projectDir(cwd), "session.json");
 }
 function fileIndexPath(cwd) {
-  return join(projectDir(cwd), "file-index.json");
+  return join3(projectDir(cwd), "file-index.json");
 }
 function configPath(cwd) {
-  return join(projectDir(cwd), "config.json");
+  return join3(projectDir(cwd), "config.json");
 }
 function learningMemoryPath(cwd) {
-  return join(projectDir(cwd), "learning-memory.md");
+  return join3(projectDir(cwd), "learning-memory.md");
 }
 function tokenLedgerPath(cwd) {
-  return join(projectDir(cwd), "token-ledger.json");
+  return join3(projectDir(cwd), "token-ledger.json");
 }
 function tokenLedgerArchivePath(cwd) {
-  return join(projectDir(cwd), "token-ledger-archive.json");
+  return join3(projectDir(cwd), "token-ledger-archive.json");
 }
 function bugMemoryPath(cwd) {
-  return join(projectDir(cwd), "bug-memory.json");
+  return join3(projectDir(cwd), "bug-memory.json");
 }
 function actionLogPath(cwd) {
-  return join(projectDir(cwd), "action-log.md");
+  return join3(projectDir(cwd), "action-log.md");
 }
 function schedulerPidPath() {
-  return join(minkRoot(), "scheduler.pid");
+  return join3(minkRoot(), "scheduler.pid");
 }
 function schedulerLogPath() {
-  return join(minkRoot(), "scheduler.log");
+  return join3(minkRoot(), "scheduler.log");
 }
 function schedulerManifestPath(cwd) {
-  return join(projectDir(cwd), "scheduler-manifest.json");
+  return join3(projectDir(cwd), "scheduler-manifest.json");
 }
 function channelPidPath() {
-  return join(minkRoot(), "channel.pid");
+  return join3(minkRoot(), "channel.pid");
 }
 function channelLogPath() {
-  return join(minkRoot(), "channel.log");
+  return join3(minkRoot(), "channel.log");
 }
 function globalConfigPath() {
-  return join(minkRoot(), "config");
+  return join3(minkRoot(), "config");
 }
 function localConfigPath() {
-  return join(minkRoot(), "config.local");
+  return join3(minkRoot(), "config.local");
 }
 function deviceIdPath() {
-  return join(minkRoot(), "device-id");
+  return join3(minkRoot(), "device-id");
 }
 function deviceRegistryPath() {
-  return join(minkRoot(), "devices.json");
+  return join3(minkRoot(), "devices.json");
 }
 function projectMetaPath(cwd) {
-  return join(projectDir(cwd), "project-meta.json");
+  return join3(projectDir(cwd), "project-meta.json");
 }
 function backupDirPath(cwd) {
-  return join(projectDir(cwd), "backups");
+  return join3(projectDir(cwd), "backups");
 }
 function syncVersionPath() {
-  return join(minkRoot(), ".mink-sync-version");
+  return join3(minkRoot(), ".mink-sync-version");
 }
 function projectStateDir(cwd) {
-  return join(projectDir(cwd), "state");
+  return join3(projectDir(cwd), "state");
 }
 function deviceShardDir(cwd, deviceId) {
-  return join(projectStateDir(cwd), deviceId);
+  return join3(projectStateDir(cwd), deviceId);
 }
 function tokenLedgerShardPath(cwd, deviceId) {
-  return join(deviceShardDir(cwd, deviceId), "token-ledger.json");
+  return join3(deviceShardDir(cwd, deviceId), "token-ledger.json");
 }
 function tokenLedgerArchiveShardPath(cwd, deviceId) {
-  return join(deviceShardDir(cwd, deviceId), "token-ledger-archive.json");
+  return join3(deviceShardDir(cwd, deviceId), "token-ledger-archive.json");
 }
 function bugMemoryShardPath(cwd, deviceId) {
-  return join(deviceShardDir(cwd, deviceId), "bug-memory.json");
+  return join3(deviceShardDir(cwd, deviceId), "bug-memory.json");
 }
 function actionLogShardPath(cwd, deviceId) {
-  return join(deviceShardDir(cwd, deviceId), "action-log.md");
+  return join3(deviceShardDir(cwd, deviceId), "action-log.md");
 }
 function learningMemorySidecarPath(cwd, deviceId) {
-  return join(projectDir(cwd), `learning-memory.${deviceId}.md`);
+  return join3(projectDir(cwd), `learning-memory.${deviceId}.md`);
 }
 function fileIndexCountersPath(cwd) {
-  return join(projectDir(cwd), ".mink-state-counters.json");
+  return join3(projectDir(cwd), ".mink-state-counters.json");
 }
 function designCapturesDir(cwd) {
-  return join(projectDir(cwd), "design-captures");
+  return join3(projectDir(cwd), "design-captures");
 }
 function designReportPath(cwd) {
-  return join(projectDir(cwd), "design-report.json");
+  return join3(projectDir(cwd), "design-report.json");
 }
 function frameworkAdvisorPath(cwd) {
-  return join(projectDir(cwd), "framework-advisor.md");
+  return join3(projectDir(cwd), "framework-advisor.md");
 }
 function frameworkAdvisorJsonPath(cwd) {
-  return join(projectDir(cwd), "framework-advisor.json");
+  return join3(projectDir(cwd), "framework-advisor.json");
 }
 var MINK_ROOT;
 var init_paths = __esm(() => {
   init_project_id();
   MINK_ROOT = resolveMinkRoot();
 });
-
-// src/core/fs-utils.ts
-var exports_fs_utils = {};
-__export(exports_fs_utils, {
-  safeReadJson: () => safeReadJson,
-  safeAppendText: () => safeAppendText,
-  atomicWriteText: () => atomicWriteText,
-  atomicWriteJson: () => atomicWriteJson
-});
-import { writeFileSync, readFileSync, appendFileSync, renameSync, mkdirSync } from "fs";
-import { dirname } from "path";
-function atomicWriteJson(filePath, data) {
-  const tmp = filePath + ".tmp";
-  mkdirSync(dirname(filePath), { recursive: true });
-  writeFileSync(tmp, JSON.stringify(data, null, 2));
-  renameSync(tmp, filePath);
-}
-function atomicWriteText(filePath, content) {
-  const tmp = filePath + ".tmp";
-  mkdirSync(dirname(filePath), { recursive: true });
-  writeFileSync(tmp, content);
-  renameSync(tmp, filePath);
-}
-function safeAppendText(filePath, content) {
-  mkdirSync(dirname(filePath), { recursive: true });
-  appendFileSync(filePath, content);
-}
-function safeReadJson(filePath) {
-  try {
-    const raw = readFileSync(filePath, "utf-8");
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-var init_fs_utils = () => {};
 
 // src/core/action-log.ts
 var exports_action_log = {};
@@ -386,7 +939,7 @@ __export(exports_action_log, {
   consolidateLog: () => consolidateLog,
   appendToLog: () => appendToLog
 });
-import { readFileSync as readFileSync2 } from "fs";
+import { readFileSync as readFileSync3 } from "fs";
 function truncatePath(filePath, maxLen = 60) {
   if (filePath.length <= maxLen)
     return filePath;
@@ -473,7 +1026,7 @@ function appendToLog(logPath, text) {
 }
 function safeReadLog(logPath) {
   try {
-    return readFileSync2(logPath, "utf-8");
+    return readFileSync3(logPath, "utf-8");
   } catch {
     return "";
   }
@@ -618,14 +1171,14 @@ __export(exports_device, {
   listDevices: () => listDevices,
   getOrCreateDeviceId: () => getOrCreateDeviceId
 });
-import { existsSync, readFileSync as readFileSync3, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
+import { existsSync as existsSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync2, mkdirSync as mkdirSync2 } from "fs";
 import { dirname as dirname2 } from "path";
 import { hostname, platform } from "os";
 import { randomUUID } from "crypto";
 function getOrCreateDeviceId() {
   const idPath = deviceIdPath();
-  if (existsSync(idPath)) {
-    return readFileSync3(idPath, "utf-8").trim();
+  if (existsSync5(idPath)) {
+    return readFileSync4(idPath, "utf-8").trim();
   }
   const id = randomUUID();
   mkdirSync2(dirname2(idPath), { recursive: true });
@@ -683,263 +1236,6 @@ var init_device = __esm(() => {
   init_fs_utils();
 });
 
-// src/types/config.ts
-function isValidConfigKey(key) {
-  return VALID_KEYS.has(key);
-}
-function getConfigKeyMeta(key) {
-  return CONFIG_KEYS.find((k) => k.key === key);
-}
-var CONFIG_KEYS, VALID_KEYS;
-var init_config = __esm(() => {
-  CONFIG_KEYS = [
-    {
-      key: "wiki.path",
-      default: "~/.mink/wiki",
-      envVar: "MINK_WIKI_PATH",
-      description: "Wiki vault location",
-      scope: "local"
-    },
-    {
-      key: "wiki.enabled",
-      default: "true",
-      envVar: "MINK_WIKI_ENABLED",
-      description: "Enable/disable the wiki feature",
-      scope: "shared"
-    },
-    {
-      key: "wiki.sync-mode",
-      default: "immediate",
-      envVar: "MINK_WIKI_SYNC_MODE",
-      description: "Sync mode: immediate or batched",
-      scope: "shared"
-    },
-    {
-      key: "wiki.git-backup",
-      default: "false",
-      envVar: "MINK_WIKI_GIT_BACKUP",
-      description: "Deprecated: use sync.enabled instead",
-      scope: "shared"
-    },
-    {
-      key: "wiki.git-remote",
-      default: "origin",
-      envVar: "MINK_WIKI_GIT_REMOTE",
-      description: "Deprecated: use sync.remote-url instead",
-      scope: "shared"
-    },
-    {
-      key: "notes.default-category",
-      default: "inbox",
-      envVar: "MINK_NOTES_DEFAULT_CATEGORY",
-      description: "Default category for notes captured via CLI",
-      scope: "shared"
-    },
-    {
-      key: "sync.enabled",
-      default: "false",
-      envVar: "MINK_SYNC_ENABLED",
-      description: "Enable/disable automatic git sync of ~/.mink",
-      scope: "shared"
-    },
-    {
-      key: "sync.remote-url",
-      default: "",
-      envVar: "MINK_SYNC_REMOTE_URL",
-      description: "Git remote URL for ~/.mink sync",
-      scope: "shared"
-    },
-    {
-      key: "sync.last-push",
-      default: "",
-      envVar: "MINK_SYNC_LAST_PUSH",
-      description: "ISO timestamp of last successful sync push",
-      scope: "local"
-    },
-    {
-      key: "sync.last-pull",
-      default: "",
-      envVar: "MINK_SYNC_LAST_PULL",
-      description: "ISO timestamp of last successful sync pull",
-      scope: "local"
-    },
-    {
-      key: "channel.discord.bot-token",
-      default: "",
-      envVar: "MINK_CHANNEL_DISCORD_BOT_TOKEN",
-      description: "Discord bot token for Claude Code Channels",
-      scope: "local"
-    },
-    {
-      key: "channel.discord.enabled",
-      default: "false",
-      envVar: "MINK_CHANNEL_DISCORD_ENABLED",
-      description: "Auto-start Discord channel when daemon starts",
-      scope: "local"
-    },
-    {
-      key: "channel.discord.allowlist",
-      default: "",
-      envVar: "MINK_CHANNEL_DISCORD_ALLOWLIST",
-      description: "Comma-separated list of Discord user IDs permitted to DM the bot",
-      scope: "local"
-    },
-    {
-      key: "channel.default-platform",
-      default: "discord",
-      envVar: "MINK_CHANNEL_DEFAULT_PLATFORM",
-      description: "Default platform for mink channel start",
-      scope: "shared"
-    },
-    {
-      key: "channel.skip-permissions",
-      default: "true",
-      envVar: "MINK_CHANNEL_SKIP_PERMISSIONS",
-      description: "Pass --dangerously-skip-permissions so the channel can run without terminal prompts",
-      scope: "shared"
-    },
-    {
-      key: "cli.auto-update",
-      default: "false",
-      envVar: "MINK_CLI_AUTO_UPDATE",
-      description: "Auto-upgrade the mink CLI on schedule via the background scheduler",
-      scope: "shared"
-    },
-    {
-      key: "cli.auto-update-schedule",
-      default: "0 4 * * *",
-      envVar: "MINK_CLI_AUTO_UPDATE_SCHEDULE",
-      description: "Cron expression governing the cli-self-update scheduled task",
-      scope: "shared"
-    },
-    {
-      key: "cli.auto-update-package-manager",
-      default: "auto",
-      envVar: "MINK_CLI_AUTO_UPDATE_PACKAGE_MANAGER",
-      description: "Force a package manager (auto|npm|bun) for self-upgrade installs",
-      scope: "local"
-    }
-  ];
-  VALID_KEYS = new Set(CONFIG_KEYS.map((k) => k.key));
-});
-
-// src/core/global-config.ts
-var exports_global_config = {};
-__export(exports_global_config, {
-  setConfigValue: () => setConfigValue,
-  saveLocalConfig: () => saveLocalConfig,
-  saveGlobalConfig: () => saveGlobalConfig,
-  resolveConfigValue: () => resolveConfigValue,
-  resolveAllConfig: () => resolveAllConfig,
-  resetConfigKey: () => resetConfigKey,
-  resetAllConfig: () => resetAllConfig,
-  migrateConfigIfNeeded: () => migrateConfigIfNeeded,
-  loadLocalConfig: () => loadLocalConfig,
-  loadGlobalConfig: () => loadGlobalConfig
-});
-function loadConfigFile(path) {
-  const raw = safeReadJson(path);
-  if (raw === null)
-    return {};
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    console.warn("[mink] warning: corrupt config file at " + path);
-    return {};
-  }
-  return raw;
-}
-function loadGlobalConfig() {
-  return loadConfigFile(globalConfigPath());
-}
-function saveGlobalConfig(config) {
-  atomicWriteJson(globalConfigPath(), config);
-}
-function loadLocalConfig() {
-  return loadConfigFile(localConfigPath());
-}
-function saveLocalConfig(config) {
-  atomicWriteJson(localConfigPath(), config);
-}
-function loadConfigForScope(scope) {
-  return scope === "local" ? loadLocalConfig() : loadGlobalConfig();
-}
-function saveConfigForScope(scope, config) {
-  if (scope === "local") {
-    saveLocalConfig(config);
-  } else {
-    saveGlobalConfig(config);
-  }
-}
-function resolveConfigValue(key) {
-  const meta = getConfigKeyMeta(key);
-  const config = loadConfigForScope(meta.scope);
-  const envValue = process.env[meta.envVar];
-  const fileValue = config[key];
-  if (envValue !== undefined && envValue !== "") {
-    return {
-      value: envValue,
-      source: "environment variable",
-      scope: meta.scope,
-      configFileValue: fileValue
-    };
-  }
-  if (fileValue !== undefined) {
-    return { value: fileValue, source: "config file", scope: meta.scope };
-  }
-  return { value: meta.default, source: "default", scope: meta.scope };
-}
-function resolveAllConfig() {
-  return CONFIG_KEYS.map((meta) => ({
-    key: meta.key,
-    ...resolveConfigValue(meta.key)
-  }));
-}
-function setConfigValue(key, value) {
-  const meta = getConfigKeyMeta(key);
-  const config = loadConfigForScope(meta.scope);
-  config[key] = value;
-  saveConfigForScope(meta.scope, config);
-}
-function resetConfigKey(key) {
-  const meta = getConfigKeyMeta(key);
-  const config = loadConfigForScope(meta.scope);
-  delete config[key];
-  saveConfigForScope(meta.scope, config);
-}
-function resetAllConfig() {
-  saveGlobalConfig({});
-  saveLocalConfig({});
-}
-function migrateConfigIfNeeded() {
-  if (migrationRan)
-    return;
-  migrationRan = true;
-  const { existsSync: existsSync2 } = __require("fs");
-  if (existsSync2(localConfigPath()))
-    return;
-  const shared = loadGlobalConfig();
-  const localKeys = CONFIG_KEYS.filter((k) => k.scope === "local");
-  const localConfig = {};
-  let hasLocal = false;
-  for (const meta of localKeys) {
-    const val = shared[meta.key];
-    if (val !== undefined) {
-      localConfig[meta.key] = val;
-      delete shared[meta.key];
-      hasLocal = true;
-    }
-  }
-  if (hasLocal) {
-    saveLocalConfig(localConfig);
-    saveGlobalConfig(shared);
-  }
-}
-var migrationRan = false;
-var init_global_config = __esm(() => {
-  init_paths();
-  init_fs_utils();
-  init_config();
-});
-
 // src/core/vault.ts
 var exports_vault = {};
 __export(exports_vault, {
@@ -966,54 +1262,54 @@ __export(exports_vault, {
   ensureVaultStructure: () => ensureVaultStructure,
   categoryToDir: () => categoryToDir
 });
-import { join as join2, basename as basename2, resolve } from "path";
+import { join as join4, basename as basename2, resolve } from "path";
 import { homedir as homedir2 } from "os";
-import { existsSync as existsSync2, mkdirSync as mkdirSync3, symlinkSync, unlinkSync, lstatSync, readlinkSync } from "fs";
+import { existsSync as existsSync6, mkdirSync as mkdirSync3, symlinkSync, unlinkSync, lstatSync, readlinkSync } from "fs";
 function resolveVaultPath() {
   const resolved = resolveConfigValue("wiki.path");
   const raw = resolved.value;
-  const expanded = raw.startsWith("~/") ? join2(homedir2(), raw.slice(2)) : raw;
+  const expanded = raw.startsWith("~/") ? join4(homedir2(), raw.slice(2)) : raw;
   return resolve(expanded);
 }
 function vaultRoot() {
   return resolveVaultPath();
 }
 function vaultInbox() {
-  return join2(resolveVaultPath(), "inbox");
+  return join4(resolveVaultPath(), "inbox");
 }
 function vaultProjects(slug) {
-  const base = join2(resolveVaultPath(), "projects");
-  return slug ? join2(base, slug) : base;
+  const base = join4(resolveVaultPath(), "projects");
+  return slug ? join4(base, slug) : base;
 }
 function vaultAreas() {
-  return join2(resolveVaultPath(), "areas");
+  return join4(resolveVaultPath(), "areas");
 }
 function vaultDailyDir() {
-  return join2(resolveVaultPath(), "areas", "daily");
+  return join4(resolveVaultPath(), "areas", "daily");
 }
 function vaultResources() {
-  return join2(resolveVaultPath(), "resources");
+  return join4(resolveVaultPath(), "resources");
 }
 function vaultArchives() {
-  return join2(resolveVaultPath(), "archives");
+  return join4(resolveVaultPath(), "archives");
 }
 function vaultTemplates() {
-  return join2(resolveVaultPath(), "templates");
+  return join4(resolveVaultPath(), "templates");
 }
 function vaultPatterns() {
-  return join2(resolveVaultPath(), "patterns");
+  return join4(resolveVaultPath(), "patterns");
 }
 function vaultManifestPath() {
-  return join2(resolveVaultPath(), ".mink-vault.json");
+  return join4(resolveVaultPath(), ".mink-vault.json");
 }
 function vaultIndexPath() {
-  return join2(resolveVaultPath(), ".mink-index.json");
+  return join4(resolveVaultPath(), ".mink-index.json");
 }
 function vaultMasterIndexPath() {
-  return join2(resolveVaultPath(), "_index.md");
+  return join4(resolveVaultPath(), "_index.md");
 }
 function isVaultInitialized() {
-  return existsSync2(vaultManifestPath());
+  return existsSync6(vaultManifestPath());
 }
 function isInsideVault(cwd) {
   const vault = resolveVaultPath();
@@ -1034,23 +1330,23 @@ function loadVaultManifest() {
 function ensureVaultStructure() {
   const root = resolveVaultPath();
   for (const dir of VAULT_DIRS) {
-    mkdirSync3(join2(root, dir), { recursive: true });
+    mkdirSync3(join4(root, dir), { recursive: true });
   }
 }
 function categoryToDir(category, projectSlug) {
   const root = resolveVaultPath();
   switch (category) {
     case "projects":
-      return projectSlug ? join2(root, "projects", projectSlug) : join2(root, "projects");
+      return projectSlug ? join4(root, "projects", projectSlug) : join4(root, "projects");
     case "areas":
-      return join2(root, "areas");
+      return join4(root, "areas");
     case "resources":
-      return join2(root, "resources");
+      return join4(root, "resources");
     case "archives":
-      return join2(root, "archives");
+      return join4(root, "archives");
     case "inbox":
     default:
-      return join2(root, "inbox");
+      return join4(root, "inbox");
   }
 }
 function saveManifest(manifest) {
@@ -1058,16 +1354,16 @@ function saveManifest(manifest) {
 }
 function linkExternal(targetPath, name) {
   const root = resolveVaultPath();
-  const absTarget = targetPath.startsWith("~/") ? join2(homedir2(), targetPath.slice(2)) : resolve(targetPath);
-  if (!existsSync2(absTarget)) {
+  const absTarget = targetPath.startsWith("~/") ? join4(homedir2(), targetPath.slice(2)) : resolve(targetPath);
+  if (!existsSync6(absTarget)) {
     return { ok: false, error: `target does not exist: ${absTarget}` };
   }
   if (!lstatSync(absTarget).isDirectory()) {
     return { ok: false, error: `target is not a directory: ${absTarget}` };
   }
   const linkName = name ?? basename2(absTarget);
-  const linkPath = join2(root, linkName);
-  if (existsSync2(linkPath)) {
+  const linkPath = join4(root, linkName);
+  if (existsSync6(linkPath)) {
     if (lstatSync(linkPath).isSymbolicLink()) {
       const existing = readlinkSync(linkPath);
       if (existing === absTarget) {
@@ -1089,8 +1385,8 @@ function linkExternal(targetPath, name) {
 }
 function unlinkExternal(name) {
   const root = resolveVaultPath();
-  const linkPath = join2(root, name);
-  if (!existsSync2(linkPath)) {
+  const linkPath = join4(root, name);
+  if (!existsSync6(linkPath)) {
     return { ok: false, error: `no link named "${name}" in the vault` };
   }
   if (!lstatSync(linkPath).isSymbolicLink()) {
@@ -1113,7 +1409,7 @@ var init_vault = __esm(() => {
   init_global_config();
   init_fs_utils();
   init_fs_utils();
-  DEFAULT_VAULT_PATH = join2(homedir2(), ".mink", "wiki");
+  DEFAULT_VAULT_PATH = join4(homedir2(), ".mink", "wiki");
   VAULT_DIRS = [
     "",
     "inbox",
@@ -1128,8 +1424,8 @@ var init_vault = __esm(() => {
 });
 
 // src/core/note-index.ts
-import { join as join3 } from "path";
-import { readFileSync as readFileSync4, readdirSync, statSync } from "fs";
+import { join as join5 } from "path";
+import { readFileSync as readFileSync5, readdirSync as readdirSync2, statSync } from "fs";
 function createEmptyVaultIndex() {
   return {
     lastScanTimestamp: "",
@@ -1262,7 +1558,7 @@ function rebuildVaultIndex() {
   const files = collectAllMarkdown(root);
   for (const file of files) {
     try {
-      const content = readFileSync4(file.absolutePath, "utf-8");
+      const content = readFileSync5(file.absolutePath, "utf-8");
       const entry = buildEntryFromContent(file.relativePath, content, new Date(file.mtimeMs).toISOString());
       updateVaultEntry(index, entry);
     } catch {}
@@ -1320,13 +1616,13 @@ function collectAllMarkdown(rootPath) {
   const files = [];
   function walk(dir) {
     try {
-      const entries = readdirSync(dir, { withFileTypes: true });
+      const entries = readdirSync2(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (VAULT_EXCLUDES.has(entry.name))
           continue;
         if (entry.name.startsWith("."))
           continue;
-        const fullPath = join3(dir, entry.name);
+        const fullPath = join5(dir, entry.name);
         if (entry.isDirectory()) {
           walk(fullPath);
         } else if (entry.name.endsWith(".md")) {
@@ -1357,11 +1653,11 @@ var init_note_index = __esm(() => {
 });
 
 // src/core/conflict-park.ts
-import { execSync } from "child_process";
-import { existsSync as existsSync4 } from "fs";
-import { join as join4 } from "path";
+import { execSync as execSync2 } from "child_process";
+import { existsSync as existsSync8 } from "fs";
+import { join as join6 } from "path";
 function git(args) {
-  return execSync(`git ${args}`, {
+  return execSync2(`git ${args}`, {
     cwd: minkRoot(),
     timeout: GIT_TIMEOUT,
     stdio: ["pipe", "pipe", "pipe"]
@@ -1376,7 +1672,7 @@ function gitSafe(args) {
 }
 function parkConflictingState(reason) {
   const root = minkRoot();
-  const inMerge = existsSync4(join4(root, ".git", "MERGE_HEAD")) || existsSync4(join4(root, ".git", "rebase-merge")) || existsSync4(join4(root, ".git", "rebase-apply"));
+  const inMerge = existsSync8(join6(root, ".git", "MERGE_HEAD")) || existsSync8(join6(root, ".git", "rebase-merge")) || existsSync8(join6(root, ".git", "rebase-apply"));
   if (inMerge) {
     gitSafe("merge --abort");
     gitSafe("rebase --abort");
@@ -1433,12 +1729,12 @@ __export(exports_sync, {
   disconnectSync: () => disconnectSync,
   MINK_SYNC_VERSION: () => MINK_SYNC_VERSION
 });
-import { existsSync as existsSync5, writeFileSync as writeFileSync3, readFileSync as readFileSync5 } from "fs";
-import { join as join5 } from "path";
-import { execSync as execSync2 } from "child_process";
+import { existsSync as existsSync9, writeFileSync as writeFileSync3, readFileSync as readFileSync6 } from "fs";
+import { join as join7 } from "path";
+import { execSync as execSync3 } from "child_process";
 function readSyncVersion() {
   try {
-    const raw = readFileSync5(syncVersionPath(), "utf-8").trim();
+    const raw = readFileSync6(syncVersionPath(), "utf-8").trim();
     const n = parseInt(raw, 10);
     return Number.isFinite(n) && n > 0 ? n : 1;
   } catch {
@@ -1450,7 +1746,7 @@ function writeSyncVersion(version) {
 `);
 }
 function git2(args, timeoutMs = GIT_TIMEOUT2) {
-  return execSync2(`git ${args}`, {
+  return execSync3(`git ${args}`, {
     cwd: minkRoot(),
     timeout: timeoutMs,
     stdio: ["pipe", "pipe", "pipe"]
@@ -1467,14 +1763,14 @@ function isSyncInitialized() {
   const enabled = resolveConfigValue("sync.enabled").value;
   if (enabled !== "true")
     return false;
-  return existsSync5(join5(minkRoot(), ".git"));
+  return existsSync9(join7(minkRoot(), ".git"));
 }
 function ensureGitignore() {
-  const gitignorePath = join5(minkRoot(), ".gitignore");
+  const gitignorePath = join7(minkRoot(), ".gitignore");
   writeFileSync3(gitignorePath, GITIGNORE_CONTENTS);
 }
 function ensureGitAttributes() {
-  const path = join5(minkRoot(), ".gitattributes");
+  const path = join7(minkRoot(), ".gitattributes");
   writeFileSync3(path, GITATTRIBUTES_CONTENTS);
 }
 function ensureMergeDriversRegistered() {
@@ -1488,7 +1784,7 @@ function ensureMergeDriversRegistered() {
 }
 function getSyncStatus() {
   const enabled = resolveConfigValue("sync.enabled").value === "true";
-  const gitInitialized = existsSync5(join5(minkRoot(), ".git"));
+  const gitInitialized = existsSync9(join7(minkRoot(), ".git"));
   const remoteUrl = resolveConfigValue("sync.remote-url").value;
   const lastPush = resolveConfigValue("sync.last-push").value;
   const lastPull = resolveConfigValue("sync.last-pull").value;
@@ -1514,8 +1810,8 @@ function getSyncStatus() {
 }
 function initSync(remoteUrl) {
   const root = minkRoot();
-  const gitDir = join5(root, ".git");
-  if (existsSync5(gitDir)) {
+  const gitDir = join7(root, ".git");
+  if (existsSync9(gitDir)) {
     console.log("[mink] sync is already initialized in " + root);
     console.log("[mink] run 'mink sync disconnect' first to reinitialize");
     return;
@@ -1656,8 +1952,8 @@ function syncPush(onMessage = (msg) => console.error(msg)) {
 }
 function disconnectSync() {
   const root = minkRoot();
-  const gitDir = join5(root, ".git");
-  if (!existsSync5(gitDir)) {
+  const gitDir = join7(root, ".git");
+  if (!existsSync9(gitDir)) {
     console.log("[mink] sync is not initialized — nothing to disconnect");
     return;
   }
@@ -1679,7 +1975,7 @@ function detectRemoteDefaultBranch() {
 `).map((b) => b.trim()).filter((b) => b.startsWith("origin/") && !b.includes("HEAD")).map((b) => b.replace("origin/", ""))[0];
   return first ?? "main";
 }
-var GIT_TIMEOUT2 = 5000, PUSH_TIMEOUT = 1e4, FETCH_TIMEOUT = 15000, MINK_SYNC_VERSION = 2, GITIGNORE_CONTENTS = `# Runtime state — machine-specific
+var GIT_TIMEOUT2 = 5000, PUSH_TIMEOUT = 1e4, FETCH_TIMEOUT = 15000, MINK_SYNC_VERSION = 3, GITIGNORE_CONTENTS = `# Runtime state — machine-specific
 scheduler.pid
 scheduler.log
 channel.pid
@@ -1691,6 +1987,13 @@ config.local
 
 # Migration coordination — never sync this
 .sync-migrate.lock
+
+# Per-device identity migration recovery snapshots — local recovery state
+# for the migrating device, not authoritative project state. A device that
+# needs to recover from its migration must do so from its own snapshot;
+# syncing would make rollback dirs appear on devices that never produced
+# the corresponding migration.
+.identity-rollback/
 
 # Local backups and per-device caches — machine-specific snapshots
 projects/*/backups/
@@ -1729,22 +2032,26 @@ var init_sync = __esm(() => {
 var exports_sync_migrate = {};
 __export(exports_sync_migrate, {
   syncMigrateCommand: () => syncMigrateCommand,
+  rollbackProjectIdentities: () => rollbackProjectIdentities,
+  planIdentityMigration: () => planIdentityMigration,
   migrateSyncLayout: () => migrateSyncLayout
 });
 import {
-  existsSync as existsSync6,
-  readdirSync as readdirSync2,
+  existsSync as existsSync10,
+  readdirSync as readdirSync3,
   statSync as statSync2,
   mkdirSync as mkdirSync4,
   writeFileSync as writeFileSync4,
+  readFileSync as readFileSync7,
   renameSync as renameSync2,
+  rmSync,
   unlinkSync as unlinkSync2
 } from "fs";
-import { join as join6 } from "path";
-import { execSync as execSync3 } from "child_process";
+import { join as join8 } from "path";
+import { execSync as execSync4 } from "child_process";
 function gitSafe3(args, timeoutMs = 5000) {
   try {
-    return execSync3(`git ${args}`, {
+    return execSync4(`git ${args}`, {
       cwd: minkRoot(),
       timeout: timeoutMs,
       stdio: ["pipe", "pipe", "pipe"]
@@ -1754,8 +2061,8 @@ function gitSafe3(args, timeoutMs = 5000) {
   }
 }
 function acquireLock() {
-  const path = join6(minkRoot(), MIGRATE_LOCK);
-  if (existsSync6(path)) {
+  const path = join8(minkRoot(), MIGRATE_LOCK);
+  if (existsSync10(path)) {
     try {
       const ageMs = Date.now() - statSync2(path).mtimeMs;
       if (ageMs < MIGRATE_LOCK_STALE_MS)
@@ -1772,13 +2079,13 @@ function acquireLock() {
 }
 function releaseLock() {
   try {
-    unlinkSync2(join6(minkRoot(), MIGRATE_LOCK));
+    unlinkSync2(join8(minkRoot(), MIGRATE_LOCK));
   } catch {}
 }
 function migrateFile(from, to) {
-  if (!existsSync6(from))
+  if (!existsSync10(from))
     return true;
-  mkdirSync4(join6(to, ".."), { recursive: true });
+  mkdirSync4(join8(to, ".."), { recursive: true });
   if (gitSafe3(`mv "${from}" "${to}"`) !== null)
     return true;
   try {
@@ -1789,7 +2096,7 @@ function migrateFile(from, to) {
   }
 }
 function migrateProject(projDir, deviceId) {
-  const shardDir = join6(projDir, "state", deviceId);
+  const shardDir = join8(projDir, "state", deviceId);
   mkdirSync4(shardDir, { recursive: true });
   for (const file of [
     "token-ledger.json",
@@ -1797,25 +2104,25 @@ function migrateProject(projDir, deviceId) {
     "bug-memory.json",
     "action-log.md"
   ]) {
-    const legacy = join6(projDir, file);
-    const shard = join6(shardDir, file);
-    if (existsSync6(shard))
+    const legacy = join8(projDir, file);
+    const shard = join8(shardDir, file);
+    if (existsSync10(shard))
       continue;
     migrateFile(legacy, shard);
   }
-  const sidecar = join6(projDir, `learning-memory.${deviceId}.md`);
-  if (!existsSync6(sidecar)) {
+  const sidecar = join8(projDir, `learning-memory.${deviceId}.md`);
+  if (!existsSync10(sidecar)) {
     try {
       writeFileSync4(sidecar, "");
     } catch {}
   }
   for (const f of ["session.json", "scheduler-manifest.json"]) {
-    if (existsSync6(join6(projDir, f))) {
-      gitSafe3(`rm --cached "${join6(projDir, f)}"`);
+    if (existsSync10(join8(projDir, f))) {
+      gitSafe3(`rm --cached "${join8(projDir, f)}"`);
     }
   }
-  const indexPath = join6(projDir, "file-index.json");
-  if (existsSync6(indexPath)) {
+  const indexPath = join8(projDir, "file-index.json");
+  if (existsSync10(indexPath)) {
     const raw = safeReadJson(indexPath);
     if (raw && typeof raw.header === "object" && raw.header !== null && (raw.header.lifetimeHits > 0 || raw.header.lifetimeMisses > 0)) {
       atomicWriteJson(fileIndexCountersPathFor(projDir), {
@@ -1829,31 +2136,31 @@ function migrateProject(projDir, deviceId) {
   }
 }
 function fileIndexCountersPathFor(projDir) {
-  return join6(projDir, ".mink-state-counters.json");
+  return join8(projDir, ".mink-state-counters.json");
 }
 function listProjects() {
-  const projectsRoot = join6(minkRoot(), "projects");
-  if (!existsSync6(projectsRoot))
+  const projectsRoot = join8(minkRoot(), "projects");
+  if (!existsSync10(projectsRoot))
     return [];
   try {
-    return readdirSync2(projectsRoot).filter((name) => {
+    return readdirSync3(projectsRoot).filter((name) => {
       try {
-        return statSync2(join6(projectsRoot, name)).isDirectory();
+        return statSync2(join8(projectsRoot, name)).isDirectory();
       } catch {
         return false;
       }
-    }).map((name) => join6(projectsRoot, name));
+    }).map((name) => join8(projectsRoot, name));
   } catch {
     return [];
   }
 }
 function projectNeedsMigration(projDir) {
-  const stateDir = join6(projDir, "state");
-  if (existsSync6(stateDir)) {
+  const stateDir = join8(projDir, "state");
+  if (existsSync10(stateDir)) {
     try {
-      const shards = readdirSync2(stateDir).filter((d) => {
+      const shards = readdirSync3(stateDir).filter((d) => {
         try {
-          return statSync2(join6(stateDir, d)).isDirectory();
+          return statSync2(join8(stateDir, d)).isDirectory();
         } catch {
           return false;
         }
@@ -1868,7 +2175,7 @@ function projectNeedsMigration(projDir) {
     "bug-memory.json",
     "action-log.md"
   ]) {
-    if (existsSync6(join6(projDir, f)))
+    if (existsSync10(join8(projDir, f)))
       return true;
   }
   return false;
@@ -1876,10 +2183,269 @@ function projectNeedsMigration(projDir) {
 function listProjectsNeedingMigration() {
   return listProjects().filter(projectNeedsMigration);
 }
+function planIdentityMigration(flagOverride) {
+  const plan = [];
+  const flag = flagOverride ?? resolveConfigValue("projects.identity").value;
+  if (flag !== "git-remote") {
+    return plan;
+  }
+  const projectsRoot = join8(minkRoot(), "projects");
+  if (!existsSync10(projectsRoot))
+    return plan;
+  let entries;
+  try {
+    entries = readdirSync3(projectsRoot);
+  } catch {
+    return plan;
+  }
+  for (const oldId of entries) {
+    const oldProjDir = join8(projectsRoot, oldId);
+    try {
+      if (!statSync2(oldProjDir).isDirectory())
+        continue;
+    } catch {
+      continue;
+    }
+    const meta = getProjectMeta(oldProjDir);
+    if (!meta)
+      continue;
+    if (!existsSync10(meta.cwd)) {
+      plan.push({
+        oldId,
+        newId: null,
+        cwd: meta.cwd,
+        action: "skip-no-cwd",
+        reason: "working-copy path not reachable on this device"
+      });
+      continue;
+    }
+    let newId;
+    try {
+      newId = resolveProjectIdentity(meta.cwd, flag === "git-remote" || flag === "path-derived" ? flag : undefined).id;
+    } catch {
+      continue;
+    }
+    if (newId === oldId) {
+      plan.push({ oldId, newId, cwd: meta.cwd, action: "skip-unchanged" });
+      continue;
+    }
+    const newProjDir = join8(projectsRoot, newId);
+    if (existsSync10(newProjDir)) {
+      const newMeta = getProjectMeta(newProjDir);
+      const aliasAlreadyRecorded = newMeta?.aliases?.includes(oldId) ?? false;
+      plan.push({
+        oldId,
+        newId,
+        cwd: meta.cwd,
+        action: aliasAlreadyRecorded ? "skip-evict" : "skip-converged",
+        reason: aliasAlreadyRecorded ? "alias already recorded; will evict leftover old directory" : "destination already exists (from sync); will record alias and evict old directory"
+      });
+      continue;
+    }
+    plan.push({ oldId, newId, cwd: meta.cwd, action: "rename" });
+  }
+  return plan;
+}
+function identityBackupRoot(timestamp) {
+  return join8(minkRoot(), IDENTITY_BACKUP_DIRNAME, timestamp);
+}
+function ensureIdentityBackupTimestamp() {
+  const now = new Date;
+  return `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}${String(now.getUTCDate()).padStart(2, "0")}-${String(now.getUTCHours()).padStart(2, "0")}${String(now.getUTCMinutes()).padStart(2, "0")}${String(now.getUTCSeconds()).padStart(2, "0")}`;
+}
+function backupProjectForRollback(srcDir, backupDir) {
+  try {
+    mkdirSync4(backupDir, { recursive: true });
+    copyDirRecursive(srcDir, backupDir, new Set(["backups"]));
+    return backupDir;
+  } catch {
+    return null;
+  }
+}
+function copyDirRecursive(src, dest, excludeNames) {
+  mkdirSync4(dest, { recursive: true });
+  const entries = readdirSync3(src, { withFileTypes: true });
+  for (const entry of entries) {
+    if (excludeNames.has(entry.name))
+      continue;
+    const srcPath = join8(src, entry.name);
+    const destPath = join8(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, destPath, excludeNames);
+    } else if (entry.isFile()) {
+      writeFileSync4(destPath, readFileSync7(srcPath));
+    }
+  }
+}
+function migrateProjectIdentities(deviceId, flag = resolveConfigValue("projects.identity").value) {
+  if (flag !== "git-remote") {
+    return {
+      renamed: 0,
+      converged: 0,
+      evicted: 0,
+      visited: 0,
+      backupDir: null,
+      renames: [],
+      evictions: []
+    };
+  }
+  const plan = planIdentityMigration(flag);
+  const willTouchOldDir = plan.filter((p) => p.action === "rename" || p.action === "skip-converged" || p.action === "skip-evict");
+  let backupRoot = null;
+  if (willTouchOldDir.length > 0) {
+    backupRoot = identityBackupRoot(ensureIdentityBackupTimestamp());
+  }
+  let renamed = 0;
+  let converged = 0;
+  let evicted = 0;
+  const renames = [];
+  const evictions = [];
+  let visited = plan.length;
+  const projectsRoot = join8(minkRoot(), "projects");
+  for (const entry of plan) {
+    const oldProjDir = join8(projectsRoot, entry.oldId);
+    if (entry.cwd && entry.action !== "skip-no-cwd") {
+      try {
+        setProjectPathForDevice(oldProjDir, deviceId, entry.cwd);
+      } catch {}
+    }
+    if ((entry.action === "skip-converged" || entry.action === "skip-evict") && entry.newId) {
+      const newProjDir2 = join8(projectsRoot, entry.newId);
+      let aliasOnRecord = false;
+      try {
+        if (entry.action === "skip-evict") {
+          aliasOnRecord = true;
+        } else {
+          addProjectAlias(newProjDir2, entry.oldId);
+          let newMeta = getProjectMeta(newProjDir2);
+          if (!newMeta) {
+            const oldMeta = getProjectMeta(oldProjDir);
+            if (oldMeta) {
+              atomicWriteJson(join8(newProjDir2, "project-meta.json"), {
+                cwd: oldMeta.cwd,
+                name: oldMeta.name,
+                initTimestamp: oldMeta.initTimestamp,
+                version: oldMeta.version,
+                aliases: [...oldMeta.aliases ?? [], entry.oldId],
+                pathsByDevice: oldMeta.pathsByDevice
+              });
+              newMeta = getProjectMeta(newProjDir2);
+            }
+          }
+          aliasOnRecord = newMeta?.aliases?.includes(entry.oldId) ?? false;
+        }
+        if (entry.cwd) {
+          setProjectPathForDevice(newProjDir2, deviceId, entry.cwd);
+        }
+      } catch {}
+      if (aliasOnRecord && backupRoot) {
+        const ok = backupProjectForRollback(oldProjDir, join8(backupRoot, entry.oldId));
+        if (ok) {
+          let removed = false;
+          try {
+            rmSync(oldProjDir, { recursive: true, force: true });
+            removed = true;
+          } catch {}
+          if (removed) {
+            evictions.push(entry.oldId);
+            evicted++;
+            if (entry.action === "skip-converged")
+              converged++;
+          }
+        }
+      }
+      continue;
+    }
+    if (entry.action !== "rename" || !entry.newId)
+      continue;
+    if (backupRoot) {
+      backupProjectForRollback(oldProjDir, join8(backupRoot, entry.oldId));
+    }
+    const newProjDir = join8(projectsRoot, entry.newId);
+    const moved = gitSafe3(`mv "${oldProjDir}" "${newProjDir}"`) !== null || (() => {
+      try {
+        renameSync2(oldProjDir, newProjDir);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    if (!moved)
+      continue;
+    try {
+      addProjectAlias(newProjDir, entry.oldId);
+      if (entry.cwd) {
+        setProjectPathForDevice(newProjDir, deviceId, entry.cwd);
+      }
+    } catch {}
+    renamed++;
+    renames.push({ from: entry.oldId, to: entry.newId });
+  }
+  return {
+    renamed,
+    converged,
+    evicted,
+    visited,
+    backupDir: backupRoot,
+    renames,
+    evictions
+  };
+}
+function rollbackProjectIdentities() {
+  const results = [];
+  const projectsRoot = join8(minkRoot(), "projects");
+  if (!existsSync10(projectsRoot))
+    return results;
+  let entries;
+  try {
+    entries = readdirSync3(projectsRoot);
+  } catch {
+    return results;
+  }
+  for (const currentId of entries) {
+    const projDir = join8(projectsRoot, currentId);
+    try {
+      if (!statSync2(projDir).isDirectory())
+        continue;
+    } catch {
+      continue;
+    }
+    const meta = getProjectMeta(projDir);
+    if (!meta || !meta.aliases || meta.aliases.length === 0)
+      continue;
+    const restoredId = meta.aliases[meta.aliases.length - 1];
+    const targetDir = join8(projectsRoot, restoredId);
+    if (existsSync10(targetDir)) {
+      results.push({ currentId, restoredId, ok: false });
+      continue;
+    }
+    const remainingAliases = meta.aliases.slice(0, -1);
+    const metaPath = join8(projDir, "project-meta.json");
+    try {
+      const raw = safeReadJson(metaPath);
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        const obj = raw;
+        obj.aliases = remainingAliases;
+        atomicWriteJson(metaPath, obj);
+      }
+    } catch {}
+    const moved = gitSafe3(`mv "${projDir}" "${targetDir}"`) !== null || (() => {
+      try {
+        renameSync2(projDir, targetDir);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    results.push({ currentId, restoredId, ok: moved });
+  }
+  return results;
+}
 function migrateSyncLayout() {
   const fromVersion = readSyncVersion();
   const pending = listProjectsNeedingMigration();
-  if (fromVersion >= MINK_SYNC_VERSION && pending.length === 0) {
+  const identityMode = resolveConfigValue("projects.identity").value;
+  if (fromVersion >= MINK_SYNC_VERSION && pending.length === 0 && identityMode !== "git-remote") {
     return {
       ranMigration: false,
       fromVersion,
@@ -1924,13 +2490,26 @@ function migrateSyncLayout() {
         processed++;
       } catch {}
     }
+    let identity = {
+      renamed: 0,
+      converged: 0,
+      evicted: 0,
+      visited: 0,
+      backupDir: null,
+      renames: [],
+      evictions: []
+    };
+    try {
+      identity = migrateProjectIdentities(deviceId, identityMode);
+    } catch {}
     if (remaining === 0 && listProjectsNeedingMigration().length === 0) {
       writeSyncVersion(MINK_SYNC_VERSION);
     }
-    if (isSyncInitialized() && processed > 0) {
+    if (isSyncInitialized() && (processed > 0 || identity.renamed > 0 || identity.evicted > 0)) {
       gitSafe3("add -A");
       gitSafe3(`reset HEAD ".sync-migrate.lock"`);
-      gitSafe3(`commit -m "mink: migrate sync layout v${fromVersion} -> v${MINK_SYNC_VERSION} (device ${deviceId.slice(0, 8)}, ${processed} projects)"`);
+      const identityNote = identity.renamed > 0 || identity.evicted > 0 ? `, ${identity.renamed} renamed + ${identity.evicted} evicted for identity v3` : "";
+      gitSafe3(`commit -m "mink: migrate sync layout v${fromVersion} -> v${MINK_SYNC_VERSION} (device ${deviceId.slice(0, 8)}, ${processed} projects${identityNote})"`);
     }
     if (stashed) {
       gitSafe3("stash pop");
@@ -1938,26 +2517,96 @@ function migrateSyncLayout() {
     return {
       ranMigration: true,
       fromVersion,
-      toVersion: MINK_SYNC_VERSION
+      toVersion: MINK_SYNC_VERSION,
+      identity
     };
   } finally {
     releaseLock();
   }
 }
-function syncMigrateCommand() {
+function syncMigrateCommand(args = []) {
+  const dryRun = args.includes("--dry-run");
+  const rollback = args.includes("--rollback");
+  if (rollback && dryRun) {
+    console.error("[mink] --rollback and --dry-run cannot be combined");
+    process.exit(1);
+  }
+  if (dryRun) {
+    const plan = planIdentityMigration();
+    if (plan.length === 0) {
+      console.log("[mink] sync migrate --dry-run: no projects to rename (flag is off or no projects on disk)");
+      return;
+    }
+    const renames = plan.filter((p) => p.action === "rename");
+    const converged = plan.filter((p) => p.action === "skip-converged");
+    const evictOnly = plan.filter((p) => p.action === "skip-evict");
+    const skippedNoCwd = plan.filter((p) => p.action === "skip-no-cwd");
+    const unchanged = plan.filter((p) => p.action === "skip-unchanged");
+    console.log(`[mink] sync migrate --dry-run: ${renames.length} rename(s), ${converged.length} converge (alias + evict), ${evictOnly.length} evict-only, ${skippedNoCwd.length} skipped (no cwd), ${unchanged.length} unchanged`);
+    for (const p of renames) {
+      console.log(`  rename:   ${p.oldId} → ${p.newId}`);
+    }
+    for (const p of converged) {
+      console.log(`  converge: ${p.oldId} → ${p.newId} (record alias on ${p.newId}, evict ${p.oldId} to .identity-rollback/)`);
+    }
+    for (const p of evictOnly) {
+      console.log(`  evict:    ${p.oldId} → .identity-rollback/ (alias already on ${p.newId})`);
+    }
+    for (const p of skippedNoCwd) {
+      console.log(`  skip:     ${p.oldId} — ${p.reason}`);
+    }
+    return;
+  }
+  if (rollback) {
+    const results = rollbackProjectIdentities();
+    if (results.length === 0) {
+      console.log("[mink] sync migrate --rollback: nothing to roll back");
+      return;
+    }
+    const ok = results.filter((r) => r.ok);
+    const failed = results.filter((r) => !r.ok);
+    console.log(`[mink] sync migrate --rollback: ${ok.length} restored, ${failed.length} failed`);
+    for (const r of ok) {
+      console.log(`  restored: ${r.currentId} → ${r.restoredId}`);
+    }
+    for (const r of failed) {
+      console.log(`  failed:   ${r.currentId} → ${r.restoredId} (destination already exists or rename blocked)`);
+    }
+    if (ok.length > 0) {
+      console.log(`
+[mink] tip: set projects.identity=path-derived to prevent the next session-start from re-migrating`);
+    }
+    return;
+  }
   const result = migrateSyncLayout();
   if (!result.ranMigration) {
     console.log(`[mink] sync migrate: ${result.message ?? "no-op"}`);
     return;
   }
   console.log(`[mink] sync migrate: v${result.fromVersion} → v${result.toVersion} complete`);
+  const identity = result.identity;
+  if (identity && (identity.renamed > 0 || identity.evicted > 0)) {
+    console.log(`  identity: ${identity.renamed} renamed, ${identity.converged} converged, ${identity.evicted} evicted`);
+    for (const r of identity.renames) {
+      console.log(`    renamed: ${r.from} → ${r.to}`);
+    }
+    for (const id of identity.evictions) {
+      console.log(`    evicted: ${id} → .identity-rollback/`);
+    }
+    if (identity.backupDir) {
+      console.log(`  rollback snapshot: ${identity.backupDir}`);
+    }
+  }
 }
-var MIGRATE_LOCK = ".sync-migrate.lock", MIGRATE_LOCK_STALE_MS = 300000, MIGRATE_BUDGET_MS = 5000;
+var MIGRATE_LOCK = ".sync-migrate.lock", MIGRATE_LOCK_STALE_MS = 300000, MIGRATE_BUDGET_MS = 5000, IDENTITY_BACKUP_DIRNAME = ".identity-rollback";
 var init_sync_migrate = __esm(() => {
   init_paths();
   init_sync();
   init_device();
   init_fs_utils();
+  init_project_id();
+  init_project_registry();
+  init_global_config();
 });
 
 // src/core/note-linker.ts
@@ -1968,8 +2617,8 @@ __export(exports_note_linker, {
   extractWikilinks: () => extractWikilinks,
   addBacklink: () => addBacklink
 });
-import { join as join7 } from "path";
-import { existsSync as existsSync7, readFileSync as readFileSync7, readdirSync as readdirSync3, statSync as statSync3 } from "fs";
+import { join as join9 } from "path";
+import { existsSync as existsSync11, readFileSync as readFileSync8, readdirSync as readdirSync4, statSync as statSync3 } from "fs";
 function extractWikilinks(content) {
   const links = [];
   let match;
@@ -1995,9 +2644,9 @@ function insertWikilinks(content, targets) {
   return result;
 }
 function addBacklink(targetNotePath, sourceTitle) {
-  if (!existsSync7(targetNotePath))
+  if (!existsSync11(targetNotePath))
     return;
-  const content = readFileSync7(targetNotePath, "utf-8");
+  const content = readFileSync8(targetNotePath, "utf-8");
   if (content.includes(`[[${sourceTitle}]]`))
     return;
   const backlinkSection = `
@@ -2039,8 +2688,8 @@ function updateMasterIndex(vaultRootPath) {
     { name: "Patterns", dir: "patterns", emoji: "" }
   ];
   for (const cat of categories) {
-    const dirPath = join7(vaultRootPath, cat.dir);
-    if (!existsSync7(dirPath))
+    const dirPath = join9(vaultRootPath, cat.dir);
+    if (!existsSync11(dirPath))
       continue;
     const files = collectMarkdownFiles(dirPath, vaultRootPath);
     if (files.length === 0 && cat.dir !== "inbox")
@@ -2067,9 +2716,9 @@ function updateMasterIndex(vaultRootPath) {
 function collectMarkdownFiles(dirPath, rootPath) {
   const files = [];
   try {
-    const entries = readdirSync3(dirPath, { withFileTypes: true });
+    const entries = readdirSync4(dirPath, { withFileTypes: true });
     for (const entry of entries) {
-      const fullPath = join7(dirPath, entry.name);
+      const fullPath = join9(dirPath, entry.name);
       if (entry.isDirectory()) {
         files.push(...collectMarkdownFiles(fullPath, rootPath));
       } else if (entry.name.endsWith(".md") && !entry.name.startsWith("_")) {
@@ -2202,7 +2851,7 @@ var init_learning_memory = __esm(() => {
 });
 
 // src/core/token-ledger.ts
-import { join as join8 } from "path";
+import { join as join10 } from "path";
 function addToLifetime(lifetime, session) {
   lifetime.totalTokens += session.totals.estimatedTokens;
   lifetime.totalReads += session.totals.readCount;
@@ -2333,13 +2982,13 @@ function createLedgerFinalizer(projectDir2, deviceIdOrThreshold, archiveThreshol
   let archivePath;
   let threshold;
   if (typeof deviceIdOrThreshold === "string") {
-    const shardDir = join8(projectDir2, "state", deviceIdOrThreshold);
-    ledgerPath = join8(shardDir, "token-ledger.json");
-    archivePath = join8(shardDir, "token-ledger-archive.json");
+    const shardDir = join10(projectDir2, "state", deviceIdOrThreshold);
+    ledgerPath = join10(shardDir, "token-ledger.json");
+    archivePath = join10(shardDir, "token-ledger-archive.json");
     threshold = archiveThreshold;
   } else {
-    ledgerPath = join8(projectDir2, "token-ledger.json");
-    archivePath = join8(projectDir2, "token-ledger-archive.json");
+    ledgerPath = join10(projectDir2, "token-ledger.json");
+    archivePath = join10(projectDir2, "token-ledger-archive.json");
     threshold = deviceIdOrThreshold ?? archiveThreshold;
   }
   return {
@@ -2479,16 +3128,16 @@ var init_bug_memory = __esm(() => {
 });
 
 // src/core/state-aggregator.ts
-import { existsSync as existsSync8, readdirSync as readdirSync4, readFileSync as readFileSync8, statSync as statSync4 } from "fs";
-import { join as join9 } from "path";
+import { existsSync as existsSync12, readdirSync as readdirSync5, readFileSync as readFileSync9, statSync as statSync4 } from "fs";
+import { join as join11 } from "path";
 function listDeviceShardsAt(projDir) {
-  const stateDir = join9(projDir, "state");
-  if (!existsSync8(stateDir))
+  const stateDir = join11(projDir, "state");
+  if (!existsSync12(stateDir))
     return [];
   try {
-    return readdirSync4(stateDir).filter((name) => {
+    return readdirSync5(stateDir).filter((name) => {
       try {
-        return statSync4(join9(stateDir, name)).isDirectory();
+        return statSync4(join11(stateDir, name)).isDirectory();
       } catch {
         return false;
       }
@@ -2498,16 +3147,16 @@ function listDeviceShardsAt(projDir) {
   }
 }
 function listLearningMemorySidecarPathsAt(projDir) {
-  if (!existsSync8(projDir))
+  if (!existsSync12(projDir))
     return [];
   try {
-    return readdirSync4(projDir).filter((f) => SIDECAR_RE.test(f)).map((f) => join9(projDir, f));
+    return readdirSync5(projDir).filter((f) => SIDECAR_RE.test(f)).map((f) => join11(projDir, f));
   } catch {
     return [];
   }
 }
 function shardPath(projDir, deviceId, file) {
-  return join9(projDir, "state", deviceId, file);
+  return join11(projDir, "state", deviceId, file);
 }
 function addLifetime(target, source) {
   target.totalTokens += source.totalTokens;
@@ -2524,12 +3173,12 @@ function aggregateTokenLedgerAt(projDir) {
   const seenSessions = new Set;
   const sources = [
     ...listDeviceShardsAt(projDir).map((id) => shardPath(projDir, id, "token-ledger.json")),
-    join9(projDir, "token-ledger.json")
+    join11(projDir, "token-ledger.json")
   ];
   const seenFlagKeys = new Set;
   const wasteFlags = [];
   for (const path of sources) {
-    if (!existsSync8(path))
+    if (!existsSync12(path))
       continue;
     const ledger = loadLedger(path);
     addLifetime(merged.lifetime, ledger.lifetime);
@@ -2563,10 +3212,10 @@ function aggregateBugMemoryAt(projDir) {
   let maxNextId = 1;
   const sources = [
     ...listDeviceShardsAt(projDir).map((id) => shardPath(projDir, id, "bug-memory.json")),
-    join9(projDir, "bug-memory.json")
+    join11(projDir, "bug-memory.json")
   ];
   for (const path of sources) {
-    if (!existsSync8(path))
+    if (!existsSync12(path))
       continue;
     const mem = loadBugMemory(path);
     if (mem.nextId > maxNextId)
@@ -2606,10 +3255,10 @@ function aggregateActionLogAt(projDir) {
   let order = 0;
   const sources = [
     ...listDeviceShardsAt(projDir).map((id) => shardPath(projDir, id, "action-log.md")),
-    join9(projDir, "action-log.md")
+    join11(projDir, "action-log.md")
   ];
   for (const path of sources) {
-    if (!existsSync8(path))
+    if (!existsSync12(path))
       continue;
     const content = safeReadLog(path);
     if (!content)
@@ -2634,11 +3283,11 @@ function aggregateActionLog(cwd) {
   return aggregateActionLogAt(projectDir(cwd));
 }
 function aggregateLearningMemoryAt(projDir) {
-  const canonicalPath = join9(projDir, "learning-memory.md");
+  const canonicalPath = join11(projDir, "learning-memory.md");
   let merged;
-  if (existsSync8(canonicalPath)) {
+  if (existsSync12(canonicalPath)) {
     try {
-      merged = parseLearningMemory(readFileSync8(canonicalPath, "utf-8"));
+      merged = parseLearningMemory(readFileSync9(canonicalPath, "utf-8"));
     } catch {
       merged = createEmptyLearningMemory("unknown");
     }
@@ -2648,7 +3297,7 @@ function aggregateLearningMemoryAt(projDir) {
   for (const sidecarPath of listLearningMemorySidecarPathsAt(projDir)) {
     let sidecar;
     try {
-      sidecar = parseLearningMemory(readFileSync8(sidecarPath, "utf-8"));
+      sidecar = parseLearningMemory(readFileSync9(sidecarPath, "utf-8"));
     } catch {
       continue;
     }
@@ -2955,12 +3604,12 @@ var exports_reflect = {};
 __export(exports_reflect, {
   reflect: () => reflect
 });
-import { existsSync as existsSync9 } from "fs";
+import { existsSync as existsSync13 } from "fs";
 import { dirname as dirname3 } from "path";
 function reflect(_cwd, memoryPath, configPath2) {
   const projDir = dirname3(memoryPath);
   const mem = aggregateLearningMemoryAt(projDir);
-  if (totalEntryCount(mem) === 0 && !existsSync9(memoryPath)) {
+  if (totalEntryCount(mem) === 0 && !existsSync13(memoryPath)) {
     console.log("[mink] no learning memory found");
     return null;
   }
@@ -3019,10 +3668,11 @@ __export(exports_paths2, {
   actionLogShardPath: () => actionLogShardPath2,
   actionLogPath: () => actionLogPath2
 });
-import { join as join11 } from "path";
+import { join as join13 } from "path";
+import { existsSync as existsSync15 } from "fs";
 import { homedir as homedir3 } from "os";
 function resolveMinkRoot2() {
-  return process.env.MINK_ROOT_OVERRIDE || join11(homedir3(), ".mink");
+  return process.env.MINK_ROOT_OVERRIDE || join13(homedir3(), ".mink");
 }
 function minkRoot2() {
   if (process.env.MINK_ROOT_OVERRIDE) {
@@ -3031,110 +3681,433 @@ function minkRoot2() {
   return MINK_ROOT2;
 }
 function projectDir2(cwd) {
-  const id = generateProjectId(cwd);
-  return join11(minkRoot2(), "projects", id);
+  const id = projectIdFor(cwd);
+  const primary = join13(minkRoot2(), "projects", id);
+  if (existsSync15(primary))
+    return primary;
+  try {
+    const { findProjectDirByIdOrAlias: findProjectDirByIdOrAlias2 } = (init_project_registry(), __toCommonJS(exports_project_registry));
+    const aliased = findProjectDirByIdOrAlias2(id);
+    if (aliased)
+      return aliased;
+  } catch {}
+  return primary;
 }
 function sessionPath2(cwd) {
-  return join11(projectDir2(cwd), "session.json");
+  return join13(projectDir2(cwd), "session.json");
 }
 function fileIndexPath2(cwd) {
-  return join11(projectDir2(cwd), "file-index.json");
+  return join13(projectDir2(cwd), "file-index.json");
 }
 function configPath2(cwd) {
-  return join11(projectDir2(cwd), "config.json");
+  return join13(projectDir2(cwd), "config.json");
 }
 function learningMemoryPath2(cwd) {
-  return join11(projectDir2(cwd), "learning-memory.md");
+  return join13(projectDir2(cwd), "learning-memory.md");
 }
 function tokenLedgerPath2(cwd) {
-  return join11(projectDir2(cwd), "token-ledger.json");
+  return join13(projectDir2(cwd), "token-ledger.json");
 }
 function tokenLedgerArchivePath2(cwd) {
-  return join11(projectDir2(cwd), "token-ledger-archive.json");
+  return join13(projectDir2(cwd), "token-ledger-archive.json");
 }
 function bugMemoryPath2(cwd) {
-  return join11(projectDir2(cwd), "bug-memory.json");
+  return join13(projectDir2(cwd), "bug-memory.json");
 }
 function actionLogPath2(cwd) {
-  return join11(projectDir2(cwd), "action-log.md");
+  return join13(projectDir2(cwd), "action-log.md");
 }
 function schedulerPidPath2() {
-  return join11(minkRoot2(), "scheduler.pid");
+  return join13(minkRoot2(), "scheduler.pid");
 }
 function schedulerLogPath2() {
-  return join11(minkRoot2(), "scheduler.log");
+  return join13(minkRoot2(), "scheduler.log");
 }
 function schedulerManifestPath2(cwd) {
-  return join11(projectDir2(cwd), "scheduler-manifest.json");
+  return join13(projectDir2(cwd), "scheduler-manifest.json");
 }
 function channelPidPath2() {
-  return join11(minkRoot2(), "channel.pid");
+  return join13(minkRoot2(), "channel.pid");
 }
 function channelLogPath2() {
-  return join11(minkRoot2(), "channel.log");
+  return join13(minkRoot2(), "channel.log");
 }
 function globalConfigPath2() {
-  return join11(minkRoot2(), "config");
+  return join13(minkRoot2(), "config");
 }
 function localConfigPath2() {
-  return join11(minkRoot2(), "config.local");
+  return join13(minkRoot2(), "config.local");
 }
 function deviceIdPath2() {
-  return join11(minkRoot2(), "device-id");
+  return join13(minkRoot2(), "device-id");
 }
 function deviceRegistryPath2() {
-  return join11(minkRoot2(), "devices.json");
+  return join13(minkRoot2(), "devices.json");
 }
 function projectMetaPath2(cwd) {
-  return join11(projectDir2(cwd), "project-meta.json");
+  return join13(projectDir2(cwd), "project-meta.json");
 }
 function backupDirPath2(cwd) {
-  return join11(projectDir2(cwd), "backups");
+  return join13(projectDir2(cwd), "backups");
 }
 function syncVersionPath2() {
-  return join11(minkRoot2(), ".mink-sync-version");
+  return join13(minkRoot2(), ".mink-sync-version");
 }
 function projectStateDir2(cwd) {
-  return join11(projectDir2(cwd), "state");
+  return join13(projectDir2(cwd), "state");
 }
 function deviceShardDir2(cwd, deviceId) {
-  return join11(projectStateDir2(cwd), deviceId);
+  return join13(projectStateDir2(cwd), deviceId);
 }
 function tokenLedgerShardPath2(cwd, deviceId) {
-  return join11(deviceShardDir2(cwd, deviceId), "token-ledger.json");
+  return join13(deviceShardDir2(cwd, deviceId), "token-ledger.json");
 }
 function tokenLedgerArchiveShardPath2(cwd, deviceId) {
-  return join11(deviceShardDir2(cwd, deviceId), "token-ledger-archive.json");
+  return join13(deviceShardDir2(cwd, deviceId), "token-ledger-archive.json");
 }
 function bugMemoryShardPath2(cwd, deviceId) {
-  return join11(deviceShardDir2(cwd, deviceId), "bug-memory.json");
+  return join13(deviceShardDir2(cwd, deviceId), "bug-memory.json");
 }
 function actionLogShardPath2(cwd, deviceId) {
-  return join11(deviceShardDir2(cwd, deviceId), "action-log.md");
+  return join13(deviceShardDir2(cwd, deviceId), "action-log.md");
 }
 function learningMemorySidecarPath2(cwd, deviceId) {
-  return join11(projectDir2(cwd), `learning-memory.${deviceId}.md`);
+  return join13(projectDir2(cwd), `learning-memory.${deviceId}.md`);
 }
 function fileIndexCountersPath3(cwd) {
-  return join11(projectDir2(cwd), ".mink-state-counters.json");
+  return join13(projectDir2(cwd), ".mink-state-counters.json");
 }
 function designCapturesDir2(cwd) {
-  return join11(projectDir2(cwd), "design-captures");
+  return join13(projectDir2(cwd), "design-captures");
 }
 function designReportPath2(cwd) {
-  return join11(projectDir2(cwd), "design-report.json");
+  return join13(projectDir2(cwd), "design-report.json");
 }
 function frameworkAdvisorPath2(cwd) {
-  return join11(projectDir2(cwd), "framework-advisor.md");
+  return join13(projectDir2(cwd), "framework-advisor.md");
 }
 function frameworkAdvisorJsonPath2(cwd) {
-  return join11(projectDir2(cwd), "framework-advisor.json");
+  return join13(projectDir2(cwd), "framework-advisor.json");
 }
 var MINK_ROOT2;
 var init_paths2 = __esm(() => {
   init_project_id();
   MINK_ROOT2 = resolveMinkRoot2();
 });
+
+// src/core/agent-detect.ts
+import { execSync as execSync5 } from "child_process";
+import { existsSync as existsSync16 } from "fs";
+import { join as join14 } from "path";
+import { homedir as homedir4 } from "os";
+function commandExists(bin) {
+  try {
+    const probe = process.platform === "win32" ? `where ${bin}` : `command -v ${bin}`;
+    execSync5(probe, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function detectAgent(meta, cwd) {
+  const signals = [];
+  if (existsSync16(join14(cwd, meta.projectDir))) {
+    signals.push(`project config (${meta.projectDir}/)`);
+  }
+  if (existsSync16(meta.globalDir)) {
+    signals.push("global config");
+  }
+  if (commandExists(meta.bin)) {
+    signals.push("on PATH");
+  }
+  return { ...meta, detected: signals.length > 0, signals };
+}
+function detectAgents(cwd) {
+  return AGENTS.map((m) => detectAgent(m, cwd));
+}
+function resolveTargetsFromFlag(flag) {
+  const normalized = flag.trim().toLowerCase();
+  if (normalized === "all")
+    return AGENTS.map((a) => a.id);
+  const ids = normalized.split(",").map((s) => s.trim()).filter(Boolean);
+  const valid = AGENTS.map((a) => a.id);
+  const resolved = ids.filter((id) => valid.includes(id));
+  return resolved;
+}
+var AGENTS;
+var init_agent_detect = __esm(() => {
+  AGENTS = [
+    {
+      id: "claude",
+      label: "Claude Code",
+      projectDir: ".claude",
+      globalDir: join14(homedir4(), ".claude"),
+      bin: "claude"
+    },
+    {
+      id: "pi",
+      label: "Pi",
+      projectDir: ".pi",
+      globalDir: join14(homedir4(), ".pi"),
+      bin: "pi"
+    }
+  ];
+});
+
+// src/core/agent-pi.ts
+import { join as join15, resolve as resolve2, dirname as dirname5 } from "path";
+import { existsSync as existsSync17, mkdirSync as mkdirSync6, copyFileSync, rmSync as rmSync2 } from "fs";
+function piExtensionPath(cwd) {
+  return join15(cwd, ".pi", "extensions", "mink.ts");
+}
+function piGuidanceSkillPath(cwd) {
+  return join15(cwd, ".pi", "skills", "mink", "SKILL.md");
+}
+function piNoteSkillPath(cwd) {
+  return join15(cwd, ".pi", "skills", "mink-note", "SKILL.md");
+}
+function buildPiExtension(cliPath) {
+  const isTsSource = cliPath.endsWith(".ts");
+  const cmd = isTsSource ? "bun" : "mink";
+  const baseArgs = isTsSource ? JSON.stringify(["run", cliPath]) : "[]";
+  return `// AUTO-GENERATED by \`mink init\`. Do not edit — re-run \`mink init\` to refresh.
+//
+// Mink adapter for the Pi coding agent. Routes Pi lifecycle and tool events
+// into the \`mink\` CLI so Pi shares the same ~/.mink state, file index, ledger,
+// and wiki as every other assistant wired to this project.
+//
+// VERIFY-ON-UPGRADE: the tool input field names (file_path / path, content,
+// new_string), the tool-result content location, and the advisory surfacing
+// call are written against Pi's documented extension API. They are accessed
+// defensively (optional chaining + fallbacks) so a rename in a future Pi
+// release degrades to "no advisory" rather than breaking. If Pi changes these,
+// adjust toolInfo(), resultContent(), and surface() below.
+
+import { spawn } from "node:child_process";
+
+const MINK_CMD = ${JSON.stringify(cmd)};
+const MINK_BASE_ARGS = ${baseArgs};
+const TIMEOUT_MS = 5000;
+
+function runMink(sub, payload, cwd) {
+  return new Promise((res) => {
+    let done = false;
+    const finish = (out) => {
+      if (done) return;
+      done = true;
+      res(out);
+    };
+    try {
+      const child = spawn(MINK_CMD, [...MINK_BASE_ARGS, sub], {
+        cwd,
+        stdio: ["pipe", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr?.on("data", (d) => {
+        stderr += d.toString();
+      });
+      child.on("error", () => finish(""));
+      child.on("close", () => finish(stderr.trim()));
+      const timer = setTimeout(() => {
+        try {
+          child.kill();
+        } catch {}
+        finish("");
+      }, TIMEOUT_MS);
+      timer.unref?.();
+      try {
+        child.stdin?.end(payload ? JSON.stringify(payload) : "");
+      } catch {}
+    } catch {
+      finish("");
+    }
+  });
+}
+
+// Resolve Pi's tool name + arguments to Mink's canonical operation. Only the
+// three file operations matter; anything else returns null and is ignored.
+function toolInfo(event) {
+  const name = String(event?.toolName ?? event?.tool ?? event?.name ?? "").toLowerCase();
+  const input = event?.input ?? event?.arguments ?? event?.args ?? {};
+  const filePath = input.file_path ?? input.path ?? input.filePath;
+  if (!filePath) return null;
+  if (name === "read") return { op: "read", filePath };
+  if (name === "write") return { op: "write", filePath, content: input.content ?? input.text ?? "" };
+  if (name === "edit")
+    return {
+      op: "edit",
+      filePath,
+      newString: input.new_string ?? input.newText ?? input.replacement ?? "",
+    };
+  return null;
+}
+
+function resultContent(event) {
+  const r = event?.result ?? event?.output ?? event?.toolResult;
+  if (typeof r === "string") return r;
+  if (r && typeof r.content === "string") return r.content;
+  return null;
+}
+
+function prePayload(info) {
+  if (info.op === "read")
+    return { sub: "pre-read", payload: { tool_name: "Read", tool_input: { file_path: info.filePath } } };
+  if (info.op === "write")
+    return {
+      sub: "pre-write",
+      payload: { tool_name: "Write", tool_input: { file_path: info.filePath, content: info.content } },
+    };
+  return {
+    sub: "pre-write",
+    payload: { tool_name: "Edit", tool_input: { file_path: info.filePath, new_string: info.newString } },
+  };
+}
+
+function postPayload(info, content) {
+  if (info.op === "read")
+    return {
+      sub: "post-read",
+      payload: {
+        tool_name: "Read",
+        tool_input: { file_path: info.filePath },
+        tool_output: content == null ? undefined : { content },
+      },
+    };
+  if (info.op === "write")
+    return {
+      sub: "post-write",
+      payload: { tool_name: "Write", tool_input: { file_path: info.filePath, content: info.content } },
+    };
+  return {
+    sub: "post-write",
+    payload: { tool_name: "Edit", tool_input: { file_path: info.filePath, new_string: info.newString } },
+  };
+}
+
+export default function (pi) {
+  const cwd = pi?.ctx?.cwd || process.cwd();
+  const pending = new Map();
+  const keyOf = (event) => event?.toolCallId ?? event?.id ?? event?.callId ?? "";
+
+  // Surface Mink's advisories into the model's context, mirroring how the
+  // Claude integration feeds hook stderr back to the assistant.
+  const surface = (text) => {
+    if (!text) return;
+    try {
+      if (typeof pi.sendMessage === "function") {
+        pi.sendMessage(text);
+        return;
+      }
+    } catch {}
+    try {
+      pi.ui?.notify?.(text, "info");
+    } catch {}
+  };
+
+  pi.on?.("session_start", () => {
+    void runMink("session-start", null, cwd);
+  });
+  pi.on?.("agent_end", () => {
+    void runMink("session-stop", null, cwd);
+  });
+  pi.on?.("session_shutdown", () => {
+    void runMink("session-stop", null, cwd);
+  });
+
+  pi.on?.("tool_call", async (event) => {
+    const info = toolInfo(event);
+    if (!info) return;
+    const { sub, payload } = prePayload(info);
+    const advisory = await runMink(sub, payload, cwd);
+    if (advisory) pending.set(keyOf(event), advisory);
+  });
+
+  pi.on?.("tool_result", async (event) => {
+    const info = toolInfo(event);
+    if (!info) return;
+    const { sub, payload } = postPayload(info, resultContent(event));
+    const post = await runMink(sub, payload, cwd);
+    const pre = pending.get(keyOf(event)) ?? "";
+    pending.delete(keyOf(event));
+    surface([pre, post].filter(Boolean).join("\\n"));
+  });
+}
+`;
+}
+function resolveSkillsSourceDir() {
+  let dir = dirname5(new URL(import.meta.url).pathname);
+  while (true) {
+    if (existsSync17(join15(dir, "package.json")) && existsSync17(join15(dir, "skills"))) {
+      return join15(dir, "skills");
+    }
+    const parent = dirname5(dir);
+    if (parent === dir)
+      break;
+    dir = parent;
+  }
+  return resolve2(dirname5(new URL(import.meta.url).pathname), "../../skills");
+}
+function installPi(cwd, cliPath) {
+  const extensionPath = piExtensionPath(cwd);
+  mkdirSync6(dirname5(extensionPath), { recursive: true });
+  atomicWriteText(extensionPath, buildPiExtension(cliPath));
+  const guidancePath = piGuidanceSkillPath(cwd);
+  mkdirSync6(dirname5(guidancePath), { recursive: true });
+  atomicWriteText(guidancePath, PI_GUIDANCE_SKILL);
+  let notePath = null;
+  try {
+    const src = join15(resolveSkillsSourceDir(), "mink-note", "SKILL.md");
+    if (existsSync17(src)) {
+      notePath = piNoteSkillPath(cwd);
+      mkdirSync6(dirname5(notePath), { recursive: true });
+      copyFileSync(src, notePath);
+    }
+  } catch {
+    notePath = null;
+  }
+  return { extensionPath, guidancePath, notePath };
+}
+var PI_GUIDANCE_SKILL = `---
+name: mink
+description: Mink context management is active in this project. Read this to understand how Mink memory, write enforcement, and note capture work under Pi.
+---
+
+# Mink — context management for this project
+
+This project uses **Mink** (\`@drewpayment/mink\`) for cross-session context management.
+
+## How it works
+- Mink runs automatically through a Pi extension at \`.pi/extensions/mink.ts\` that hooks session start/stop and every read/edit/write tool call.
+- All state lives in \`~/.mink/\` on the user's machine — **not** in this repository. Do not create or write to any in-repo state directory (no \`.wolf/\`, \`.mink/\`, etc.).
+- Read intelligence, write enforcement, bug memory, and the token ledger are handled by the extension. You do not need to manually read or update any state files.
+- Mink shares one \`~/.mink/\` state across every assistant wired to this project, so history is unified whether the user runs Pi or another assistant.
+
+## When to act on Mink
+- If the user asks to "save a note", "remember this", "log this to my wiki", or similar, use the \`mink-note\` skill (\`/skill:mink-note\`) — it captures into the user's \`~/.mink/\` vault.
+- If the extension surfaces a learning, past bug, or repeat-read warning in context, treat that as authoritative project memory and follow it.
+- The \`mink dashboard\` and \`mink agent\` commands are user tools — do not invoke them on the user's behalf.
+`;
+var init_agent_pi = __esm(() => {
+  init_fs_utils();
+});
+
+// src/core/prompt.ts
+import { createInterface } from "readline";
+function stdinIsInteractive() {
+  const stdin = process.stdin;
+  const stdout = process.stdout;
+  return Boolean(stdin.isTTY) && Boolean(stdout.isTTY) && process.env.MINK_NO_PROMPT !== "1" && !process.env.CI;
+}
+function ask(question) {
+  return new Promise((resolve3) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve3(answer);
+    });
+  });
+}
+var init_prompt = () => {};
 
 // src/core/backup.ts
 var exports_backup = {};
@@ -3144,14 +4117,14 @@ __export(exports_backup, {
   createBackup: () => createBackup
 });
 import {
-  mkdirSync as mkdirSync6,
-  readdirSync as readdirSync5,
-  readFileSync as readFileSync10,
+  mkdirSync as mkdirSync7,
+  readdirSync as readdirSync6,
+  readFileSync as readFileSync11,
   writeFileSync as writeFileSync5,
-  existsSync as existsSync11,
+  existsSync as existsSync18,
   statSync as statSync6
 } from "fs";
-import { join as join12 } from "path";
+import { join as join16 } from "path";
 function formatTimestamp(date) {
   const y = date.getFullYear();
   const mo = String(date.getMonth() + 1).padStart(2, "0");
@@ -3163,15 +4136,15 @@ function formatTimestamp(date) {
   return `${y}${mo}${d}-${h}${mi}${s}${ms}`;
 }
 function copyDirectoryFiles(srcDir, destDir, excludeDirs) {
-  mkdirSync6(destDir, { recursive: true });
-  const entries = readdirSync5(srcDir, { withFileTypes: true });
+  mkdirSync7(destDir, { recursive: true });
+  const entries = readdirSync6(srcDir, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory()) {
       if (excludeDirs.includes(entry.name))
         continue;
-      copyDirectoryFiles(join12(srcDir, entry.name), join12(destDir, entry.name), excludeDirs);
+      copyDirectoryFiles(join16(srcDir, entry.name), join16(destDir, entry.name), excludeDirs);
     } else if (entry.isFile()) {
-      writeFileSync5(join12(destDir, entry.name), readFileSync10(join12(srcDir, entry.name)));
+      writeFileSync5(join16(destDir, entry.name), readFileSync11(join16(srcDir, entry.name)));
     }
   }
 }
@@ -3180,25 +4153,25 @@ function createBackup(cwd) {
   const dir = backupDirPath(cwd);
   let name = base;
   let suffix = 1;
-  while (existsSync11(join12(dir, name))) {
+  while (existsSync18(join16(dir, name))) {
     name = `${base}-${suffix}`;
     suffix++;
   }
   const src = projectDir(cwd);
-  const dest = join12(dir, name);
+  const dest = join16(dir, name);
   copyDirectoryFiles(src, dest, ["backups"]);
   return name;
 }
 function listBackups(cwd) {
   const dir = backupDirPath(cwd);
-  if (!existsSync11(dir))
+  if (!existsSync18(dir))
     return [];
-  const entries = readdirSync5(dir, { withFileTypes: true });
+  const entries = readdirSync6(dir, { withFileTypes: true });
   const backups = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !entry.name.startsWith("backup-"))
       continue;
-    const backupPath = join12(dir, entry.name);
+    const backupPath = join16(dir, entry.name);
     const match = entry.name.match(/^backup-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(\d{3})?(?:-\d+)?$/);
     let timestamp;
     if (match) {
@@ -3208,7 +4181,7 @@ function listBackups(cwd) {
     }
     let fileCount = 0;
     try {
-      fileCount = readdirSync5(backupPath).length;
+      fileCount = readdirSync6(backupPath).length;
     } catch {}
     backups.push({ name: entry.name, timestamp, path: backupPath, fileCount });
   }
@@ -3221,8 +4194,8 @@ function listBackups(cwd) {
   return backups;
 }
 function restoreBackup(cwd, backupName) {
-  const backupPath = join12(backupDirPath(cwd), backupName);
-  if (!existsSync11(backupPath)) {
+  const backupPath = join16(backupDirPath(cwd), backupName);
+  if (!existsSync18(backupPath)) {
     throw new Error(`backup not found: ${backupName}`);
   }
   createBackup(cwd);
@@ -3233,8 +4206,8 @@ var init_backup = __esm(() => {
 });
 
 // src/core/scanner.ts
-import { readdirSync as readdirSync6, statSync as statSync7 } from "fs";
-import { join as join13, relative } from "path";
+import { readdirSync as readdirSync7, statSync as statSync7 } from "fs";
+import { join as join17, relative } from "path";
 function matchesPattern(name, pattern) {
   if (pattern.includes("*")) {
     const regex = new RegExp("^" + pattern.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$");
@@ -3248,7 +4221,7 @@ function isExcluded(name, excludes) {
 function walkDirectory(dir, projectRoot, excludes, results) {
   let entries;
   try {
-    entries = readdirSync6(dir, { withFileTypes: true });
+    entries = readdirSync7(dir, { withFileTypes: true });
   } catch {
     return;
   }
@@ -3258,14 +4231,14 @@ function walkDirectory(dir, projectRoot, excludes, results) {
     if (entry.isDirectory()) {
       if (isExcluded(entry.name, excludes))
         continue;
-      walkDirectory(join13(dir, entry.name), projectRoot, excludes, results);
+      walkDirectory(join17(dir, entry.name), projectRoot, excludes, results);
       continue;
     }
     if (entry.isFile()) {
       if (isExcluded(entry.name, excludes))
         continue;
       try {
-        const fullPath = join13(dir, entry.name);
+        const fullPath = join17(dir, entry.name);
         const stat = statSync7(fullPath);
         results.push({
           relativePath: relative(projectRoot, fullPath),
@@ -3591,8 +4564,8 @@ var exports_scan = {};
 __export(exports_scan, {
   scan: () => scan
 });
-import { readFileSync as readFileSync11 } from "fs";
-import { join as join14, relative as relative2 } from "path";
+import { readFileSync as readFileSync12 } from "fs";
+import { join as join18, relative as relative2 } from "path";
 function configRelativePath(cfgPath, cwd) {
   const rel = relative2(cwd, cfgPath);
   return rel.startsWith("..") ? cfgPath : rel;
@@ -3647,10 +4620,10 @@ function scan(cwd, options) {
   newIndex.header.lifetimeHits = index.header.lifetimeHits;
   newIndex.header.lifetimeMisses = index.header.lifetimeMisses;
   for (const file of scanned) {
-    const fullPath = join14(cwd, file.relativePath);
+    const fullPath = join18(cwd, file.relativePath);
     let content;
     try {
-      content = readFileSync11(fullPath, "utf-8");
+      content = readFileSync12(fullPath, "utf-8");
     } catch {
       continue;
     }
@@ -3691,13 +4664,13 @@ __export(exports_seed, {
   parseGoMod: () => parseGoMod,
   parseCargoToml: () => parseCargoToml
 });
-import { basename as basename4, join as join15 } from "path";
-import { readFileSync as readFileSync12, existsSync as existsSync12 } from "fs";
+import { basename as basename4, join as join19 } from "path";
+import { readFileSync as readFileSync13, existsSync as existsSync19 } from "fs";
 function readFile(filePath) {
-  if (!existsSync12(filePath))
+  if (!existsSync19(filePath))
     return null;
   try {
-    return readFileSync12(filePath, "utf-8");
+    return readFileSync13(filePath, "utf-8");
   } catch {
     return null;
   }
@@ -3787,10 +4760,10 @@ function parseGoMod(filePath) {
 }
 function seedLearningMemory(projectRoot) {
   const parsers = [
-    () => parsePackageJson(join15(projectRoot, "package.json")),
-    () => parsePyprojectToml(join15(projectRoot, "pyproject.toml")),
-    () => parseCargoToml(join15(projectRoot, "Cargo.toml")),
-    () => parseGoMod(join15(projectRoot, "go.mod"))
+    () => parsePackageJson(join19(projectRoot, "package.json")),
+    () => parsePyprojectToml(join19(projectRoot, "pyproject.toml")),
+    () => parseCargoToml(join19(projectRoot, "Cargo.toml")),
+    () => parseGoMod(join19(projectRoot, "go.mod"))
   ];
   const infos = parsers.map((fn) => fn()).filter((info) => info !== null);
   const projectName = infos.find((i) => i.projectName)?.projectName ?? basename4(projectRoot);
@@ -3868,18 +4841,21 @@ var init_seed = __esm(() => {
 var exports_init = {};
 __export(exports_init, {
   writeMinkRule: () => writeMinkRule,
+  resolveTargetsFromFlag: () => resolveTargetsFromFlag,
+  resolveTargets: () => resolveTargets,
   resolveCliPath: () => resolveCliPath,
   mergeHooksIntoSettings: () => mergeHooksIntoSettings,
+  installClaude: () => installClaude,
   init: () => init,
   detectRuntime: () => detectRuntime,
   buildHooksConfig: () => buildHooksConfig
 });
-import { execSync as execSync4 } from "child_process";
-import { mkdirSync as mkdirSync7, existsSync as existsSync13 } from "fs";
-import { resolve as resolve2, dirname as dirname5, basename as basename5, join as join16 } from "path";
+import { execSync as execSync6 } from "child_process";
+import { mkdirSync as mkdirSync8, existsSync as existsSync20 } from "fs";
+import { resolve as resolve3, dirname as dirname6, basename as basename5, join as join20 } from "path";
 function detectRuntime() {
   try {
-    execSync4("bun --version", { stdio: "ignore" });
+    execSync6("bun --version", { stdio: "ignore" });
     return "bun";
   } catch {
     return "node";
@@ -3887,15 +4863,15 @@ function detectRuntime() {
 }
 function resolveCliPath() {
   const selfPath = new URL(import.meta.url).pathname;
-  const selfDir = dirname5(selfPath);
+  const selfDir = dirname6(selfPath);
   if (selfPath.endsWith("dist/cli.js")) {
     return selfPath;
   }
-  const projectRoot = resolve2(selfDir, "../..");
-  const distPath = join16(projectRoot, "dist", "cli.js");
-  if (existsSync13(distPath))
+  const projectRoot = resolve3(selfDir, "../..");
+  const distPath = join20(projectRoot, "dist", "cli.js");
+  if (existsSync20(distPath))
     return distPath;
-  return resolve2(selfDir, "../cli.ts");
+  return resolve3(selfDir, "../cli.ts");
 }
 function buildHooksConfig(cliPath) {
   const isTsSource = cliPath.endsWith(".ts");
@@ -3934,13 +4910,13 @@ function isMinkHook(entry) {
   return false;
 }
 function writeMinkRule(cwd) {
-  const rulePath = resolve2(cwd, ".claude", "rules", "mink.md");
-  mkdirSync7(dirname5(rulePath), { recursive: true });
+  const rulePath = resolve3(cwd, ".claude", "rules", "mink.md");
+  mkdirSync8(dirname6(rulePath), { recursive: true });
   atomicWriteText(rulePath, MINK_RULE_CONTENT);
   return rulePath;
 }
 function mergeHooksIntoSettings(settingsPath, newHooks) {
-  mkdirSync7(dirname5(settingsPath), { recursive: true });
+  mkdirSync8(dirname6(settingsPath), { recursive: true });
   const existing = safeReadJson(settingsPath) ?? {};
   const existingHooks = existing.hooks ?? {};
   for (const [event, entries] of Object.entries(newHooks)) {
@@ -3951,17 +4927,46 @@ function mergeHooksIntoSettings(settingsPath, newHooks) {
   existing.hooks = existingHooks;
   atomicWriteJson(settingsPath, existing);
 }
+function installClaude(cwd, cliPath) {
+  const settingsPath = resolve3(cwd, ".claude", "settings.json");
+  mergeHooksIntoSettings(settingsPath, buildHooksConfig(cliPath));
+  const rulePath = writeMinkRule(cwd);
+  return { settingsPath, rulePath };
+}
+async function resolveTargets(cwd, opts) {
+  if (opts.targets && opts.targets.length > 0)
+    return opts.targets;
+  const detected = detectAgents(cwd);
+  const detectedIds = detected.filter((a) => a.detected).map((a) => a.id);
+  if (opts.interactive && stdinIsInteractive()) {
+    return promptForAgents(detected, detectedIds);
+  }
+  return detectedIds.length > 0 ? detectedIds : ["claude"];
+}
+async function promptForAgents(detected, defaults) {
+  const fallback = defaults.length > 0 ? defaults : ["claude"];
+  console.log("Which assistant(s) should Mink work with?");
+  detected.forEach((a, i) => {
+    const tag = a.detected ? `  (detected — ${a.signals.join(", ")})` : "";
+    console.log(`  ${i + 1}) ${a.label}${tag}`);
+  });
+  const answer = (await ask(`Enter numbers (comma-separated), 'a' for all [default: ${fallback.join(", ")}]: `)).trim().toLowerCase();
+  if (answer === "")
+    return fallback;
+  if (answer === "a" || answer === "all")
+    return AGENTS.map((a) => a.id);
+  const picked = answer.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isInteger(n) && n >= 1 && n <= detected.length).map((n) => detected[n - 1].id);
+  return picked.length > 0 ? picked : fallback;
+}
 function isExistingInstallation(cwd) {
   const dir = projectDir(cwd);
-  if (!existsSync13(dir))
+  if (!existsSync20(dir))
     return false;
-  return existsSync13(join16(dir, "file-index.json"));
+  return existsSync20(join20(dir, "file-index.json"));
 }
-async function init(cwd) {
+async function init(cwd, opts = {}) {
   const runtime = detectRuntime();
   const cliPath = resolveCliPath();
-  const hooks = buildHooksConfig(cliPath);
-  const settingsPath = resolve2(cwd, ".claude", "settings.json");
   const dir = projectDir(cwd);
   const upgrading = isExistingInstallation(cwd);
   if (upgrading) {
@@ -3970,39 +4975,73 @@ async function init(cwd) {
     const backupName = createBackup2(cwd);
     console.log(`  backup: ${backupName}`);
   }
-  mergeHooksIntoSettings(settingsPath, hooks);
-  const rulePath = writeMinkRule(cwd);
-  mkdirSync7(dir, { recursive: true });
-  const projectId = generateProjectId(cwd);
+  const targets = await resolveTargets(cwd, opts);
+  const wired = {};
+  for (const target of targets) {
+    if (target === "claude") {
+      const { settingsPath, rulePath } = installClaude(cwd, cliPath);
+      wired.claude = [`hooks: ${settingsPath}`, `rule:  ${rulePath}`];
+    } else if (target === "pi") {
+      const r = installPi(cwd, cliPath);
+      wired.pi = [
+        `extension: ${r.extensionPath}`,
+        `guidance:  ${r.guidancePath}`,
+        ...r.notePath ? [`note skill: ${r.notePath}`] : []
+      ];
+    }
+  }
+  mkdirSync8(dir, { recursive: true });
+  const identity = resolveProjectIdentity(cwd);
+  const projectId = identity.id;
   const isNotesProject = isWikiEnabled() && isVaultInitialized() && isInsideVault(cwd);
   const metaPath = projectMetaPath(cwd);
   const existingMeta = safeReadJson(metaPath);
+  const deviceId = getOrCreateDeviceId();
+  const existingPathsByDevice = existingMeta?.pathsByDevice && typeof existingMeta.pathsByDevice === "object" && !Array.isArray(existingMeta.pathsByDevice) ? existingMeta.pathsByDevice : {};
+  const priorAgents = Array.isArray(existingMeta?.agents) ? existingMeta.agents : [];
+  const agents = Array.from(new Set([...priorAgents, ...targets]));
   atomicWriteJson(metaPath, {
     ...existingMeta ?? {},
     cwd,
     name: basename5(cwd),
     initTimestamp: existingMeta?.initTimestamp ?? new Date().toISOString(),
     version: "0.1.0",
+    pathsByDevice: { ...existingPathsByDevice, [deviceId]: cwd },
+    agents,
     ...isNotesProject ? { projectType: "notes" } : {}
   });
+  const printWiring = () => {
+    for (const id of Object.keys(wired)) {
+      const label = AGENTS.find((a) => a.id === id)?.label ?? id;
+      console.log(`  ${label}:`);
+      for (const line of wired[id])
+        console.log(`    ${line}`);
+    }
+  };
   if (upgrading) {
     console.log(`[mink] upgrade complete`);
     console.log(`  project:  ${projectId}`);
-    console.log(`  hooks:    ${settingsPath}`);
-    console.log(`  rule:     ${rulePath}`);
+    console.log(`  agents:   ${agents.join(", ")}`);
+    printWiring();
   } else {
     console.log(`[mink] initialized`);
-    console.log(`  project:  ${projectId}`);
+    console.log(`  project:  ${projectId} (${identity.source})`);
     console.log(`  state:    ${dir}`);
     console.log(`  runtime:  ${runtime}`);
-    console.log(`  hooks:    ${settingsPath}`);
-    console.log(`  rule:     ${rulePath}`);
+    console.log(`  agents:   ${agents.join(", ")}`);
+    printWiring();
+  }
+  if (identity.source === "path-derived") {
+    const root = getRepoRoot(cwd);
+    if (root && !getRepoRemote(cwd)) {
+      console.log(`  note:     this repo has no remote configured. Project state will not unify across machines until you add one and run \`mink config projects.identity git-remote\`.`);
+    }
   }
   const { scan: scan2 } = await Promise.resolve().then(() => (init_scan(), exports_scan));
   scan2(cwd, { check: false });
   const { learningMemoryPath: learningMemoryPath3 } = await Promise.resolve().then(() => (init_paths(), exports_paths));
   const memPath = learningMemoryPath3(cwd);
-  if (!existsSync13(memPath)) {
+  if (!existsSync20(memPath)) {
     const { seedLearningMemory: seedLearningMemory2 } = await Promise.resolve().then(() => (init_seed(), exports_seed));
     const { serializeLearningMemory: serializeLearningMemory2 } = await Promise.resolve().then(() => (init_learning_memory(), exports_learning_memory));
     const mem = seedLearningMemory2(cwd);
@@ -4011,8 +5050,8 @@ async function init(cwd) {
   if (isWikiEnabled() && isVaultInitialized() && !isNotesProject) {
     try {
       const projectSlug = basename5(cwd);
-      const overviewPath = join16(vaultProjects(projectSlug), "overview.md");
-      if (!existsSync13(overviewPath)) {
+      const overviewPath = join20(vaultProjects(projectSlug), "overview.md");
+      if (!existsSync20(overviewPath)) {
         const now = new Date().toISOString();
         const overview = [
           `---`,
@@ -4061,7 +5100,12 @@ var init_init = __esm(() => {
   init_paths();
   init_project_id();
   init_fs_utils();
+  init_device();
+  init_git_identity();
   init_vault();
+  init_agent_detect();
+  init_agent_pi();
+  init_prompt();
 });
 
 // src/core/state-counters.ts
@@ -4099,12 +5143,12 @@ var init_state_counters = __esm(() => {
 });
 
 // src/core/channel-templates.ts
-import { join as join17 } from "path";
-import { existsSync as existsSync14, writeFileSync as writeFileSync6, mkdirSync as mkdirSync8 } from "fs";
+import { join as join21 } from "path";
+import { existsSync as existsSync21, writeFileSync as writeFileSync6, mkdirSync as mkdirSync9 } from "fs";
 function writeCompanionClaudeMd(vaultPath, overwrite = false) {
-  mkdirSync8(vaultPath, { recursive: true });
-  const claudeMdPath = join17(vaultPath, "CLAUDE.md");
-  if (existsSync14(claudeMdPath) && !overwrite) {
+  mkdirSync9(vaultPath, { recursive: true });
+  const claudeMdPath = join21(vaultPath, "CLAUDE.md");
+  if (existsSync21(claudeMdPath) && !overwrite) {
     return false;
   }
   writeFileSync6(claudeMdPath, COMPANION_CLAUDE_MD);
@@ -4256,12 +5300,12 @@ mink wiki rebuild-index
 var init_channel_templates = () => {};
 
 // src/core/channel-process.ts
-import { readFileSync as readFileSync13, writeFileSync as writeFileSync7, unlinkSync as unlinkSync3, mkdirSync as mkdirSync9, existsSync as existsSync15 } from "fs";
-import { dirname as dirname6, join as join18 } from "path";
+import { readFileSync as readFileSync14, writeFileSync as writeFileSync7, unlinkSync as unlinkSync3, mkdirSync as mkdirSync10, existsSync as existsSync22 } from "fs";
+import { dirname as dirname7, join as join22 } from "path";
 import { spawnSync } from "child_process";
 function readChannelPidFile() {
   try {
-    const raw = readFileSync13(channelPidPath(), "utf-8");
+    const raw = readFileSync14(channelPidPath(), "utf-8");
     const data = JSON.parse(raw);
     if (data && typeof data.session === "string" && typeof data.platform === "string" && typeof data.startedAt === "string" && typeof data.vaultPath === "string") {
       return data;
@@ -4273,7 +5317,7 @@ function readChannelPidFile() {
 }
 function writeChannelPidFile(data) {
   const pidPath = channelPidPath();
-  mkdirSync9(dirname6(pidPath), { recursive: true });
+  mkdirSync10(dirname7(pidPath), { recursive: true });
   writeFileSync7(pidPath, JSON.stringify(data, null, 2));
 }
 function removeChannelPidFile() {
@@ -4403,18 +5447,18 @@ function getChannelLogs() {
     return null;
   if (!screenSessionExists(pidData.session))
     return null;
-  const tmpPath = join18(minkRoot(), `.channel-capture-${Date.now()}-${process.pid}.txt`);
+  const tmpPath = join22(minkRoot(), `.channel-capture-${Date.now()}-${process.pid}.txt`);
   const result = spawnSync("screen", ["-S", pidData.session, "-X", "hardcopy", "-h", tmpPath], { stdio: "ignore" });
   if (result.status !== 0)
     return null;
   for (let i = 0;i < 20; i++) {
-    if (existsSync15(tmpPath))
+    if (existsSync22(tmpPath))
       break;
     const delayUntil = Date.now() + 50;
     while (Date.now() < delayUntil) {}
   }
   try {
-    const content = readFileSync13(tmpPath, "utf-8");
+    const content = readFileSync14(tmpPath, "utf-8");
     try {
       unlinkSync3(tmpPath);
     } catch {}
@@ -4512,7 +5556,7 @@ async function runtimeServe(opts) {
   }
   const { createServer } = await import("node:http");
   const { Readable } = await import("node:stream");
-  return new Promise((resolve3) => {
+  return new Promise((resolve4) => {
     const httpServer = createServer(async (req, res) => {
       const url = `http://${opts.hostname}:${opts.port}${req.url ?? "/"}`;
       const headers = new Headers;
@@ -4571,7 +5615,7 @@ async function runtimeServe(opts) {
     httpServer.listen(opts.port, opts.hostname, () => {
       const addr = httpServer.address();
       const boundPort = typeof addr === "object" && addr ? addr.port : opts.port;
-      resolve3({
+      resolve4({
         port: boundPort,
         stop: (close) => {
           if (close)
@@ -4588,12 +5632,12 @@ var init_runtime = __esm(() => {
 });
 
 // src/core/daemon.ts
-import { readFileSync as readFileSync14, writeFileSync as writeFileSync8, unlinkSync as unlinkSync4, openSync } from "fs";
-import { mkdirSync as mkdirSync10 } from "fs";
-import { dirname as dirname7, resolve as resolve3 } from "path";
+import { readFileSync as readFileSync15, writeFileSync as writeFileSync8, unlinkSync as unlinkSync4, openSync } from "fs";
+import { mkdirSync as mkdirSync11 } from "fs";
+import { dirname as dirname8, resolve as resolve4 } from "path";
 function readPidFile() {
   try {
-    const raw = readFileSync14(schedulerPidPath(), "utf-8");
+    const raw = readFileSync15(schedulerPidPath(), "utf-8");
     const data = JSON.parse(raw);
     if (data && typeof data.pid === "number" && typeof data.startedAt === "string" && typeof data.projectCwd === "string") {
       return data;
@@ -4605,7 +5649,7 @@ function readPidFile() {
 }
 function writePidFile(data) {
   const pidPath = schedulerPidPath();
-  mkdirSync10(dirname7(pidPath), { recursive: true });
+  mkdirSync11(dirname8(pidPath), { recursive: true });
   writeFileSync8(pidPath, JSON.stringify(data, null, 2));
 }
 function removePidFile() {
@@ -4630,10 +5674,10 @@ function startDaemon(cwd) {
   if (existing) {
     removePidFile();
   }
-  const __dir = dirname7(new URL(import.meta.url).pathname);
-  const cliPath = process.argv[1] ?? resolve3(__dir, "../cli.ts");
+  const __dir = dirname8(new URL(import.meta.url).pathname);
+  const cliPath = process.argv[1] ?? resolve4(__dir, "../cli.ts");
   const logPath = schedulerLogPath();
-  mkdirSync10(dirname7(logPath), { recursive: true });
+  mkdirSync11(dirname8(logPath), { recursive: true });
   const logFd = openSync(logPath, "a");
   const proc = runtimeSpawn(["bun", "run", cliPath, "cron", "__daemon"], {
     cwd,
@@ -4747,9 +5791,9 @@ var exports_status = {};
 __export(exports_status, {
   status: () => status
 });
-import { existsSync as existsSync17, readFileSync as readFileSync15, statSync as statSync8 } from "fs";
+import { existsSync as existsSync24, readFileSync as readFileSync16, statSync as statSync8 } from "fs";
 function checkJsonFile(name, filePath, validator) {
-  if (!existsSync17(filePath))
+  if (!existsSync24(filePath))
     return { name, path: filePath, status: "missing" };
   const data = safeReadJson(filePath);
   if (data === null)
@@ -4758,15 +5802,32 @@ function checkJsonFile(name, filePath, validator) {
     return { name, path: filePath, status: "corrupt" };
   return { name, path: filePath, status: "ok" };
 }
-function checkTextFile(name, filePath) {
-  if (!existsSync17(filePath))
-    return { name, path: filePath, status: "missing" };
-  try {
-    readFileSync15(filePath, "utf-8");
-    return { name, path: filePath, status: "ok" };
-  } catch {
-    return { name, path: filePath, status: "corrupt" };
+function checkShardedText(name, candidatePaths) {
+  const canonical = candidatePaths[0];
+  for (const p of candidatePaths) {
+    if (!existsSync24(p))
+      continue;
+    try {
+      if (statSync8(p).size === 0)
+        continue;
+      readFileSync16(p, "utf-8");
+      return { name, path: p, status: "ok" };
+    } catch {
+      return { name, path: p, status: "corrupt" };
+    }
   }
+  return { name, path: canonical, status: "missing" };
+}
+function actionLogCandidates(cwd) {
+  const dir = projectDir(cwd);
+  return [
+    actionLogPath(cwd),
+    ...listDeviceShardsAt(dir).map((id) => shardPath(dir, id, "action-log.md"))
+  ];
+}
+function learningMemoryCandidates(cwd) {
+  const dir = projectDir(cwd);
+  return [learningMemoryPath(cwd), ...listLearningMemorySidecarPathsAt(dir)];
 }
 function status(cwd) {
   console.log("[mink] project status");
@@ -4775,10 +5836,10 @@ function status(cwd) {
     checkJsonFile("session.json", sessionPath(cwd)),
     checkJsonFile("file-index.json", fileIndexPath(cwd), isFileIndex),
     checkJsonFile("config.json", configPath(cwd)),
-    checkTextFile("learning-memory.md", learningMemoryPath(cwd)),
+    checkShardedText("learning-memory.md", learningMemoryCandidates(cwd)),
     checkJsonFile("token-ledger.json", tokenLedgerPath(cwd)),
     checkJsonFile("bug-memory.json", bugMemoryPath(cwd)),
-    checkTextFile("action-log.md", actionLogPath(cwd))
+    checkShardedText("action-log.md", actionLogCandidates(cwd))
   ];
   console.log("  State files:");
   for (const check of checks) {
@@ -4836,7 +5897,7 @@ function status(cwd) {
       console.log(`    Decision Log: ${mem.sections["Decision Log"].length}`);
       console.log(`    Total entries: ${total}`);
       const memPath = learningMemoryPath(cwd);
-      if (existsSync17(memPath)) {
+      if (existsSync24(memPath)) {
         const mtime = statSync8(memPath).mtime;
         console.log(`    Canonical last modified: ${mtime.toISOString()}`);
       }
@@ -4872,6 +5933,7 @@ var init_status = __esm(() => {
   init_fs_utils();
   init_learning_memory();
   init_state_aggregator();
+  init_paths();
   init_state_counters();
   init_daemon();
 });
@@ -4881,8 +5943,8 @@ var exports_scan2 = {};
 __export(exports_scan2, {
   scan: () => scan2
 });
-import { readFileSync as readFileSync16 } from "fs";
-import { join as join19, relative as relative3 } from "path";
+import { readFileSync as readFileSync17 } from "fs";
+import { join as join23, relative as relative3 } from "path";
 function configRelativePath2(cfgPath, cwd) {
   const rel = relative3(cwd, cfgPath);
   return rel.startsWith("..") ? cfgPath : rel;
@@ -4937,10 +5999,10 @@ function scan2(cwd, options) {
   newIndex.header.lifetimeHits = index.header.lifetimeHits;
   newIndex.header.lifetimeMisses = index.header.lifetimeMisses;
   for (const file of scanned) {
-    const fullPath = join19(cwd, file.relativePath);
+    const fullPath = join23(cwd, file.relativePath);
     let content;
     try {
-      content = readFileSync16(fullPath, "utf-8");
+      content = readFileSync17(fullPath, "utf-8");
     } catch {
       continue;
     }
@@ -4977,12 +6039,12 @@ var exports_reflect2 = {};
 __export(exports_reflect2, {
   reflect: () => reflect2
 });
-import { existsSync as existsSync18 } from "fs";
-import { dirname as dirname8 } from "path";
+import { existsSync as existsSync25 } from "fs";
+import { dirname as dirname9 } from "path";
 function reflect2(_cwd, memoryPath, configPath3) {
-  const projDir = dirname8(memoryPath);
+  const projDir = dirname9(memoryPath);
   const mem = aggregateLearningMemoryAt(projDir);
-  if (totalEntryCount(mem) === 0 && !existsSync18(memoryPath)) {
+  if (totalEntryCount(mem) === 0 && !existsSync25(memoryPath)) {
     console.log("[mink] no learning memory found");
     return null;
   }
@@ -5380,7 +6442,7 @@ __export(exports_post_write, {
   analyzePostWrite: () => analyzePostWrite
 });
 import { relative as relative7 } from "path";
-import { readFileSync as readFileSync17 } from "fs";
+import { readFileSync as readFileSync18 } from "fs";
 function analyzePostWrite(filePath, fileContent, index) {
   if (isWriteExcluded(filePath)) {
     return {
@@ -5444,7 +6506,7 @@ async function postWrite(cwd) {
     const filePath = relative7(cwd, absolutePath);
     let fileContent = null;
     try {
-      fileContent = readFileSync17(absolutePath, "utf-8");
+      fileContent = readFileSync18(absolutePath, "utf-8");
     } catch {}
     const rawState = safeReadJson(sessionPath(cwd));
     const state = isSessionState(rawState) ? rawState : createSessionState();
@@ -5806,9 +6868,9 @@ __export(exports_self_update, {
   PACKAGE_NAME: () => PACKAGE_NAME
 });
 import { spawnSync as spawnSync2 } from "child_process";
-import { existsSync as existsSync19, readFileSync as readFileSync18 } from "fs";
-import { dirname as dirname9 } from "path";
-import { join as join20 } from "path";
+import { existsSync as existsSync26, readFileSync as readFileSync19 } from "fs";
+import { dirname as dirname10 } from "path";
+import { join as join24 } from "path";
 function parseSemver(input) {
   const trimmed = input.trim().replace(/^v/, "");
   if (!trimmed)
@@ -5855,15 +6917,15 @@ function compareSemver(a, b) {
 function getInstallInfo() {
   const selfPath = new URL(import.meta.url).pathname;
   const isDevMode = selfPath.endsWith(".ts");
-  let dir = dirname9(selfPath);
+  let dir = dirname10(selfPath);
   let packageJsonPath = null;
   for (let i = 0;i < 10; i++) {
-    const candidate = join20(dir, "package.json");
-    if (existsSync19(candidate)) {
+    const candidate = join24(dir, "package.json");
+    if (existsSync26(candidate)) {
       packageJsonPath = candidate;
       break;
     }
-    const parent = dirname9(dir);
+    const parent = dirname10(dir);
     if (parent === dir)
       break;
     dir = parent;
@@ -5873,7 +6935,7 @@ function getInstallInfo() {
   }
   let currentVersion = "0.0.0";
   try {
-    const pkg = JSON.parse(readFileSync18(packageJsonPath, "utf-8"));
+    const pkg = JSON.parse(readFileSync19(packageJsonPath, "utf-8"));
     if (typeof pkg.version === "string")
       currentVersion = pkg.version;
   } catch {}
@@ -5933,7 +6995,7 @@ function buildInstallCommand(pm, version) {
   return ["npm", "install", "-g", ref];
 }
 function selfUpdateLogPath() {
-  return join20(minkRoot(), "self-update.log");
+  return join24(minkRoot(), "self-update.log");
 }
 function appendLogEntry(entry) {
   const path = selfUpdateLogPath();
@@ -5946,7 +7008,7 @@ function appendLogEntry(entry) {
 }
 function rotateLogIfNeeded(path) {
   try {
-    const content = readFileSync18(path, "utf-8");
+    const content = readFileSync19(path, "utf-8");
     const lines = content.split(`
 `);
     if (lines.length <= LOG_MAX_LINES + 1)
@@ -6049,7 +7111,7 @@ async function runSelfUpgradeInner(opts) {
   }
   let verifiedVersion = latest;
   try {
-    const pkg = JSON.parse(readFileSync18(info.packageJsonPath, "utf-8"));
+    const pkg = JSON.parse(readFileSync19(info.packageJsonPath, "utf-8"));
     if (typeof pkg.version === "string")
       verifiedVersion = pkg.version;
   } catch {}
@@ -6155,10 +7217,10 @@ async function executeTask(taskId, projectCwd) {
       if (task.actionType === "ai-cli") {
         try {
           const { learningMemoryPath: learningMemoryPath5 } = await Promise.resolve().then(() => (init_paths(), exports_paths));
-          const { readFileSync: readFileSync19 } = await import("fs");
+          const { readFileSync: readFileSync20 } = await import("fs");
           let memoryContent;
           try {
-            memoryContent = readFileSync19(learningMemoryPath5(projectCwd), "utf-8");
+            memoryContent = readFileSync20(learningMemoryPath5(projectCwd), "utf-8");
           } catch {
             console.log("[mink] no learning memory found, skipping reflection");
             return;
@@ -6722,22 +7784,22 @@ var init_cron = __esm(() => {
 });
 
 // src/core/vault-templates.ts
-import { join as join21 } from "path";
-import { existsSync as existsSync20, writeFileSync as writeFileSync9, readFileSync as readFileSync19, mkdirSync as mkdirSync11 } from "fs";
+import { join as join25 } from "path";
+import { existsSync as existsSync27, writeFileSync as writeFileSync9, readFileSync as readFileSync20, mkdirSync as mkdirSync12 } from "fs";
 function seedTemplates(templatesDir) {
-  mkdirSync11(templatesDir, { recursive: true });
+  mkdirSync12(templatesDir, { recursive: true });
   for (const [name, content] of Object.entries(DEFAULT_TEMPLATES)) {
-    const filePath = join21(templatesDir, `${name}.md`);
-    if (!existsSync20(filePath)) {
+    const filePath = join25(templatesDir, `${name}.md`);
+    if (!existsSync27(filePath)) {
       writeFileSync9(filePath, content);
     }
   }
 }
 function loadTemplate(templatesDir, templateName, vars) {
-  const filePath = join21(templatesDir, `${templateName}.md`);
+  const filePath = join25(templatesDir, `${templateName}.md`);
   let content;
-  if (existsSync20(filePath)) {
-    content = readFileSync19(filePath, "utf-8");
+  if (existsSync27(filePath)) {
+    content = readFileSync20(filePath, "utf-8");
   } else if (DEFAULT_TEMPLATES[templateName]) {
     content = DEFAULT_TEMPLATES[templateName];
   } else {
@@ -6890,33 +7952,33 @@ category: resources
 });
 
 // src/core/note-writer.ts
-import { join as join22 } from "path";
-import { existsSync as existsSync21, readFileSync as readFileSync20 } from "fs";
+import { join as join26 } from "path";
+import { existsSync as existsSync28, readFileSync as readFileSync21 } from "fs";
 import { createHash as createHash2 } from "crypto";
 function sha256(content) {
   return createHash2("sha256").update(content).digest("hex");
 }
 function resolveUniqueNotePath(dir, baseSlug, content) {
   const targetHash = sha256(content);
-  const primary = join22(dir, `${baseSlug}.md`);
-  if (!existsSync21(primary))
+  const primary = join26(dir, `${baseSlug}.md`);
+  if (!existsSync28(primary))
     return primary;
   if (sameContent(primary, targetHash))
     return primary;
   const dev4 = getOrCreateDeviceId().replace(/-/g, "").slice(0, 4);
   for (let i = 0;i < MAX_COLLISION_ATTEMPTS; i++) {
     const suffix = i === 0 ? dev4 : `${dev4}-${i + 1}`;
-    const candidate = join22(dir, `${baseSlug}-${suffix}.md`);
-    if (!existsSync21(candidate))
+    const candidate = join26(dir, `${baseSlug}-${suffix}.md`);
+    if (!existsSync28(candidate))
       return candidate;
     if (sameContent(candidate, targetHash))
       return candidate;
   }
-  return join22(dir, `${baseSlug}-${Date.now()}.md`);
+  return join26(dir, `${baseSlug}-${Date.now()}.md`);
 }
 function sameContent(filePath, expectedHash) {
   try {
-    return sha256(readFileSync20(filePath, "utf-8")) === expectedHash;
+    return sha256(readFileSync21(filePath, "utf-8")) === expectedHash;
   } catch {
     return false;
   }
@@ -6987,8 +8049,8 @@ ${meta.body}
 }
 function appendToDaily(date, content) {
   const dir = vaultDailyDir();
-  const filePath = join22(dir, `${date}.md`);
-  if (existsSync21(filePath)) {
+  const filePath = join26(dir, `${date}.md`);
+  if (existsSync28(filePath)) {
     const timestamp = new Date().toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",
@@ -7025,7 +8087,7 @@ ${content}
   return filePath;
 }
 function ingestFile(sourcePath, meta) {
-  const raw = readFileSync20(sourcePath, "utf-8");
+  const raw = readFileSync21(sourcePath, "utf-8");
   const now = new Date().toISOString();
   const headingMatch = raw.match(/^#\s+(.+)$/m);
   const title = headingMatch?.[1] ?? sourcePath.split("/").pop().replace(/\.md$/, "");
@@ -7097,10 +8159,10 @@ var init_design_eval = __esm(() => {
 });
 
 // src/core/dashboard-api.ts
-import { existsSync as existsSync22, readFileSync as readFileSync21 } from "fs";
-import { readdirSync as readdirSync7, readFileSync as readFileSyncFS, existsSync as fsExistsSync } from "fs";
-import { join as join23, resolve as resolve5, normalize, sep } from "path";
-import { execSync as execSync5 } from "child_process";
+import { existsSync as existsSync29, readFileSync as readFileSync22 } from "fs";
+import { readdirSync as readdirSync8, readFileSync as readFileSyncFS, existsSync as fsExistsSync } from "fs";
+import { join as join27, resolve as resolve6, normalize, sep } from "path";
+import { execSync as execSync7 } from "child_process";
 function isSecretKey(key) {
   return SECRET_KEY_PATTERNS.some((re) => re.test(key));
 }
@@ -7112,7 +8174,7 @@ function maskSecret(value, showLast = 4) {
   return "••••" + value.slice(-showLast);
 }
 function checkJsonFile2(name, filePath, validator) {
-  if (!existsSync22(filePath))
+  if (!existsSync29(filePath))
     return { name, status: "missing" };
   const data = safeReadJson(filePath);
   if (data === null)
@@ -7121,11 +8183,11 @@ function checkJsonFile2(name, filePath, validator) {
     return { name, status: "corrupt" };
   return { name, status: "ok" };
 }
-function checkTextFile2(name, filePath) {
-  if (!existsSync22(filePath))
+function checkTextFile(name, filePath) {
+  if (!existsSync29(filePath))
     return { name, status: "missing" };
   try {
-    readFileSync21(filePath, "utf-8");
+    readFileSync22(filePath, "utf-8");
     return { name, status: "ok" };
   } catch {
     return { name, status: "corrupt" };
@@ -7160,10 +8222,10 @@ function loadOverview(cwd) {
     checkJsonFile2("session.json", sessionPath(cwd)),
     checkJsonFile2("file-index.json", fileIndexPath(cwd), isFileIndex),
     checkJsonFile2("config.json", configPath(cwd)),
-    checkTextFile2("learning-memory.md", learningMemoryPath(cwd)),
+    checkTextFile("learning-memory.md", learningMemoryPath(cwd)),
     checkJsonFile2("token-ledger.json", tokenLedgerPath(cwd)),
     checkJsonFile2("bug-memory.json", bugMemoryPath(cwd)),
-    checkTextFile2("action-log.md", actionLogPath(cwd)),
+    checkTextFile("action-log.md", actionLogPath(cwd)),
     checkJsonFile2("scheduler-manifest.json", schedulerManifestPath(cwd))
   ];
   return { project, daemon, summary, stateFiles };
@@ -7297,7 +8359,7 @@ function getAheadBehind(branch) {
   if (!branch)
     return { ahead: 0, behind: 0 };
   try {
-    const raw = execSync5(`git rev-list --left-right --count origin/${branch}...${branch}`, { cwd: minkRoot(), timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
+    const raw = execSync7(`git rev-list --left-right --count origin/${branch}...${branch}`, { cwd: minkRoot(), timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }).toString().trim();
     const [behindStr, aheadStr] = raw.split(/\s+/);
     return {
       behind: Number(behindStr) || 0,
@@ -7309,7 +8371,7 @@ function getAheadBehind(branch) {
 }
 function getPendingChanges() {
   try {
-    const raw = execSync5("git status --porcelain", {
+    const raw = execSync7("git status --porcelain", {
       cwd: minkRoot(),
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"]
@@ -7378,10 +8440,10 @@ function loadChannelPanel() {
 function countMarkdownIn(dir) {
   let count = 0;
   try {
-    for (const entry of readdirSync7(dir, { withFileTypes: true })) {
+    for (const entry of readdirSync8(dir, { withFileTypes: true })) {
       if (WIKI_TREE_EXCLUDES.has(entry.name) || entry.name.startsWith("."))
         continue;
-      const fullPath = join23(dir, entry.name);
+      const fullPath = join27(dir, entry.name);
       if (entry.isDirectory()) {
         count += countMarkdownIn(fullPath);
       } else if (entry.name.endsWith(".md") && !entry.name.startsWith("_")) {
@@ -7398,7 +8460,7 @@ function buildVaultTree(root) {
       return;
     let entries = [];
     try {
-      entries = readdirSync7(dir, { withFileTypes: true }).filter((e) => !WIKI_TREE_EXCLUDES.has(e.name) && !e.name.startsWith(".")).map((e) => ({ name: e.name, isDir: e.isDirectory() }));
+      entries = readdirSync8(dir, { withFileTypes: true }).filter((e) => !WIKI_TREE_EXCLUDES.has(e.name) && !e.name.startsWith(".")).map((e) => ({ name: e.name, isDir: e.isDirectory() }));
     } catch {
       return;
     }
@@ -7410,7 +8472,7 @@ function buildVaultTree(root) {
     for (const entry of entries) {
       if (!entry.isDir)
         continue;
-      const fullPath = join23(dir, entry.name);
+      const fullPath = join27(dir, entry.name);
       const relPath = fullPath.slice(root.length + 1);
       const count = countMarkdownIn(fullPath);
       nodes.push({ name: entry.name, path: relPath, count, depth });
@@ -7495,7 +8557,7 @@ function resolveVaultRelativePath(relPath) {
   if (!relPath || relPath.includes("\x00"))
     return null;
   const root = resolveVaultPath();
-  const absolute = resolve5(root, relPath);
+  const absolute = resolve6(root, relPath);
   const normalizedRoot = normalize(root) + sep;
   if (!absolute.startsWith(normalizedRoot) && absolute !== normalize(root)) {
     return null;
@@ -7833,7 +8895,7 @@ async function triggerIngestFile(sourcePath, category, tags, dedupKey) {
     if (!isValidCategory(category)) {
       return { success: false, error: `Invalid category: ${category}` };
     }
-    const expanded = sourcePath.startsWith("~/") ? join23(process.env.HOME ?? "", sourcePath.slice(2)) : sourcePath;
+    const expanded = sourcePath.startsWith("~/") ? join27(process.env.HOME ?? "", sourcePath.slice(2)) : sourcePath;
     if (!fsExistsSync(expanded)) {
       return { success: false, error: `Source file not found: ${sourcePath}` };
     }
@@ -7912,61 +8974,14 @@ var init_dashboard_api = __esm(() => {
   dedupCache = new Map;
 });
 
-// src/core/project-registry.ts
-import { readdirSync as readdirSync8, existsSync as existsSync23 } from "fs";
-import { join as join24 } from "path";
-function getProjectMeta(projDir) {
-  const metaPath = join24(projDir, "project-meta.json");
-  const raw = safeReadJson(metaPath);
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    return null;
-  }
-  const obj = raw;
-  if (typeof obj.cwd !== "string" || typeof obj.name !== "string") {
-    return null;
-  }
-  return {
-    cwd: obj.cwd,
-    name: obj.name,
-    initTimestamp: obj.initTimestamp ?? "",
-    version: obj.version ?? "0.1.0"
-  };
-}
-function listRegisteredProjects() {
-  const projectsDir = join24(minkRoot(), "projects");
-  if (!existsSync23(projectsDir))
-    return [];
-  const entries = readdirSync8(projectsDir, { withFileTypes: true });
-  const projects = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory())
-      continue;
-    const projDir = join24(projectsDir, entry.name);
-    const meta = getProjectMeta(projDir);
-    if (meta) {
-      projects.push({
-        id: entry.name,
-        cwd: meta.cwd,
-        name: meta.name,
-        version: meta.version
-      });
-    }
-  }
-  return projects;
-}
-var init_project_registry = __esm(() => {
-  init_paths();
-  init_fs_utils();
-});
-
 // src/core/dashboard-server.ts
 var exports_dashboard_server = {};
 __export(exports_dashboard_server, {
   startDashboardServer: () => startDashboardServer
 });
 import { watch } from "fs";
-import { existsSync as existsSync24 } from "fs";
-import { basename as basename7, dirname as dirname10, join as join25, extname as extname2 } from "path";
+import { existsSync as existsSync30 } from "fs";
+import { basename as basename7, dirname as dirname11, join as join28, extname as extname2 } from "path";
 
 class SSEManager {
   clients = new Map;
@@ -8027,18 +9042,18 @@ function resolveProjectCwd(url, defaultCwd) {
   const projectId = url.searchParams.get("project");
   if (!projectId)
     return defaultCwd;
-  if (projectId === generateProjectId(defaultCwd))
+  if (projectId === projectIdFor(defaultCwd))
     return defaultCwd;
   const projects = listRegisteredProjects();
-  const match = projects.find((p) => p.id === projectId);
+  const match = projects.find((p) => p.id === projectId) ?? projects.find((p) => p.aliases.includes(projectId));
   if (!match)
     return null;
   return match.cwd;
 }
 function getProjectsList(startupCwd, activeCwd) {
-  const activeId = generateProjectId(activeCwd);
+  const activeId = projectIdFor(activeCwd);
   const registered = listRegisteredProjects();
-  const startupId = generateProjectId(startupCwd);
+  const startupId = projectIdFor(startupCwd);
   const hasStartup = registered.some((p) => p.id === startupId);
   if (!hasStartup) {
     const meta = getProjectMeta(projectDir(startupCwd));
@@ -8046,7 +9061,9 @@ function getProjectsList(startupCwd, activeCwd) {
       id: startupId,
       cwd: startupCwd,
       name: meta?.name ?? basename7(startupCwd),
-      version: meta?.version ?? "0.1.0"
+      version: meta?.version ?? "0.1.0",
+      aliases: meta?.aliases ?? [],
+      pathsByDevice: meta?.pathsByDevice ?? {}
     });
   }
   if (activeId !== startupId) {
@@ -8057,7 +9074,9 @@ function getProjectsList(startupCwd, activeCwd) {
         id: activeId,
         cwd: activeCwd,
         name: meta?.name ?? basename7(activeCwd),
-        version: meta?.version ?? "0.1.0"
+        version: meta?.version ?? "0.1.0",
+        aliases: meta?.aliases ?? [],
+        pathsByDevice: meta?.pathsByDevice ?? {}
       });
     }
   }
@@ -8139,15 +9158,15 @@ async function startDashboardServer(cwd, options = {}) {
       timestamp: new Date().toISOString()
     });
   });
-  const __dir = dirname10(new URL(import.meta.url).pathname);
+  const __dir = dirname11(new URL(import.meta.url).pathname);
   let pkgRoot = __dir;
-  while (pkgRoot !== dirname10(pkgRoot)) {
-    if (existsSync24(join25(pkgRoot, "package.json")))
+  while (pkgRoot !== dirname11(pkgRoot)) {
+    if (existsSync30(join28(pkgRoot, "package.json")))
       break;
-    pkgRoot = dirname10(pkgRoot);
+    pkgRoot = dirname11(pkgRoot);
   }
-  const dashboardOutDir = join25(pkgRoot, "dashboard", "out");
-  const dashboardBuilt = existsSync24(join25(dashboardOutDir, "index.html"));
+  const dashboardOutDir = join28(pkgRoot, "dashboard", "out");
+  const dashboardBuilt = existsSync30(join28(dashboardOutDir, "index.html"));
   let clientIdCounter = 0;
   if (!dashboardBuilt) {
     console.warn("[mink] dashboard not built. Run: cd dashboard && bun run build");
@@ -8177,9 +9196,9 @@ async function startDashboardServer(cwd, options = {}) {
         } else {
           let filePath;
           if (pathname === "/") {
-            filePath = join25(dashboardOutDir, "index.html");
+            filePath = join28(dashboardOutDir, "index.html");
           } else {
-            filePath = join25(dashboardOutDir, pathname);
+            filePath = join28(dashboardOutDir, pathname);
           }
           if (!filePath.startsWith(dashboardOutDir)) {
             return jsonResponse({ error: "Forbidden" }, 403);
@@ -8192,7 +9211,7 @@ async function startDashboardServer(cwd, options = {}) {
           const htmlServed = await serveFile(filePath + ".html", "text/html; charset=utf-8");
           if (htmlServed)
             return htmlServed;
-          const indexServed = await serveFile(join25(dashboardOutDir, "index.html"), "text/html; charset=utf-8");
+          const indexServed = await serveFile(join28(dashboardOutDir, "index.html"), "text/html; charset=utf-8");
           if (indexServed)
             return indexServed;
         }
@@ -8301,7 +9320,7 @@ retry: 3000
             if (!filename || filename.includes("..") || filename.includes("/")) {
               return jsonResponse({ error: "Invalid filename" }, 400);
             }
-            const imgPath = join25(designCapturesDir(resolvedCwd), filename);
+            const imgPath = join28(designCapturesDir(resolvedCwd), filename);
             const served = await serveFile(imgPath, "image/jpeg");
             if (served) {
               served.headers.set("Cache-Control", "public, max-age=60");
@@ -8535,9 +9554,9 @@ var exports_dashboard = {};
 __export(exports_dashboard, {
   dashboard: () => dashboard
 });
-import { existsSync as existsSync25 } from "fs";
+import { existsSync as existsSync31 } from "fs";
 async function dashboard(cwd, args) {
-  if (!existsSync25(projectDir(cwd))) {
+  if (!existsSync31(projectDir(cwd))) {
     console.error("[mink] project not initialized. Run: mink init");
     process.exit(1);
   }
@@ -8555,19 +9574,19 @@ var init_dashboard = __esm(() => {
 });
 
 // src/commands/init.ts
-import { mkdirSync as mkdirSync12, existsSync as existsSync26 } from "fs";
-import { resolve as resolve6, dirname as dirname11, basename as basename8, join as join26 } from "path";
+import { mkdirSync as mkdirSync13, existsSync as existsSync32 } from "fs";
+import { resolve as resolve7, dirname as dirname12, basename as basename8, join as join29 } from "path";
 function resolveCliPath2() {
   const selfPath = new URL(import.meta.url).pathname;
-  const selfDir = dirname11(selfPath);
+  const selfDir = dirname12(selfPath);
   if (selfPath.endsWith("dist/cli.js")) {
     return selfPath;
   }
-  const projectRoot = resolve6(selfDir, "../..");
-  const distPath = join26(projectRoot, "dist", "cli.js");
-  if (existsSync26(distPath))
+  const projectRoot = resolve7(selfDir, "../..");
+  const distPath = join29(projectRoot, "dist", "cli.js");
+  if (existsSync32(distPath))
     return distPath;
-  return resolve6(selfDir, "../cli.ts");
+  return resolve7(selfDir, "../cli.ts");
 }
 function buildHooksConfig2(cliPath) {
   const isTsSource = cliPath.endsWith(".ts");
@@ -8606,7 +9625,7 @@ function isMinkHook2(entry) {
   return false;
 }
 function mergeHooksIntoSettings2(settingsPath, newHooks) {
-  mkdirSync12(dirname11(settingsPath), { recursive: true });
+  mkdirSync13(dirname12(settingsPath), { recursive: true });
   const existing = safeReadJson(settingsPath) ?? {};
   const existingHooks = existing.hooks ?? {};
   for (const [event, entries] of Object.entries(newHooks)) {
@@ -8621,14 +9640,19 @@ var init_init2 = __esm(() => {
   init_paths();
   init_project_id();
   init_fs_utils();
+  init_device();
+  init_git_identity();
   init_vault();
+  init_agent_detect();
+  init_agent_pi();
+  init_prompt();
 });
 
 // src/core/daemon-service.ts
-import { execSync as execSync6 } from "child_process";
-import { existsSync as existsSync27, mkdirSync as mkdirSync13, unlinkSync as unlinkSync5, writeFileSync as writeFileSync10 } from "fs";
-import { homedir as homedir4 } from "os";
-import { dirname as dirname12, join as join27 } from "path";
+import { execSync as execSync8 } from "child_process";
+import { existsSync as existsSync33, mkdirSync as mkdirSync14, unlinkSync as unlinkSync5, writeFileSync as writeFileSync10 } from "fs";
+import { homedir as homedir5 } from "os";
+import { dirname as dirname13, join as join30 } from "path";
 function detectPlatform() {
   if (process.platform === "linux")
     return "systemd";
@@ -8638,11 +9662,11 @@ function detectPlatform() {
 }
 function resolveServiceInvocation() {
   const entry = process.argv[1];
-  if (entry && !/\.(js|ts|mjs|cjs)$/.test(entry) && existsSync27(entry)) {
+  if (entry && !/\.(js|ts|mjs|cjs)$/.test(entry) && existsSync33(entry)) {
     return {
       executable: entry,
       args: ["daemon", "start"],
-      pathDir: dirname12(entry)
+      pathDir: dirname13(entry)
     };
   }
   const cliPath = resolveCliPath2();
@@ -8650,17 +9674,17 @@ function resolveServiceInvocation() {
   return {
     executable: interpreter,
     args: [cliPath, "daemon", "start"],
-    pathDir: dirname12(interpreter)
+    pathDir: dirname13(interpreter)
   };
 }
 function servicePaths(platform2) {
-  const home = homedir4();
+  const home = homedir5();
   if (platform2 === "systemd") {
-    const unitDir2 = join27(home, ".config", "systemd", "user");
-    return { unitDir: unitDir2, unitFile: join27(unitDir2, "mink-daemon.service") };
+    const unitDir2 = join30(home, ".config", "systemd", "user");
+    return { unitDir: unitDir2, unitFile: join30(unitDir2, "mink-daemon.service") };
   }
-  const unitDir = join27(home, "Library", "LaunchAgents");
-  return { unitDir, unitFile: join27(unitDir, "com.mink.daemon.plist") };
+  const unitDir = join30(home, "Library", "LaunchAgents");
+  return { unitDir, unitFile: join30(unitDir, "com.mink.daemon.plist") };
 }
 function renderSystemdUnit(inv) {
   const execStart = [inv.executable, ...inv.args].join(" ");
@@ -8734,17 +9758,17 @@ function installService(options = {}) {
     process.exit(1);
   }
   const paths = servicePaths(platform2);
-  if (existsSync27(paths.unitFile) && !options.force) {
+  if (existsSync33(paths.unitFile) && !options.force) {
     console.error(`[mink] unit file already exists: ${paths.unitFile}`);
     console.error("       re-run with --force to overwrite, or run `mink daemon uninstall` first");
     process.exit(1);
   }
   const inv = resolveServiceInvocation();
-  mkdirSync13(paths.unitDir, { recursive: true });
+  mkdirSync14(paths.unitDir, { recursive: true });
   if (platform2 === "systemd") {
     writeFileSync10(paths.unitFile, renderSystemdUnit(inv));
     try {
-      execSync6("systemctl --user daemon-reload", { stdio: "ignore" });
+      execSync8("systemctl --user daemon-reload", { stdio: "ignore" });
     } catch {}
     console.log(`[mink] wrote ${paths.unitFile}`);
     console.log("[mink] next steps:");
@@ -8767,24 +9791,24 @@ function uninstallService() {
     process.exit(1);
   }
   const paths = servicePaths(platform2);
-  if (!existsSync27(paths.unitFile)) {
+  if (!existsSync33(paths.unitFile)) {
     console.log(`[mink] no unit file at ${paths.unitFile} — nothing to uninstall`);
     return;
   }
   if (platform2 === "systemd") {
     try {
-      execSync6("systemctl --user disable --now mink-daemon.service", {
+      execSync8("systemctl --user disable --now mink-daemon.service", {
         stdio: "ignore"
       });
     } catch {}
     unlinkSync5(paths.unitFile);
     try {
-      execSync6("systemctl --user daemon-reload", { stdio: "ignore" });
+      execSync8("systemctl --user daemon-reload", { stdio: "ignore" });
     } catch {}
     console.log(`[mink] removed ${paths.unitFile}`);
   } else {
     try {
-      execSync6(`launchctl unload -w ${paths.unitFile}`, { stdio: "ignore" });
+      execSync8(`launchctl unload -w ${paths.unitFile}`, { stdio: "ignore" });
     } catch {}
     unlinkSync5(paths.unitFile);
     console.log(`[mink] removed ${paths.unitFile}`);
@@ -8799,7 +9823,7 @@ var exports_daemon = {};
 __export(exports_daemon, {
   daemon: () => daemon
 });
-import { readFileSync as readFileSync22, existsSync as existsSync28 } from "fs";
+import { readFileSync as readFileSync23, existsSync as existsSync34 } from "fs";
 async function daemon(cwd, args) {
   const subcommand = args[0];
   switch (subcommand) {
@@ -8815,12 +9839,12 @@ async function daemon(cwd, args) {
       break;
     case "logs": {
       const logPath = schedulerLogPath();
-      if (!existsSync28(logPath)) {
+      if (!existsSync34(logPath)) {
         console.log("[mink] no log file found");
         return;
       }
       try {
-        const content = readFileSync22(logPath, "utf-8");
+        const content = readFileSync23(logPath, "utf-8");
         const lines = content.split(`
 `);
         const tail = lines.slice(-50).join(`
@@ -9087,13 +10111,13 @@ function printValidKeys() {
   }
 }
 function readLineFromStdin() {
-  return new Promise((resolve8) => {
+  return new Promise((resolve9) => {
     const chunks = [];
     process.stdin.resume();
     process.stdin.setEncoding("utf-8");
     process.stdin.once("data", (data) => {
       process.stdin.pause();
-      resolve8(String(data).trim());
+      resolve9(String(data).trim());
     });
   });
 }
@@ -9168,7 +10192,7 @@ var exports_update = {};
 __export(exports_update, {
   update: () => update
 });
-import { resolve as resolve8 } from "path";
+import { resolve as resolve9 } from "path";
 function parseArgs(args) {
   let dryRun = false;
   let project = null;
@@ -9226,7 +10250,7 @@ async function update(cwd, args) {
     }
     const backupName = createBackup(target.cwd);
     console.log(`  backup: ${backupName}`);
-    const settingsPath = resolve8(target.cwd, ".claude", "settings.json");
+    const settingsPath = resolve9(target.cwd, ".claude", "settings.json");
     mergeHooksIntoSettings2(settingsPath, newHooks);
     console.log("  hooks: updated");
     const metaPath = projectMetaPath(target.cwd);
@@ -9401,8 +10425,8 @@ var init_restore = __esm(() => {
 });
 
 // src/core/design-eval/server-detect.ts
-import { readFileSync as readFileSync23 } from "fs";
-import { join as join28 } from "path";
+import { readFileSync as readFileSync24 } from "fs";
+import { join as join31 } from "path";
 async function probePort(port) {
   try {
     const controller = new AbortController;
@@ -9424,7 +10448,7 @@ async function findRunningServer(ports = DEFAULT_PROBE_PORTS) {
 }
 function detectDevCommand(cwd) {
   try {
-    const raw = readFileSync23(join28(cwd, "package.json"), "utf-8");
+    const raw = readFileSync24(join31(cwd, "package.json"), "utf-8");
     const pkg = JSON.parse(raw);
     const scripts = pkg.scripts;
     if (!scripts || typeof scripts !== "object")
@@ -9444,10 +10468,10 @@ var init_server_detect = __esm(() => {
 });
 
 // src/core/design-eval/route-detect.ts
-import { existsSync as existsSync29, readdirSync as readdirSync9, statSync as statSync11 } from "fs";
-import { join as join29, relative as relative8, sep as sep2 } from "path";
+import { existsSync as existsSync35, readdirSync as readdirSync9, statSync as statSync11 } from "fs";
+import { join as join32, relative as relative8, sep as sep2 } from "path";
 function detectFramework(cwd) {
-  const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync29(join29(cwd, `${name}.${ext}`))) || existsSync29(join29(cwd, name));
+  const has = (name) => ["js", "mjs", "ts", "cjs"].some((ext) => existsSync35(join32(cwd, `${name}.${ext}`))) || existsSync35(join32(cwd, name));
   if (has("next.config"))
     return "nextjs";
   if (has("svelte.config"))
@@ -9472,8 +10496,8 @@ function detectRoutes(cwd) {
 }
 function detectNextRoutes(cwd) {
   const routes = [];
-  const appDir = join29(cwd, "app");
-  if (existsSync29(appDir)) {
+  const appDir = join32(cwd, "app");
+  if (existsSync35(appDir)) {
     const pageFiles = findFiles(appDir, /^page\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
       const rel = relative8(appDir, file);
@@ -9484,8 +10508,8 @@ function detectNextRoutes(cwd) {
       routes.push(route);
     }
   }
-  const pagesDir = join29(cwd, "pages");
-  if (existsSync29(pagesDir)) {
+  const pagesDir = join32(cwd, "pages");
+  if (existsSync35(pagesDir)) {
     const pageFiles = findFiles(pagesDir, /\.(tsx?|jsx?)$/);
     for (const file of pageFiles) {
       const rel = relative8(pagesDir, file);
@@ -9504,8 +10528,8 @@ function detectNextRoutes(cwd) {
   return unique.length > 0 ? unique.sort() : ["/"];
 }
 function detectSvelteKitRoutes(cwd) {
-  const routesDir = join29(cwd, "src", "routes");
-  if (!existsSync29(routesDir))
+  const routesDir = join32(cwd, "src", "routes");
+  if (!existsSync35(routesDir))
     return ["/"];
   const routes = [];
   const pageFiles = findFiles(routesDir, /^\+page\.svelte$/);
@@ -9520,8 +10544,8 @@ function detectSvelteKitRoutes(cwd) {
   return routes.length > 0 ? routes.sort() : ["/"];
 }
 function detectNuxtRoutes(cwd) {
-  const pagesDir = join29(cwd, "pages");
-  if (!existsSync29(pagesDir))
+  const pagesDir = join32(cwd, "pages");
+  if (!existsSync35(pagesDir))
     return ["/"];
   const routes = [];
   const vueFiles = findFiles(pagesDir, /\.vue$/);
@@ -9547,7 +10571,7 @@ function findFiles(dir, pattern) {
     for (const entry of entries) {
       if (entry.startsWith(".") || entry === "node_modules")
         continue;
-      const full = join29(current, entry);
+      const full = join32(current, entry);
       try {
         const stat2 = statSync11(full);
         if (stat2.isDirectory()) {
@@ -9575,11 +10599,11 @@ function __extends(d, b) {
 }
 function __awaiter(thisArg, _arguments, P, generator) {
   function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve9) {
-      resolve9(value);
+    return value instanceof P ? value : new P(function(resolve10) {
+      resolve10(value);
     });
   }
-  return new (P || (P = Promise))(function(resolve9, reject) {
+  return new (P || (P = Promise))(function(resolve10, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -9595,7 +10619,7 @@ function __awaiter(thisArg, _arguments, P, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve9(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve10(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -9778,14 +10802,14 @@ function __asyncValues(o) {
   }, i);
   function verb(n) {
     i[n] = o[n] && function(v) {
-      return new Promise(function(resolve9, reject) {
-        v = o[n](v), settle(resolve9, reject, v.done, v.value);
+      return new Promise(function(resolve10, reject) {
+        v = o[n](v), settle(resolve10, reject, v.done, v.value);
       });
     };
   }
-  function settle(resolve9, reject, d, v) {
+  function settle(resolve10, reject, d, v) {
     Promise.resolve(v).then(function(v2) {
-      resolve9({ value: v2, done: d });
+      resolve10({ value: v2, done: d });
     }, reject);
   }
 }
@@ -10316,7 +11340,7 @@ function of() {
 }
 function lastValueFrom(source, config22) {
   var hasConfig = typeof config22 === "object";
-  return new Promise(function(resolve9, reject) {
+  return new Promise(function(resolve10, reject) {
     var _hasValue = false;
     var _value;
     source.subscribe({
@@ -10327,9 +11351,9 @@ function lastValueFrom(source, config22) {
       error: reject,
       complete: function() {
         if (_hasValue) {
-          resolve9(_value);
+          resolve10(_value);
         } else if (hasConfig) {
-          resolve9(config22.defaultValue);
+          resolve10(config22.defaultValue);
         } else {
           reject(new EmptyError);
         }
@@ -10339,16 +11363,16 @@ function lastValueFrom(source, config22) {
 }
 function firstValueFrom(source, config22) {
   var hasConfig = typeof config22 === "object";
-  return new Promise(function(resolve9, reject) {
+  return new Promise(function(resolve10, reject) {
     var subscriber = new SafeSubscriber({
       next: function(value) {
-        resolve9(value);
+        resolve10(value);
         subscriber.unsubscribe();
       },
       error: reject,
       complete: function() {
         if (hasConfig) {
-          resolve9(config22.defaultValue);
+          resolve10(config22.defaultValue);
         } else {
           reject(new EmptyError);
         }
@@ -11400,7 +12424,7 @@ var init_rxjs = __esm(() => {
     Observable2.prototype.forEach = function(next, promiseCtor) {
       var _this = this;
       promiseCtor = getPromiseCtor(promiseCtor);
-      return new promiseCtor(function(resolve9, reject) {
+      return new promiseCtor(function(resolve10, reject) {
         var subscriber = new SafeSubscriber({
           next: function(value) {
             try {
@@ -11411,7 +12435,7 @@ var init_rxjs = __esm(() => {
             }
           },
           error: reject,
-          complete: resolve9
+          complete: resolve10
         });
         _this.subscribe(subscriber);
       });
@@ -11433,14 +12457,14 @@ var init_rxjs = __esm(() => {
     Observable2.prototype.toPromise = function(promiseCtor) {
       var _this = this;
       promiseCtor = getPromiseCtor(promiseCtor);
-      return new promiseCtor(function(resolve9, reject) {
+      return new promiseCtor(function(resolve10, reject) {
         var value;
         _this.subscribe(function(x) {
           return value = x;
         }, function(err) {
           return reject(err);
         }, function() {
-          return resolve9(value);
+          return resolve10(value);
         });
       });
     };
@@ -13366,8 +14390,8 @@ class Deferred {
   #isRejected = false;
   #value;
   #resolve;
-  #taskPromise = new Promise((resolve9) => {
-    this.#resolve = resolve9;
+  #taskPromise = new Promise((resolve10) => {
+    this.#resolve = resolve10;
   });
   #timeoutId;
   #timeoutError;
@@ -13456,12 +14480,12 @@ var init_Mutex = __esm(() => {
       return new Mutex.Guard(this, onRelease);
     }
     release() {
-      const resolve9 = this.#acquirers.shift();
-      if (!resolve9) {
+      const resolve10 = this.#acquirers.shift();
+      if (!resolve10) {
         this.#locked = false;
         return;
       }
-      resolve9();
+      resolve10();
     }
   };
 });
@@ -15205,12 +16229,12 @@ var init_locators = __esm(() => {
       }
       return defer(() => {
         return from(handle.evaluate((element) => {
-          return new Promise((resolve9) => {
+          return new Promise((resolve10) => {
             window.requestAnimationFrame(() => {
               const rect1 = element.getBoundingClientRect();
               window.requestAnimationFrame(() => {
                 const rect2 = element.getBoundingClientRect();
-                resolve9([
+                resolve10([
                   {
                     x: rect1.x,
                     y: rect1.y,
@@ -16501,9 +17525,9 @@ var init_ElementHandle = __esm(() => {
           const handle = await this.#asSVGElementHandle();
           const target = __addDisposableResource6(env_5, handle && await handle.#getOwnerSVGElement(), false);
           return await (target ?? this).evaluate(async (element, threshold) => {
-            const visibleRatio = await new Promise((resolve9) => {
+            const visibleRatio = await new Promise((resolve10) => {
               const observer = new IntersectionObserver((entries) => {
-                resolve9(entries[0].intersectionRatio);
+                resolve10(entries[0].intersectionRatio);
                 observer.disconnect();
               });
               observer.observe(element);
@@ -16897,7 +17921,7 @@ var init_Frame = __esm(() => {
         }
         type = type ?? "text/javascript";
         return await this.mainRealm().transferHandle(await this.isolatedRealm().evaluateHandle(async ({ url, id, type: type2, content: content2 }) => {
-          return await new Promise((resolve9, reject) => {
+          return await new Promise((resolve10, reject) => {
             const script = document.createElement("script");
             script.type = type2;
             script.text = content2;
@@ -16910,12 +17934,12 @@ var init_Frame = __esm(() => {
             if (url) {
               script.src = url;
               script.addEventListener("load", () => {
-                resolve9(script);
+                resolve10(script);
               }, { once: true });
               document.head.appendChild(script);
             } else {
               document.head.appendChild(script);
-              resolve9(script);
+              resolve10(script);
             }
           });
         }, { ...options, type, content }));
@@ -16932,7 +17956,7 @@ var init_Frame = __esm(() => {
           options.content = content;
         }
         return await this.mainRealm().transferHandle(await this.isolatedRealm().evaluateHandle(async ({ url, content: content2 }) => {
-          return await new Promise((resolve9, reject) => {
+          return await new Promise((resolve10, reject) => {
             let element;
             if (!url) {
               element = document.createElement("style");
@@ -16944,7 +17968,7 @@ var init_Frame = __esm(() => {
               element = link;
             }
             element.addEventListener("load", () => {
-              resolve9(element);
+              resolve10(element);
             }, { once: true });
             element.addEventListener("error", (event) => {
               reject(new Error(event.message ?? "Could not load style"));
@@ -17798,9 +18822,9 @@ var init_Page = __esm(() => {
         ++this.#screencastSessionCount;
         if (!this.#startScreencastPromise) {
           this.#startScreencastPromise = this.mainFrame().client.send("Page.startScreencast", { format: "png" }).then(() => {
-            return new Promise((resolve9) => {
+            return new Promise((resolve10) => {
               return this.mainFrame().client.once("Page.screencastFrame", () => {
-                return resolve9();
+                return resolve10();
               });
             });
           });
@@ -20458,11 +21482,11 @@ function addPageBinding(type, name, prefix) {
           return value instanceof Node;
         })
       }));
-      return new Promise((resolve9, reject) => {
+      return new Promise((resolve10, reject) => {
         callPuppeteer.callbacks.set(seq, {
           resolve(value) {
             callPuppeteer.args.delete(seq);
-            resolve9(value);
+            resolve10(value);
           },
           reject(value) {
             callPuppeteer.args.delete(seq);
@@ -23925,8 +24949,8 @@ var init_Input2 = __esm(() => {
       if (typeof delay === "number") {
         await Promise.all(actions);
         actions.length = 0;
-        await new Promise((resolve9) => {
-          setTimeout(resolve9, delay);
+        await new Promise((resolve10) => {
+          setTimeout(resolve10, delay);
         });
       }
       actions.push(this.up({ ...options, clickCount }));
@@ -23946,9 +24970,9 @@ var init_Input2 = __esm(() => {
       });
     }
     async drag(start, target) {
-      const promise = new Promise((resolve9) => {
+      const promise = new Promise((resolve10) => {
         this.#client.once("Input.dragIntercepted", (event) => {
-          return resolve9(event.data);
+          return resolve10(event.data);
         });
       });
       await this.move(start.x, start.y);
@@ -23989,8 +25013,8 @@ var init_Input2 = __esm(() => {
       await this.dragEnter(target, data);
       await this.dragOver(target, data);
       if (delay) {
-        await new Promise((resolve9) => {
-          return setTimeout(resolve9, delay);
+        await new Promise((resolve10) => {
+          return setTimeout(resolve10, delay);
         });
       }
       await this.drop(target, data);
@@ -24802,9 +25826,9 @@ var init_Page2 = __esm(() => {
     async captureHeapSnapshot(options) {
       const { createWriteStream } = environment.value.fs;
       const stream = createWriteStream(options.path);
-      const streamPromise = new Promise((resolve9, reject) => {
+      const streamPromise = new Promise((resolve10, reject) => {
         stream.on("error", reject);
-        stream.on("finish", resolve9);
+        stream.on("finish", resolve10);
       });
       const client = this.#primaryTargetClient;
       await client.send("HeapProfiler.enable");
@@ -26317,10 +27341,10 @@ __export(exports_BrowserWebSocketTransport, {
 
 class BrowserWebSocketTransport {
   static create(url) {
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve10, reject) => {
       const ws = new WebSocket(url);
       ws.addEventListener("open", () => {
-        return resolve9(new BrowserWebSocketTransport(ws));
+        return resolve10(new BrowserWebSocketTransport(ws));
       });
       ws.addEventListener("error", reject);
     });
@@ -29154,11 +30178,11 @@ var require_BrowsingContextProcessor = __commonJS((exports) => {
       }
       const parentCdpClient = context2.cdpTarget.parentCdpClient;
       try {
-        const detachedFromTargetPromise = new Promise((resolve9) => {
+        const detachedFromTargetPromise = new Promise((resolve10) => {
           const onContextDestroyed = (event) => {
             if (event.targetId === params.context) {
               parentCdpClient.off("Target.detachedFromTarget", onContextDestroyed);
-              resolve9();
+              resolve10();
             }
           };
           parentCdpClient.on("Target.detachedFromTarget", onContextDestroyed);
@@ -30478,7 +31502,7 @@ var require_ActionDispatcher = __commonJS((exports) => {
         }
       }
       const promises = [
-        new Promise((resolve9) => setTimeout(resolve9, this.#tickDuration))
+        new Promise((resolve10) => setTimeout(resolve10, this.#tickDuration))
       ];
       for (const option of options) {
         promises.push(this.#dispatchAction(option));
@@ -31077,8 +32101,8 @@ var require_Mutex = __commonJS((exports) => {
     acquire() {
       const state = { resolved: false };
       if (this.#locked) {
-        return new Promise((resolve9) => {
-          this.#acquirers.push(() => resolve9(this.#release.bind(this, state)));
+        return new Promise((resolve10) => {
+          this.#acquirers.push(() => resolve10(this.#release.bind(this, state)));
         });
       }
       this.#locked = true;
@@ -31089,12 +32113,12 @@ var require_Mutex = __commonJS((exports) => {
         throw new Error("Cannot release more than once.");
       }
       state.resolved = true;
-      const resolve9 = this.#acquirers.shift();
-      if (!resolve9) {
+      const resolve10 = this.#acquirers.shift();
+      if (!resolve10) {
         this.#locked = false;
         return;
       }
-      resolve9();
+      resolve10();
     }
     async run(action) {
       const release = await this.acquire();
@@ -32221,8 +33245,8 @@ var require_ChannelProxy = __commonJS((exports) => {
         let queueNonEmptyResolver = null;
         return {
           async getMessage() {
-            const onMessage = queue.length > 0 ? Promise.resolve() : new Promise((resolve9) => {
-              queueNonEmptyResolver = resolve9;
+            const onMessage = queue.length > 0 ? Promise.resolve() : new Promise((resolve10) => {
+              queueNonEmptyResolver = resolve10;
             });
             await onMessage;
             return queue.shift();
@@ -32308,7 +33332,7 @@ var require_ChannelProxy = __commonJS((exports) => {
         functionDeclaration: String((id) => {
           const w = window;
           if (w[id] === undefined) {
-            return new Promise((resolve9) => w[id] = resolve9);
+            return new Promise((resolve10) => w[id] = resolve10);
           }
           const channelProxy = w[id];
           delete w[id];
@@ -33659,8 +34683,8 @@ var require_Deferred = __commonJS((exports) => {
       return this.#result;
     }
     constructor() {
-      this.#promise = new Promise((resolve9, reject) => {
-        this.#resolve = resolve9;
+      this.#promise = new Promise((resolve10, reject) => {
+        this.#resolve = resolve10;
         this.#reject = reject;
       });
       this.#promise.catch((_error) => {});
@@ -37985,11 +39009,11 @@ var require_BrowsingContextStorage = __commonJS((exports) => {
       if (this.#contexts.has(browsingContextId)) {
         return Promise.resolve(this.getContext(browsingContextId));
       }
-      return new Promise((resolve9) => {
+      return new Promise((resolve10) => {
         const listener = (event) => {
           if (event.browsingContext.id === browsingContextId) {
             this.#eventEmitter.off("added", listener);
-            resolve9(event.browsingContext);
+            resolve10(event.browsingContext);
           }
         };
         this.#eventEmitter.on("added", listener);
@@ -41485,8 +42509,8 @@ var init_ExposedFunction = __esm(() => {
       const functionDeclaration = stringifyFunction(interpolateFunction((callback) => {
         Object.assign(globalThis, {
           [PLACEHOLDER("name")]: function(...args) {
-            return new Promise((resolve9, reject) => {
-              callback([resolve9, reject, args]);
+            return new Promise((resolve10, reject) => {
+              callback([resolve10, reject, args]);
             });
           }
         });
@@ -41574,8 +42598,8 @@ var init_ExposedFunction = __esm(() => {
           return;
         }
         try {
-          await dataHandle.evaluate(([resolve9], result2) => {
-            resolve9(result2);
+          await dataHandle.evaluate(([resolve10], result2) => {
+            resolve10(result2);
           }, result);
         } catch (error) {
           debugError(error);
@@ -48867,7 +49891,7 @@ __export(exports_NodeWebSocketTransport, {
 
 class NodeWebSocketTransport {
   static create(url, headers) {
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve10, reject) => {
       const ws = new wrapper_default(url, [], {
         followRedirects: true,
         perMessageDeflate: false,
@@ -48879,7 +49903,7 @@ class NodeWebSocketTransport {
         }
       });
       ws.addEventListener("open", () => {
-        return resolve9(new NodeWebSocketTransport(ws));
+        return resolve10(new NodeWebSocketTransport(ws));
       });
       ws.addEventListener("error", reject);
     });
@@ -51771,8 +52795,8 @@ var require_helpers = __commonJS((exports) => {
   function req(url, opts = {}) {
     const href = typeof url === "string" ? url : url.href;
     const req2 = (href.startsWith("https:") ? https : http).request(url, opts);
-    const promise = new Promise((resolve9, reject) => {
-      req2.once("response", resolve9).once("error", reject).end();
+    const promise = new Promise((resolve10, reject) => {
+      req2.once("response", resolve10).once("error", reject).end();
     });
     req2.then = promise.then.bind(promise);
     return req2;
@@ -52143,7 +53167,7 @@ var require_parse_proxy_response = __commonJS((exports) => {
   var debug_1 = __importDefault(require_src());
   var debug2 = (0, debug_1.default)("https-proxy-agent:parse-proxy-response");
   function parseProxyResponse(socket) {
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve10, reject) => {
       let buffersLength = 0;
       const buffers = [];
       function read() {
@@ -52212,7 +53236,7 @@ var require_parse_proxy_response = __commonJS((exports) => {
         }
         debug2("got proxy server response: %o %o", firstLine, headers);
         cleanup();
-        resolve9({
+        resolve10({
           connect: {
             statusCode,
             statusText,
@@ -54316,11 +55340,11 @@ var require_receivebuffer = __commonJS((exports) => {
 var require_socksclient = __commonJS((exports) => {
   var __awaiter2 = exports && exports.__awaiter || function(thisArg, _arguments, P, generator) {
     function adopt(value) {
-      return value instanceof P ? value : new P(function(resolve9) {
-        resolve9(value);
+      return value instanceof P ? value : new P(function(resolve10) {
+        resolve10(value);
       });
     }
-    return new (P || (P = Promise))(function(resolve9, reject) {
+    return new (P || (P = Promise))(function(resolve10, reject) {
       function fulfilled(value) {
         try {
           step(generator.next(value));
@@ -54336,7 +55360,7 @@ var require_socksclient = __commonJS((exports) => {
         }
       }
       function step(result) {
-        result.done ? resolve9(result.value) : adopt(result.value).then(fulfilled, rejected);
+        result.done ? resolve10(result.value) : adopt(result.value).then(fulfilled, rejected);
       }
       step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
@@ -54363,13 +55387,13 @@ var require_socksclient = __commonJS((exports) => {
       this.setState(constants_1.SocksClientState.Created);
     }
     static createConnection(options, callback) {
-      return new Promise((resolve9, reject) => {
+      return new Promise((resolve10, reject) => {
         try {
           (0, helpers_1.validateSocksClientOptions)(options, ["connect"]);
         } catch (err) {
           if (typeof callback === "function") {
             callback(err);
-            return resolve9(err);
+            return resolve10(err);
           } else {
             return reject(err);
           }
@@ -54380,16 +55404,16 @@ var require_socksclient = __commonJS((exports) => {
           client.removeAllListeners();
           if (typeof callback === "function") {
             callback(null, info);
-            resolve9(info);
+            resolve10(info);
           } else {
-            resolve9(info);
+            resolve10(info);
           }
         });
         client.once("error", (err) => {
           client.removeAllListeners();
           if (typeof callback === "function") {
             callback(err);
-            resolve9(err);
+            resolve10(err);
           } else {
             reject(err);
           }
@@ -54397,13 +55421,13 @@ var require_socksclient = __commonJS((exports) => {
       });
     }
     static createConnectionChain(options, callback) {
-      return new Promise((resolve9, reject) => __awaiter2(this, undefined, undefined, function* () {
+      return new Promise((resolve10, reject) => __awaiter2(this, undefined, undefined, function* () {
         try {
           (0, helpers_1.validateSocksClientChainOptions)(options);
         } catch (err) {
           if (typeof callback === "function") {
             callback(err);
-            return resolve9(err);
+            return resolve10(err);
           } else {
             return reject(err);
           }
@@ -54429,14 +55453,14 @@ var require_socksclient = __commonJS((exports) => {
           }
           if (typeof callback === "function") {
             callback(null, { socket: sock });
-            resolve9({ socket: sock });
+            resolve10({ socket: sock });
           } else {
-            resolve9({ socket: sock });
+            resolve10({ socket: sock });
           }
         } catch (err) {
           if (typeof callback === "function") {
             callback(err);
-            resolve9(err);
+            resolve10(err);
           } else {
             reject(err);
           }
@@ -55036,12 +56060,12 @@ var require_dist4 = __commonJS((exports) => {
       let { host } = opts;
       const { port, lookup: lookupFn = dns.lookup } = opts;
       if (shouldLookup) {
-        host = await new Promise((resolve9, reject) => {
+        host = await new Promise((resolve10, reject) => {
           lookupFn(host, {}, (err, res) => {
             if (err) {
               reject(err);
             } else {
-              resolve9(res);
+              resolve10(res);
             }
           });
         });
@@ -56048,7 +57072,7 @@ var require_netUtils = __commonJS((exports) => {
     return `${socket.remoteAddress}:${socket.remotePort}`;
   }
   function upgradeSocket(socket, options) {
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve10, reject) => {
       const tlsOptions = Object.assign({}, options, {
         socket
       });
@@ -56058,7 +57082,7 @@ var require_netUtils = __commonJS((exports) => {
           reject(tlsSocket.authorizationError);
         } else {
           tlsSocket.removeAllListeners("error");
-          resolve9(tlsSocket);
+          resolve10(tlsSocket);
         }
       }).once("error", (error) => {
         reject(error);
@@ -56150,7 +57174,7 @@ var require_transfer = __commonJS((exports) => {
     };
   }
   function connectForPassiveTransfer(host, port, ftp) {
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve10, reject) => {
       let socket = ftp._newSocket();
       const handleConnErr = function(err) {
         err.message = "Can't open data connection in passive mode: " + err.message;
@@ -56173,7 +57197,7 @@ var require_transfer = __commonJS((exports) => {
         socket.removeListener("error", handleConnErr);
         socket.removeListener("timeout", handleTimeout);
         ftp.dataSocket = socket;
-        resolve9();
+        resolve10();
       });
     });
   }
@@ -58251,7 +59275,7 @@ var require_util2 = __commonJS((exports) => {
     return path;
   }
   exports.normalize = normalize2;
-  function join30(aRoot, aPath) {
+  function join33(aRoot, aPath) {
     if (aRoot === "") {
       aRoot = ".";
     }
@@ -58283,7 +59307,7 @@ var require_util2 = __commonJS((exports) => {
     }
     return joined;
   }
-  exports.join = join30;
+  exports.join = join33;
   exports.isAbsolute = function(aPath) {
     return aPath.charAt(0) === "/" || urlRegexp.test(aPath);
   };
@@ -58456,7 +59480,7 @@ var require_util2 = __commonJS((exports) => {
           parsed.path = parsed.path.substring(0, index + 1);
         }
       }
-      sourceURL = join30(urlGenerate(parsed), sourceURL);
+      sourceURL = join33(urlGenerate(parsed), sourceURL);
     }
     return normalize2(sourceURL);
   }
@@ -60188,7 +61212,7 @@ var require_escodegen = __commonJS((exports) => {
     function noEmptySpace() {
       return space ? space : " ";
     }
-    function join30(left, right) {
+    function join33(left, right) {
       var leftSource, rightSource, leftCharCode, rightCharCode;
       leftSource = toSourceNodeWhenNeeded(left).toString();
       if (leftSource.length === 0) {
@@ -60529,8 +61553,8 @@ var require_escodegen = __commonJS((exports) => {
         } else {
           result.push(that.generateExpression(stmt.left, Precedence.Call, E_TTT));
         }
-        result = join30(result, operator);
-        result = [join30(result, that.generateExpression(stmt.right, Precedence.Assignment, E_TTT)), ")"];
+        result = join33(result, operator);
+        result = [join33(result, that.generateExpression(stmt.right, Precedence.Assignment, E_TTT)), ")"];
       });
       result.push(this.maybeBlock(stmt.body, flags));
       return result;
@@ -60668,11 +61692,11 @@ var require_escodegen = __commonJS((exports) => {
         var result, fragment;
         result = ["class"];
         if (stmt.id) {
-          result = join30(result, this.generateExpression(stmt.id, Precedence.Sequence, E_TTT));
+          result = join33(result, this.generateExpression(stmt.id, Precedence.Sequence, E_TTT));
         }
         if (stmt.superClass) {
-          fragment = join30("extends", this.generateExpression(stmt.superClass, Precedence.Unary, E_TTT));
-          result = join30(result, fragment);
+          fragment = join33("extends", this.generateExpression(stmt.superClass, Precedence.Unary, E_TTT));
+          result = join33(result, fragment);
         }
         result.push(space);
         result.push(this.generateStatement(stmt.body, S_TFFT));
@@ -60685,9 +61709,9 @@ var require_escodegen = __commonJS((exports) => {
         return escapeDirective(stmt.directive) + this.semicolon(flags);
       },
       DoWhileStatement: function(stmt, flags) {
-        var result = join30("do", this.maybeBlock(stmt.body, S_TFFF));
+        var result = join33("do", this.maybeBlock(stmt.body, S_TFFF));
         result = this.maybeBlockSuffix(stmt.body, result);
-        return join30(result, [
+        return join33(result, [
           "while" + space + "(",
           this.generateExpression(stmt.test, Precedence.Sequence, E_TTT),
           ")" + this.semicolon(flags)
@@ -60723,11 +61747,11 @@ var require_escodegen = __commonJS((exports) => {
       ExportDefaultDeclaration: function(stmt, flags) {
         var result = ["export"], bodyFlags;
         bodyFlags = flags & F_SEMICOLON_OPT ? S_TFFT : S_TFFF;
-        result = join30(result, "default");
+        result = join33(result, "default");
         if (isStatement(stmt.declaration)) {
-          result = join30(result, this.generateStatement(stmt.declaration, bodyFlags));
+          result = join33(result, this.generateStatement(stmt.declaration, bodyFlags));
         } else {
-          result = join30(result, this.generateExpression(stmt.declaration, Precedence.Assignment, E_TTT) + this.semicolon(flags));
+          result = join33(result, this.generateExpression(stmt.declaration, Precedence.Assignment, E_TTT) + this.semicolon(flags));
         }
         return result;
       },
@@ -60735,15 +61759,15 @@ var require_escodegen = __commonJS((exports) => {
         var result = ["export"], bodyFlags, that = this;
         bodyFlags = flags & F_SEMICOLON_OPT ? S_TFFT : S_TFFF;
         if (stmt.declaration) {
-          return join30(result, this.generateStatement(stmt.declaration, bodyFlags));
+          return join33(result, this.generateStatement(stmt.declaration, bodyFlags));
         }
         if (stmt.specifiers) {
           if (stmt.specifiers.length === 0) {
-            result = join30(result, "{" + space + "}");
+            result = join33(result, "{" + space + "}");
           } else if (stmt.specifiers[0].type === Syntax.ExportBatchSpecifier) {
-            result = join30(result, this.generateExpression(stmt.specifiers[0], Precedence.Sequence, E_TTT));
+            result = join33(result, this.generateExpression(stmt.specifiers[0], Precedence.Sequence, E_TTT));
           } else {
-            result = join30(result, "{");
+            result = join33(result, "{");
             withIndent(function(indent2) {
               var i, iz;
               result.push(newline);
@@ -60761,7 +61785,7 @@ var require_escodegen = __commonJS((exports) => {
             result.push(base + "}");
           }
           if (stmt.source) {
-            result = join30(result, [
+            result = join33(result, [
               "from" + space,
               this.generateExpression(stmt.source, Precedence.Sequence, E_TTT),
               this.semicolon(flags)
@@ -60845,7 +61869,7 @@ var require_escodegen = __commonJS((exports) => {
         ];
         cursor = 0;
         if (stmt.specifiers[cursor].type === Syntax.ImportDefaultSpecifier) {
-          result = join30(result, [
+          result = join33(result, [
             this.generateExpression(stmt.specifiers[cursor], Precedence.Sequence, E_TTT)
           ]);
           ++cursor;
@@ -60855,7 +61879,7 @@ var require_escodegen = __commonJS((exports) => {
             result.push(",");
           }
           if (stmt.specifiers[cursor].type === Syntax.ImportNamespaceSpecifier) {
-            result = join30(result, [
+            result = join33(result, [
               space,
               this.generateExpression(stmt.specifiers[cursor], Precedence.Sequence, E_TTT)
             ]);
@@ -60884,7 +61908,7 @@ var require_escodegen = __commonJS((exports) => {
             }
           }
         }
-        result = join30(result, [
+        result = join33(result, [
           "from" + space,
           this.generateExpression(stmt.source, Precedence.Sequence, E_TTT),
           this.semicolon(flags)
@@ -60938,7 +61962,7 @@ var require_escodegen = __commonJS((exports) => {
         return result;
       },
       ThrowStatement: function(stmt, flags) {
-        return [join30("throw", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
+        return [join33("throw", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
       },
       TryStatement: function(stmt, flags) {
         var result, i, iz, guardedHandlers;
@@ -60946,7 +61970,7 @@ var require_escodegen = __commonJS((exports) => {
         result = this.maybeBlockSuffix(stmt.block, result);
         if (stmt.handlers) {
           for (i = 0, iz = stmt.handlers.length;i < iz; ++i) {
-            result = join30(result, this.generateStatement(stmt.handlers[i], S_TFFF));
+            result = join33(result, this.generateStatement(stmt.handlers[i], S_TFFF));
             if (stmt.finalizer || i + 1 !== iz) {
               result = this.maybeBlockSuffix(stmt.handlers[i].body, result);
             }
@@ -60954,7 +61978,7 @@ var require_escodegen = __commonJS((exports) => {
         } else {
           guardedHandlers = stmt.guardedHandlers || [];
           for (i = 0, iz = guardedHandlers.length;i < iz; ++i) {
-            result = join30(result, this.generateStatement(guardedHandlers[i], S_TFFF));
+            result = join33(result, this.generateStatement(guardedHandlers[i], S_TFFF));
             if (stmt.finalizer || i + 1 !== iz) {
               result = this.maybeBlockSuffix(guardedHandlers[i].body, result);
             }
@@ -60962,13 +61986,13 @@ var require_escodegen = __commonJS((exports) => {
           if (stmt.handler) {
             if (Array.isArray(stmt.handler)) {
               for (i = 0, iz = stmt.handler.length;i < iz; ++i) {
-                result = join30(result, this.generateStatement(stmt.handler[i], S_TFFF));
+                result = join33(result, this.generateStatement(stmt.handler[i], S_TFFF));
                 if (stmt.finalizer || i + 1 !== iz) {
                   result = this.maybeBlockSuffix(stmt.handler[i].body, result);
                 }
               }
             } else {
-              result = join30(result, this.generateStatement(stmt.handler, S_TFFF));
+              result = join33(result, this.generateStatement(stmt.handler, S_TFFF));
               if (stmt.finalizer) {
                 result = this.maybeBlockSuffix(stmt.handler.body, result);
               }
@@ -60976,7 +62000,7 @@ var require_escodegen = __commonJS((exports) => {
           }
         }
         if (stmt.finalizer) {
-          result = join30(result, ["finally", this.maybeBlock(stmt.finalizer, S_TFFF)]);
+          result = join33(result, ["finally", this.maybeBlock(stmt.finalizer, S_TFFF)]);
         }
         return result;
       },
@@ -61010,7 +62034,7 @@ var require_escodegen = __commonJS((exports) => {
         withIndent(function() {
           if (stmt.test) {
             result = [
-              join30("case", that.generateExpression(stmt.test, Precedence.Sequence, E_TTT)),
+              join33("case", that.generateExpression(stmt.test, Precedence.Sequence, E_TTT)),
               ":"
             ];
           } else {
@@ -61058,9 +62082,9 @@ var require_escodegen = __commonJS((exports) => {
           result.push(this.maybeBlock(stmt.consequent, S_TFFF));
           result = this.maybeBlockSuffix(stmt.consequent, result);
           if (stmt.alternate.type === Syntax.IfStatement) {
-            result = join30(result, ["else ", this.generateStatement(stmt.alternate, bodyFlags)]);
+            result = join33(result, ["else ", this.generateStatement(stmt.alternate, bodyFlags)]);
           } else {
-            result = join30(result, join30("else", this.maybeBlock(stmt.alternate, bodyFlags)));
+            result = join33(result, join33("else", this.maybeBlock(stmt.alternate, bodyFlags)));
           }
         } else {
           result.push(this.maybeBlock(stmt.consequent, bodyFlags));
@@ -61162,7 +62186,7 @@ var require_escodegen = __commonJS((exports) => {
       },
       ReturnStatement: function(stmt, flags) {
         if (stmt.argument) {
-          return [join30("return", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
+          return [join33("return", this.generateExpression(stmt.argument, Precedence.Sequence, E_TTT)), this.semicolon(flags)];
         }
         return ["return" + this.semicolon(flags)];
       },
@@ -61244,14 +62268,14 @@ var require_escodegen = __commonJS((exports) => {
         if (leftSource.charCodeAt(leftSource.length - 1) === 47 && esutils.code.isIdentifierPartES5(expr.operator.charCodeAt(0))) {
           result = [fragment, noEmptySpace(), expr.operator];
         } else {
-          result = join30(fragment, expr.operator);
+          result = join33(fragment, expr.operator);
         }
         fragment = this.generateExpression(expr.right, rightPrecedence, flags);
         if (expr.operator === "/" && fragment.toString().charAt(0) === "/" || expr.operator.slice(-1) === "<" && fragment.toString().slice(0, 3) === "!--") {
           result.push(noEmptySpace());
           result.push(fragment);
         } else {
-          result = join30(result, fragment);
+          result = join33(result, fragment);
         }
         if (expr.operator === "in" && !(flags & F_ALLOW_IN)) {
           return ["(", result, ")"];
@@ -61291,7 +62315,7 @@ var require_escodegen = __commonJS((exports) => {
         var result, length, i, iz, itemFlags;
         length = expr["arguments"].length;
         itemFlags = flags & F_ALLOW_UNPARATH_NEW && !parentheses && length === 0 ? E_TFT : E_TFF;
-        result = join30("new", this.generateExpression(expr.callee, Precedence.New, itemFlags));
+        result = join33("new", this.generateExpression(expr.callee, Precedence.New, itemFlags));
         if (!(flags & F_ALLOW_UNPARATH_NEW) || parentheses || length > 0) {
           result.push("(");
           for (i = 0, iz = length;i < iz; ++i) {
@@ -61338,11 +62362,11 @@ var require_escodegen = __commonJS((exports) => {
         var result, fragment, rightCharCode, leftSource, leftCharCode;
         fragment = this.generateExpression(expr.argument, Precedence.Unary, E_TTT);
         if (space === "") {
-          result = join30(expr.operator, fragment);
+          result = join33(expr.operator, fragment);
         } else {
           result = [expr.operator];
           if (expr.operator.length > 2) {
-            result = join30(result, fragment);
+            result = join33(result, fragment);
           } else {
             leftSource = toSourceNodeWhenNeeded(result).toString();
             leftCharCode = leftSource.charCodeAt(leftSource.length - 1);
@@ -61365,12 +62389,12 @@ var require_escodegen = __commonJS((exports) => {
           result = "yield";
         }
         if (expr.argument) {
-          result = join30(result, this.generateExpression(expr.argument, Precedence.Yield, E_TTT));
+          result = join33(result, this.generateExpression(expr.argument, Precedence.Yield, E_TTT));
         }
         return parenthesize(result, Precedence.Yield, precedence);
       },
       AwaitExpression: function(expr, precedence, flags) {
-        var result = join30(expr.all ? "await*" : "await", this.generateExpression(expr.argument, Precedence.Await, E_TTT));
+        var result = join33(expr.all ? "await*" : "await", this.generateExpression(expr.argument, Precedence.Await, E_TTT));
         return parenthesize(result, Precedence.Await, precedence);
       },
       UpdateExpression: function(expr, precedence, flags) {
@@ -61442,11 +62466,11 @@ var require_escodegen = __commonJS((exports) => {
         var result, fragment;
         result = ["class"];
         if (expr.id) {
-          result = join30(result, this.generateExpression(expr.id, Precedence.Sequence, E_TTT));
+          result = join33(result, this.generateExpression(expr.id, Precedence.Sequence, E_TTT));
         }
         if (expr.superClass) {
-          fragment = join30("extends", this.generateExpression(expr.superClass, Precedence.Unary, E_TTT));
-          result = join30(result, fragment);
+          fragment = join33("extends", this.generateExpression(expr.superClass, Precedence.Unary, E_TTT));
+          result = join33(result, fragment);
         }
         result.push(space);
         result.push(this.generateStatement(expr.body, S_TFFT));
@@ -61461,7 +62485,7 @@ var require_escodegen = __commonJS((exports) => {
         }
         if (expr.kind === "get" || expr.kind === "set") {
           fragment = [
-            join30(expr.kind, this.generatePropertyKey(expr.key, expr.computed)),
+            join33(expr.kind, this.generatePropertyKey(expr.key, expr.computed)),
             this.generateFunctionBody(expr.value)
           ];
         } else {
@@ -61471,7 +62495,7 @@ var require_escodegen = __commonJS((exports) => {
             this.generateFunctionBody(expr.value)
           ];
         }
-        return join30(result, fragment);
+        return join33(result, fragment);
       },
       Property: function(expr, precedence, flags) {
         if (expr.kind === "get" || expr.kind === "set") {
@@ -61665,7 +62689,7 @@ var require_escodegen = __commonJS((exports) => {
             for (i = 0, iz = expr.blocks.length;i < iz; ++i) {
               fragment = that.generateExpression(expr.blocks[i], Precedence.Sequence, E_TTT);
               if (i > 0 || extra.moz.comprehensionExpressionStartsWithAssignment) {
-                result = join30(result, fragment);
+                result = join33(result, fragment);
               } else {
                 result.push(fragment);
               }
@@ -61673,13 +62697,13 @@ var require_escodegen = __commonJS((exports) => {
           });
         }
         if (expr.filter) {
-          result = join30(result, "if" + space);
+          result = join33(result, "if" + space);
           fragment = this.generateExpression(expr.filter, Precedence.Sequence, E_TTT);
-          result = join30(result, ["(", fragment, ")"]);
+          result = join33(result, ["(", fragment, ")"]);
         }
         if (!extra.moz.comprehensionExpressionStartsWithAssignment) {
           fragment = this.generateExpression(expr.body, Precedence.Assignment, E_TTT);
-          result = join30(result, fragment);
+          result = join33(result, fragment);
         }
         result.push(expr.type === Syntax.GeneratorExpression ? ")" : "]");
         return result;
@@ -61695,8 +62719,8 @@ var require_escodegen = __commonJS((exports) => {
         } else {
           fragment = this.generateExpression(expr.left, Precedence.Call, E_TTT);
         }
-        fragment = join30(fragment, expr.of ? "of" : "in");
-        fragment = join30(fragment, this.generateExpression(expr.right, Precedence.Sequence, E_TTT));
+        fragment = join33(fragment, expr.of ? "of" : "in");
+        fragment = join33(fragment, this.generateExpression(expr.right, Precedence.Sequence, E_TTT));
         return ["for" + space + "(", fragment, ")"];
       },
       SpreadElement: function(expr, precedence, flags) {
@@ -68184,11 +69208,11 @@ var require_tslib = __commonJS((exports, module) => {
     };
     __awaiter2 = function(thisArg, _arguments, P, generator) {
       function adopt(value) {
-        return value instanceof P ? value : new P(function(resolve9) {
-          resolve9(value);
+        return value instanceof P ? value : new P(function(resolve10) {
+          resolve10(value);
         });
       }
-      return new (P || (P = Promise))(function(resolve9, reject) {
+      return new (P || (P = Promise))(function(resolve10, reject) {
         function fulfilled(value) {
           try {
             step(generator.next(value));
@@ -68204,7 +69228,7 @@ var require_tslib = __commonJS((exports, module) => {
           }
         }
         function step(result) {
-          result.done ? resolve9(result.value) : adopt(result.value).then(fulfilled, rejected);
+          result.done ? resolve10(result.value) : adopt(result.value).then(fulfilled, rejected);
         }
         step((generator = generator.apply(thisArg, _arguments || [])).next());
       });
@@ -68433,14 +69457,14 @@ var require_tslib = __commonJS((exports, module) => {
       }, i);
       function verb(n) {
         i[n] = o[n] && function(v) {
-          return new Promise(function(resolve9, reject) {
-            v = o[n](v), settle(resolve9, reject, v.done, v.value);
+          return new Promise(function(resolve10, reject) {
+            v = o[n](v), settle(resolve10, reject, v.done, v.value);
           });
         };
       }
-      function settle(resolve9, reject, d, v) {
+      function settle(resolve10, reject, d, v) {
         Promise.resolve(v).then(function(v2) {
-          resolve9({ value: v2, done: d });
+          resolve10({ value: v2, done: d });
         }, reject);
       }
     };
@@ -71679,12 +72703,12 @@ var require_util3 = __commonJS((exports) => {
   exports.isGMT = exports.dnsLookup = undefined;
   var dns_1 = __require("dns");
   function dnsLookup(host, opts) {
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve10, reject) => {
       (0, dns_1.lookup)(host, opts, (err, res) => {
         if (err) {
           reject(err);
         } else {
-          resolve9(res);
+          resolve10(res);
         }
       });
     });
@@ -72258,10 +73282,10 @@ var require_myIpAddress = __commonJS((exports) => {
   var ip_1 = require_ip();
   var net_1 = __importDefault(__require("net"));
   async function myIpAddress() {
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve10, reject) => {
       const socket = net_1.default.connect({ host: "8.8.8.8", port: 53 });
       const onError = () => {
-        resolve9(ip_1.ip.address());
+        resolve10(ip_1.ip.address());
       };
       socket.once("error", onError);
       socket.once("connect", () => {
@@ -72269,9 +73293,9 @@ var require_myIpAddress = __commonJS((exports) => {
         const addr = socket.address();
         socket.destroy();
         if (typeof addr === "string") {
-          resolve9(addr);
+          resolve10(addr);
         } else if (addr.address) {
-          resolve9(addr.address);
+          resolve10(addr.address);
         } else {
           reject(new Error("Expected a `string`"));
         }
@@ -72785,8 +73809,8 @@ var require_deferred_promise = __commonJS((exports) => {
       this.context = args.context;
       this.owner = args.context.runtime;
       this.handle = args.promiseHandle;
-      this.settled = new Promise((resolve9) => {
-        this.onSettled = resolve9;
+      this.settled = new Promise((resolve10) => {
+        this.onSettled = resolve10;
       });
       this.resolveHandle = args.resolveHandle;
       this.rejectHandle = args.rejectHandle;
@@ -73178,13 +74202,13 @@ var require_context = __commonJS((exports) => {
       if (vmResolveResult.error) {
         return Promise.resolve(vmResolveResult);
       }
-      return new Promise((resolve9) => {
+      return new Promise((resolve10) => {
         lifetime_1.Scope.withScope((scope) => {
           const resolveHandle = scope.manage(this.newFunction("resolve", (value) => {
-            resolve9({ value: value && value.dup() });
+            resolve10({ value: value && value.dup() });
           }));
           const rejectHandle = scope.manage(this.newFunction("reject", (error) => {
-            resolve9({ error: error && error.dup() });
+            resolve10({ error: error && error.dup() });
           }));
           const promiseHandle = scope.manage(vmResolveResult.value);
           const promiseThenHandle = scope.manage(this.getProp(promiseHandle, "then"));
@@ -73952,7 +74976,7 @@ var require_ffi_WASM_RELEASE_SYNC = __commonJS((exports) => {
 
 // node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js
 var require_emscripten_module_WASM_RELEASE_SYNC = __commonJS((exports, module) => {
-  var __dirname = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/Users/drewpayment/dev/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
+  var __dirname = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated", __filename = "/home/user/mink/node_modules/@tootallnate/quickjs-emscripten/dist/generated/emscripten-module.WASM_RELEASE_SYNC.js";
   var QuickJSRaw = (() => {
     var _scriptDir = typeof document !== "undefined" && document.currentScript ? document.currentScript.src : undefined;
     if (typeof __filename !== "undefined")
@@ -75298,13 +76322,13 @@ import * as http from "node:http";
 import * as https from "node:https";
 import { URL as URL2, urlToHttpOptions } from "node:url";
 function headHttpRequest(url) {
-  return new Promise((resolve9) => {
+  return new Promise((resolve10) => {
     const request3 = httpRequest(url, "HEAD", (response) => {
       response.resume();
-      resolve9(response.statusCode === 200);
+      resolve10(response.statusCode === 200);
     }, false);
     request3.on("error", () => {
-      resolve9(false);
+      resolve10(false);
     });
   });
 }
@@ -75332,7 +76356,7 @@ function httpRequest(url, method, response, keepAlive = true) {
   return request3;
 }
 function downloadFile(url, destinationPath, progressCallback) {
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve10, reject) => {
     let downloadedBytes = 0;
     let totalBytes = 0;
     function onData(chunk) {
@@ -75348,7 +76372,7 @@ function downloadFile(url, destinationPath, progressCallback) {
       }
       const file = createWriteStream(destinationPath);
       file.on("close", () => {
-        return resolve9();
+        return resolve10();
       });
       file.on("error", (error) => {
         return reject(error);
@@ -75373,7 +76397,7 @@ async function getJSON(url) {
   }
 }
 function getText(url) {
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve10, reject) => {
     const request3 = httpRequest(url, "GET", (response) => {
       let data = "";
       if (response.statusCode && response.statusCode >= 400) {
@@ -75384,7 +76408,7 @@ function getText(url) {
       });
       response.on("end", () => {
         try {
-          return resolve9(String(data));
+          return resolve10(String(data));
         } catch {
           return reject(new Error(`Failed to read text response from ${url}`));
         }
@@ -75401,7 +76425,7 @@ var init_httpUtil = __esm(() => {
 });
 
 // node_modules/@puppeteer/browsers/lib/esm/browser-data/chrome.js
-import { execSync as execSync7 } from "node:child_process";
+import { execSync as execSync9 } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 function folder(platform2) {
@@ -75491,7 +76515,7 @@ function getChromeWindowsLocation(channel2, locationsPrefixes) {
 }
 function getWslVariable(variable) {
   try {
-    const result = execSync7(`cmd.exe /c echo %${variable.toLocaleUpperCase()}%`, {
+    const result = execSync9(`cmd.exe /c echo %${variable.toLocaleUpperCase()}%`, {
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf-8"
     }).trim();
@@ -75502,7 +76526,7 @@ function getWslVariable(variable) {
   return;
 }
 function getWslLocation(channel2) {
-  const wslVersion = execSync7("wslinfo --version", {
+  const wslVersion = execSync9("wslinfo --version", {
     stdio: ["ignore", "pipe", "ignore"],
     encoding: "utf-8"
   }).trim();
@@ -75518,7 +76542,7 @@ function getWslLocation(channel2) {
   }
   const windowsPath = getChromeWindowsLocation(channel2, wslPrefixes);
   return windowsPath.map((path2) => {
-    return execSync7(`wslpath "${path2}"`).toString().trim();
+    return execSync9(`wslpath "${path2}"`).toString().trim();
   });
 }
 function getChromeLinuxOrWslLocation(channel2) {
@@ -76605,7 +77629,7 @@ class Process {
     if (opts.onExit) {
       this.#onExitHook = opts.onExit;
     }
-    this.#browserProcessExiting = new Promise((resolve9, reject) => {
+    this.#browserProcessExiting = new Promise((resolve10, reject) => {
       this.#browserProcess.once("exit", async () => {
         debugLaunch(`Browser process ${this.#browserProcess.pid} onExit`);
         this.#clearListeners();
@@ -76616,7 +77640,7 @@ class Process {
           reject(err);
           return;
         }
-        resolve9();
+        resolve10();
       });
     });
   }
@@ -76726,7 +77750,7 @@ Error cause: ${isErrorLike2(error) ? error.stack : error}`);
     return [...this.#logs];
   }
   waitForLineOutput(regex, timeout2 = 0) {
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve10, reject) => {
       const onClose = (errorOrCode) => {
         cleanup();
         reject(new Error([
@@ -76764,7 +77788,7 @@ Error cause: ${isErrorLike2(error) ? error.stack : error}`);
           return;
         }
         cleanup();
-        resolve9(match[1]);
+        resolve10(match[1]);
       }
     });
   }
@@ -77294,7 +78318,7 @@ var require_get_stream = __commonJS((exports, module) => {
     };
     const { maxBuffer } = options;
     let stream;
-    await new Promise((resolve9, reject) => {
+    await new Promise((resolve10, reject) => {
       const rejectPromise = (error) => {
         if (error && stream.getBufferedLength() <= BufferConstants.MAX_LENGTH) {
           error.bufferedData = stream.getBufferedValue();
@@ -77306,7 +78330,7 @@ var require_get_stream = __commonJS((exports, module) => {
           rejectPromise(error);
           return;
         }
-        resolve9();
+        resolve10();
       });
       stream.on("data", () => {
         if (stream.getBufferedLength() > maxBuffer) {
@@ -78667,7 +79691,7 @@ var require_extract_zip = __commonJS((exports, module) => {
       debug4("opening", this.zipPath, "with opts", this.opts);
       this.zipfile = await openZip(this.zipPath, { lazyEntries: true });
       this.canceled = false;
-      return new Promise((resolve9, reject) => {
+      return new Promise((resolve10, reject) => {
         this.zipfile.on("error", (err) => {
           this.canceled = true;
           reject(err);
@@ -78676,7 +79700,7 @@ var require_extract_zip = __commonJS((exports, module) => {
         this.zipfile.on("close", () => {
           if (!this.canceled) {
             debug4("zip extraction complete");
-            resolve9();
+            resolve10();
           }
         });
         this.zipfile.on("entry", async (entry) => {
@@ -80018,8 +81042,8 @@ var require_streamx = __commonJS((exports, module) => {
           return this;
         },
         next() {
-          return new Promise(function(resolve9, reject) {
-            promiseResolve = resolve9;
+          return new Promise(function(resolve10, reject) {
+            promiseResolve = resolve10;
             promiseReject = reject;
             const data = stream.read();
             if (data !== null)
@@ -80056,14 +81080,14 @@ var require_streamx = __commonJS((exports, module) => {
       }
       function destroy(err) {
         stream.destroy(err);
-        return new Promise((resolve9, reject) => {
+        return new Promise((resolve10, reject) => {
           if (stream._duplexState & DESTROYED)
-            return resolve9({ value: undefined, done: true });
+            return resolve10({ value: undefined, done: true });
           stream.once("close", function() {
             if (err)
               reject(err);
             else
-              resolve9({ value: undefined, done: true });
+              resolve10({ value: undefined, done: true });
           });
         });
       }
@@ -80115,8 +81139,8 @@ var require_streamx = __commonJS((exports, module) => {
         return Promise.resolve(true);
       if (state.drains === null)
         state.drains = [];
-      return new Promise((resolve9) => {
-        state.drains.push({ writes, resolve: resolve9 });
+      return new Promise((resolve10) => {
+        state.drains.push({ writes, resolve: resolve10 });
       });
     }
     write(data) {
@@ -80230,11 +81254,11 @@ var require_streamx = __commonJS((exports, module) => {
     cb(null);
   }
   function pipelinePromise(...streams) {
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve10, reject) => {
       return pipeline(...streams, (err) => {
         if (err)
           return reject(err);
-        resolve9();
+        resolve10();
       });
     });
   }
@@ -80948,16 +81972,16 @@ var require_extract = __commonJS((exports, module) => {
         entryCallback = null;
         cb(err);
       }
-      function onnext(resolve9, reject) {
+      function onnext(resolve10, reject) {
         if (error) {
           return reject(error);
         }
         if (entryStream) {
-          resolve9({ value: entryStream, done: false });
+          resolve10({ value: entryStream, done: false });
           entryStream = null;
           return;
         }
-        promiseResolve = resolve9;
+        promiseResolve = resolve10;
         promiseReject = reject;
         consumeCallback(null);
         if (extract._finished && promiseResolve) {
@@ -80988,14 +82012,14 @@ var require_extract = __commonJS((exports, module) => {
       function destroy(err) {
         extract.destroy(err);
         consumeCallback(err);
-        return new Promise((resolve9, reject) => {
+        return new Promise((resolve10, reject) => {
           if (extract.destroyed)
-            return resolve9({ value: undefined, done: true });
+            return resolve10({ value: undefined, done: true });
           extract.once("close", function() {
             if (err)
               reject(err);
             else
-              resolve9({ value: undefined, done: true });
+              resolve10({ value: undefined, done: true });
           });
         });
       }
@@ -81793,7 +82817,7 @@ var init_fileUtil = __esm(() => {
 // node_modules/@puppeteer/browsers/lib/esm/install.js
 import assert2 from "node:assert";
 import { spawnSync as spawnSync4 } from "node:child_process";
-import { existsSync as existsSync30, readFileSync as readFileSync24 } from "node:fs";
+import { existsSync as existsSync36, readFileSync as readFileSync25 } from "node:fs";
 import { mkdir as mkdir2, unlink } from "node:fs/promises";
 import os5 from "node:os";
 import path8 from "node:path";
@@ -81846,7 +82870,7 @@ async function installWithProviders(options) {
         continue;
       }
       debugInstall(`Successfully got URL from ${provider.getName()}: ${url}`);
-      if (!existsSync30(browserRoot)) {
+      if (!existsSync36(browserRoot)) {
         await mkdir2(browserRoot, { recursive: true });
       }
       return await installUrl(url, options, provider);
@@ -81879,11 +82903,11 @@ async function installDeps(installedBrowser) {
     return;
   }
   const depsPath = path8.join(path8.dirname(installedBrowser.executablePath), "deb.deps");
-  if (!existsSync30(depsPath)) {
+  if (!existsSync36(depsPath)) {
     debugInstall(`deb.deps file was not found at ${depsPath}`);
     return;
   }
-  const data = readFileSync24(depsPath, "utf-8").split(`
+  const data = readFileSync25(depsPath, "utf-8").split(`
 `).join(",");
   if (process.getuid?.() !== 0) {
     throw new Error("Installing system dependencies requires root privileges");
@@ -81921,11 +82945,11 @@ async function installUrl(url, options, provider) {
   const cache = new Cache(options.cacheDir);
   const browserRoot = cache.browserRoot(options.browser);
   const archivePath = path8.join(browserRoot, `${options.buildId}-${fileName}`);
-  if (!existsSync30(browserRoot)) {
+  if (!existsSync36(browserRoot)) {
     await mkdir2(browserRoot, { recursive: true });
   }
   if (!options.unpack) {
-    if (existsSync30(archivePath)) {
+    if (existsSync36(archivePath)) {
       return archivePath;
     }
     debugInstall(`Downloading binary from ${url}`);
@@ -81946,8 +82970,8 @@ async function installUrl(url, options, provider) {
     cache.writeExecutablePath(options.browser, options.platform, options.buildId, relativeExecutablePath6);
   }
   try {
-    if (existsSync30(outputPath)) {
-      if (!existsSync30(installedBrowser.executablePath)) {
+    if (existsSync36(outputPath)) {
+      if (!existsSync36(installedBrowser.executablePath)) {
         throw new Error(`The browser folder (${outputPath}) exists but the executable (${installedBrowser.executablePath}) is missing`);
       }
       await runSetup(installedBrowser);
@@ -81956,7 +82980,7 @@ async function installUrl(url, options, provider) {
       }
       return installedBrowser;
     }
-    if (!existsSync30(archivePath)) {
+    if (!existsSync36(archivePath)) {
       debugInstall(`Downloading binary from ${url}`);
       try {
         debugTime("download");
@@ -81985,7 +83009,7 @@ async function installUrl(url, options, provider) {
     }
     return installedBrowser;
   } finally {
-    if (existsSync30(archivePath)) {
+    if (existsSync36(archivePath)) {
       await unlink(archivePath);
     }
   }
@@ -81996,7 +83020,7 @@ async function runSetup(installedBrowser) {
       debugTime("permissions");
       const browserDir = path8.dirname(installedBrowser.executablePath);
       const setupExePath = path8.join(browserDir, "setup.exe");
-      if (!existsSync30(setupExePath)) {
+      if (!existsSync36(setupExePath)) {
         return;
       }
       spawnSync4(path8.join(browserDir, "setup.exe"), [`--configure-browser-in-directory=` + browserDir], {
@@ -82377,19 +83401,19 @@ var init_cliui = __esm(() => {
 });
 
 // node_modules/escalade/sync/index.mjs
-import { dirname as dirname13, resolve as resolve10 } from "path";
+import { dirname as dirname14, resolve as resolve11 } from "path";
 import { readdirSync as readdirSync10, statSync as statSync12 } from "fs";
 function sync_default(start, callback) {
-  let dir = resolve10(".", start);
+  let dir = resolve11(".", start);
   let tmp, stats = statSync12(dir);
   if (!stats.isDirectory()) {
-    dir = dirname13(dir);
+    dir = dirname14(dir);
   }
   while (true) {
     tmp = callback(dir, readdirSync10(dir));
     if (tmp)
-      return resolve10(dir, tmp);
-    dir = dirname13(tmp = dir);
+      return resolve11(dir, tmp);
+    dir = dirname14(tmp = dir);
     if (tmp === dir)
       break;
   }
@@ -83335,7 +84359,7 @@ var init_yargs_parser = __esm(() => {
 
 // node_modules/yargs-parser/build/lib/index.js
 import { format } from "util";
-import { normalize as normalize2, resolve as resolve11 } from "path";
+import { normalize as normalize2, resolve as resolve12 } from "path";
 var _a3, _b, _c, minNodeVersion, nodeVersion, env, parser, yargsParser = function Parser(args, opts) {
   const result = parser.parse(args.slice(), opts);
   return result.argv;
@@ -83358,7 +84382,7 @@ var init_lib2 = __esm(() => {
     },
     format,
     normalize: normalize2,
-    resolve: resolve11,
+    resolve: resolve12,
     require: (path9) => {
       if (true) {
         return __require(path9);
@@ -83409,18 +84433,18 @@ var init_yerror = __esm(() => {
 });
 
 // node_modules/y18n/build/lib/platform-shims/node.js
-import { readFileSync as readFileSync25, statSync as statSync13, writeFile } from "fs";
+import { readFileSync as readFileSync26, statSync as statSync13, writeFile } from "fs";
 import { format as format2 } from "util";
-import { resolve as resolve12 } from "path";
+import { resolve as resolve13 } from "path";
 var node_default;
 var init_node = __esm(() => {
   node_default = {
     fs: {
-      readFileSync: readFileSync25,
+      readFileSync: readFileSync26,
       writeFile
     },
     format: format2,
-    resolve: resolve12,
+    resolve: resolve13,
     exists: (file) => {
       try {
         return statSync13(file).isFile();
@@ -83601,9 +84625,9 @@ var init_y18n = __esm(() => {
 // node_modules/yargs/lib/platform-shims/esm.mjs
 import { notStrictEqual, strictEqual } from "assert";
 import { inspect } from "util";
-import { readFileSync as readFileSync26 } from "fs";
+import { readFileSync as readFileSync27 } from "fs";
 import { fileURLToPath } from "url";
-import { basename as basename9, dirname as dirname14, extname as extname3, relative as relative9, resolve as resolve13 } from "path";
+import { basename as basename9, dirname as dirname15, extname as extname3, relative as relative9, resolve as resolve14 } from "path";
 var REQUIRE_ERROR = "require is not supported by ESM", REQUIRE_DIRECTORY_ERROR = "loading a directory of commands is not supported yet for ESM", __dirname2, mainFilename, esm_default;
 var init_esm = __esm(() => {
   init_cliui();
@@ -83636,10 +84660,10 @@ var init_esm = __esm(() => {
     Parser: lib_default,
     path: {
       basename: basename9,
-      dirname: dirname14,
+      dirname: dirname15,
       extname: extname3,
       relative: relative9,
-      resolve: resolve13
+      resolve: resolve14
     },
     process: {
       argv: () => process.argv,
@@ -83650,7 +84674,7 @@ var init_esm = __esm(() => {
       nextTick: process.nextTick,
       stdColumns: typeof process.stdout.columns !== "undefined" ? process.stdout.columns : null
     },
-    readFileSync: readFileSync26,
+    readFileSync: readFileSync27,
     require: () => {
       throw new YError(REQUIRE_ERROR);
     },
@@ -83661,7 +84685,7 @@ var init_esm = __esm(() => {
       return [...str].length;
     },
     y18n: y18n_default({
-      directory: resolve13(__dirname2, "../../../locales"),
+      directory: resolve14(__dirname2, "../../../locales"),
       updateFiles: false
     })
   };
@@ -85909,12 +86933,12 @@ var init_yargs_factory = __esm(() => {
     async getCompletion(args, done) {
       argsert("<array> [function]", [args, done], arguments.length);
       if (!done) {
-        return new Promise((resolve14, reject) => {
+        return new Promise((resolve15, reject) => {
           __classPrivateFieldGet(this, _YargsInstance_completion, "f").getCompletion(args, (err, completions) => {
             if (err)
               reject(err);
             else
-              resolve14(completions);
+              resolve15(completions);
           });
         });
       } else {
@@ -87349,9 +88373,9 @@ async function getConnectionTransport(options) {
       throw new Error("Could not detect required browser platform");
     }
     const { convertPuppeteerChannelToBrowsersChannel: convertPuppeteerChannelToBrowsersChannel2 } = await Promise.resolve().then(() => (init_LaunchOptions(), exports_LaunchOptions));
-    const { join: join31 } = await import("node:path");
+    const { join: join34 } = await import("node:path");
     const userDataDir = resolveDefaultUserDataDir3(Browser7.CHROME, platform2, convertPuppeteerChannelToBrowsersChannel2(options.channel));
-    const portPath = join31(userDataDir, "DevToolsActivePort");
+    const portPath = join34(userDataDir, "DevToolsActivePort");
     try {
       const fileContent = await environment.value.fs.promises.readFile(portPath, "ascii");
       const [rawPort, rawPath] = fileContent.split(`
@@ -87575,9 +88599,9 @@ var init_PipeTransport = __esm(() => {
 });
 
 // node_modules/puppeteer-core/lib/esm/puppeteer/node/BrowserLauncher.js
-import { existsSync as existsSync31 } from "node:fs";
+import { existsSync as existsSync37 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join31 } from "node:path";
+import { join as join34 } from "node:path";
 
 class BrowserLauncher {
   #browser;
@@ -87602,7 +88626,7 @@ class BrowserLauncher {
       ...options,
       protocol
     });
-    if (!existsSync31(launchArgs.executablePath)) {
+    if (!existsSync37(launchArgs.executablePath)) {
       throw new Error(`Browser was not found at the configured executablePath (${launchArgs.executablePath})`);
     }
     const usePipe = launchArgs.args.includes("--remote-debugging-pipe");
@@ -87677,7 +88701,7 @@ class BrowserLauncher {
       browserCloseCallback();
       const logs = browserProcess.getRecentLogs().join(`
 `);
-      if (logs.includes("Failed to create a ProcessSingleton for your profile directory") || process.platform === "win32" && existsSync31(join31(launchArgs.userDataDir, "lockfile"))) {
+      if (logs.includes("Failed to create a ProcessSingleton for your profile directory") || process.platform === "win32" && existsSync37(join34(launchArgs.userDataDir, "lockfile"))) {
         throw new Error(`The browser is already running for ${launchArgs.userDataDir}. Use a different \`userDataDir\` or stop the running browser first.`);
       }
       if (logs.includes("Missing X server") && options.headless === false) {
@@ -87767,12 +88791,12 @@ class BrowserLauncher {
     });
   }
   getProfilePath() {
-    return join31(this.puppeteer.configuration.temporaryDirectory ?? tmpdir(), `puppeteer_dev_${this.browser}_profile-`);
+    return join34(this.puppeteer.configuration.temporaryDirectory ?? tmpdir(), `puppeteer_dev_${this.browser}_profile-`);
   }
   resolveExecutablePath(headless, validatePath = true) {
     let executablePath = this.puppeteer.configuration.executablePath;
     if (executablePath) {
-      if (validatePath && !existsSync31(executablePath)) {
+      if (validatePath && !existsSync37(executablePath)) {
         throw new Error(`Tried to find the browser at the configured path (${executablePath}), but no executable was found.`);
       }
       return executablePath;
@@ -87795,7 +88819,7 @@ class BrowserLauncher {
       browser: browserType,
       buildId: this.puppeteer.browserVersion
     });
-    if (validatePath && !existsSync31(executablePath)) {
+    if (validatePath && !existsSync37(executablePath)) {
       const configVersion = this.puppeteer.configuration?.[this.browser]?.version;
       if (configVersion) {
         throw new Error(`Tried to find the browser at the configured path (${executablePath}) for version ${configVersion}, but no executable was found.`);
@@ -88333,7 +89357,7 @@ var init_PuppeteerNode = __esm(() => {
 import { spawn as spawn2, spawnSync as spawnSync5 } from "node:child_process";
 import fs5 from "node:fs";
 import os8 from "node:os";
-import { dirname as dirname15 } from "node:path";
+import { dirname as dirname16 } from "node:path";
 import { PassThrough } from "node:stream";
 var import_debug6, __runInitializers22 = function(thisArg, initializers, value) {
   var useValue = arguments.length > 2;
@@ -88407,8 +89431,8 @@ var init_ScreenRecorder = __esm(() => {
       static {
         const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(_classSuper[Symbol.metadata] ?? null) : undefined;
         __esDecorate22(this, _private_writeFrame_descriptor = { value: __setFunctionName5(async function(buffer) {
-          const error = await new Promise((resolve14) => {
-            this.#process.stdin.write(buffer, resolve14);
+          const error = await new Promise((resolve15) => {
+            this.#process.stdin.write(buffer, resolve15);
           });
           if (error) {
             console.log(`ffmpeg failed to write: ${error.message}.`);
@@ -88457,7 +89481,7 @@ var init_ScreenRecorder = __esm(() => {
           filters.push(formatArgs.splice(vf, 2).at(-1) ?? "");
         }
         if (path11) {
-          fs5.mkdirSync(dirname15(path11), { recursive: overwrite });
+          fs5.mkdirSync(dirname16(path11), { recursive: overwrite });
         }
         this.#process = spawn2(ffmpegPath, [
           ["-loglevel", "error"],
@@ -88563,8 +89587,8 @@ var init_ScreenRecorder = __esm(() => {
         const [buffer, timestamp] = await this.#lastFrame;
         await Promise.all(Array(Math.max(1, Math.round(this.#fps * (performance.now() - timestamp) / 1000))).fill(buffer).map(this.#writeFrame.bind(this)));
         this.#process.stdin.end();
-        await new Promise((resolve14) => {
-          this.#process.once("close", resolve14);
+        await new Promise((resolve15) => {
+          this.#process.once("close", resolve15);
         });
       }
       async[(_private_writeFrame_decorators = [guarded()], _stop_decorators = [guarded()], asyncDisposeSymbol)]() {
@@ -88610,17 +89634,17 @@ var init_puppeteer_core = __esm(() => {
 });
 
 // src/core/design-eval/capture.ts
-import { mkdirSync as mkdirSync14, statSync as statSync14, existsSync as existsSync32 } from "fs";
-import { join as join32 } from "path";
+import { mkdirSync as mkdirSync15, statSync as statSync14, existsSync as existsSync38 } from "fs";
+import { join as join35 } from "path";
 function findBrowser() {
   const platform2 = process.platform;
   const paths = CHROME_PATHS[platform2] ?? [];
   for (const p of paths) {
-    if (existsSync32(p))
+    if (existsSync38(p))
       return p;
   }
-  const minkBrowsers = join32(minkRoot(), "browsers");
-  if (existsSync32(minkBrowsers)) {
+  const minkBrowsers = join35(minkRoot(), "browsers");
+  if (existsSync38(minkBrowsers)) {
     const found = findChromeInDir(minkBrowsers);
     if (found)
       return found;
@@ -88641,7 +89665,7 @@ function findChromeInDir(dir) {
   try {
     const entries = readdirSync11(dir);
     for (const entry of entries) {
-      const full = join32(dir, entry);
+      const full = join35(dir, entry);
       try {
         const stat2 = statSync15(full);
         if (stat2.isDirectory()) {
@@ -88689,7 +89713,7 @@ async function captureRoute(page, route, baseUrl, viewport, options) {
     const y = section * viewport.height;
     const clipHeight = Math.min(viewport.height, pageHeight - y);
     const fileName = `${prefix}-${viewport.name}-${section}.jpg`;
-    const filePath = join32(options.outputDir, fileName);
+    const filePath = join35(options.outputDir, fileName);
     await page.screenshot({
       path: filePath,
       type: "jpeg",
@@ -88721,7 +89745,7 @@ async function captureRoute(page, route, baseUrl, viewport, options) {
   return results;
 }
 async function captureAllRoutes(routes, baseUrl, viewports, options, outputDir) {
-  mkdirSync14(outputDir, { recursive: true });
+  mkdirSync15(outputDir, { recursive: true });
   const executablePath = findBrowser();
   const browser = await puppeteer_core_default.launch({
     executablePath,
@@ -90153,9 +91177,9 @@ var exports_wiki = {};
 __export(exports_wiki, {
   wiki: () => wiki
 });
-import { existsSync as existsSync33, statSync as statSync15 } from "fs";
-import { resolve as resolve14 } from "path";
-import { homedir as homedir5 } from "os";
+import { existsSync as existsSync39, statSync as statSync15 } from "fs";
+import { resolve as resolve15 } from "path";
+import { homedir as homedir6 } from "os";
 async function wiki(_cwd, args) {
   const sub = args[0];
   switch (sub) {
@@ -90211,7 +91235,7 @@ async function wikiInit(args) {
     console.log(`[mink] initializing vault at ${targetPath}`);
     console.log("  (set a custom path with: mink wiki init /path/to/vault)");
   }
-  const isExisting = existsSync33(targetPath) && statSync15(targetPath).isDirectory();
+  const isExisting = existsSync39(targetPath) && statSync15(targetPath).isDirectory();
   setConfigValue("wiki.path", targetPath);
   ensureVaultStructure();
   seedTemplates(vaultTemplates());
@@ -90421,9 +91445,9 @@ function wikiLinks() {
 }
 function expandPath(raw) {
   if (raw.startsWith("~/")) {
-    return resolve14(homedir5(), raw.slice(2));
+    return resolve15(homedir6(), raw.slice(2));
   }
-  return resolve14(raw);
+  return resolve15(raw);
 }
 var init_wiki = __esm(() => {
   init_vault();
@@ -90439,8 +91463,8 @@ var exports_note = {};
 __export(exports_note, {
   note: () => note
 });
-import { resolve as resolve15 } from "path";
-import { existsSync as existsSync34, readFileSync as readFileSync27 } from "fs";
+import { resolve as resolve16 } from "path";
+import { existsSync as existsSync40, readFileSync as readFileSync28 } from "fs";
 async function note(cwd, args) {
   if (!isWikiEnabled()) {
     console.error("[mink] wiki feature is disabled");
@@ -90465,13 +91489,13 @@ async function note(cwd, args) {
     const date = new Date().toISOString().split("T")[0];
     const content = parsed.positional || parsed.body || "";
     const filePath = appendToDaily(date, content);
-    updateVaultIndexForFile(filePath, readFileSync27(filePath, "utf-8"));
+    updateVaultIndexForFile(filePath, readFileSync28(filePath, "utf-8"));
     console.log(`[mink] daily note: ${filePath}`);
     return;
   }
   if (parsed.file) {
-    const sourcePath = resolve15(cwd, parsed.file);
-    if (!existsSync34(sourcePath)) {
+    const sourcePath = resolve16(cwd, parsed.file);
+    if (!existsSync40(sourcePath)) {
       console.error(`[mink] file not found: ${sourcePath}`);
       process.exit(1);
     }
@@ -90553,7 +91577,7 @@ function detectSourceProject(cwd) {
     const vaultPath = resolveVaultPath();
     if (cwd.startsWith(vaultPath))
       return;
-    return generateProjectId(cwd);
+    return projectIdFor(cwd);
   } catch {
     return;
   }
@@ -90632,39 +91656,39 @@ var exports_skill = {};
 __export(exports_skill, {
   skill: () => skill
 });
-import { join as join33, resolve as resolve16, dirname as dirname16 } from "path";
-import { homedir as homedir6 } from "os";
+import { join as join36, resolve as resolve17, dirname as dirname17 } from "path";
+import { homedir as homedir7 } from "os";
 import {
-  existsSync as existsSync35,
-  mkdirSync as mkdirSync15,
-  copyFileSync,
+  existsSync as existsSync41,
+  mkdirSync as mkdirSync16,
+  copyFileSync as copyFileSync2,
   unlinkSync as unlinkSync6,
   readdirSync as readdirSync11,
-  rmSync,
+  rmSync as rmSync3,
   symlinkSync as symlinkSync2,
   lstatSync as lstatSync2
 } from "fs";
 function getSkillsSourceDir() {
-  let dir = dirname16(new URL(import.meta.url).pathname);
+  let dir = dirname17(new URL(import.meta.url).pathname);
   while (true) {
-    if (existsSync35(join33(dir, "package.json")) && existsSync35(join33(dir, "skills"))) {
-      return join33(dir, "skills");
+    if (existsSync41(join36(dir, "package.json")) && existsSync41(join36(dir, "skills"))) {
+      return join36(dir, "skills");
     }
-    const parent = dirname16(dir);
+    const parent = dirname17(dir);
     if (parent === dir)
       break;
     dir = parent;
   }
-  return resolve16(dirname16(new URL(import.meta.url).pathname), "../../skills");
+  return resolve17(dirname17(new URL(import.meta.url).pathname), "../../skills");
 }
 function getAvailableSkills() {
   const dir = getSkillsSourceDir();
-  if (!existsSync35(dir))
+  if (!existsSync41(dir))
     return [];
-  return readdirSync11(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync35(join33(dir, d.name, "SKILL.md"))).map((d) => d.name);
+  return readdirSync11(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync41(join36(dir, d.name, "SKILL.md"))).map((d) => d.name);
 }
 function isInstalled(skillName) {
-  return existsSync35(join33(AGENTS_SKILLS_DIR, skillName, "SKILL.md"));
+  return existsSync41(join36(AGENTS_SKILLS_DIR, skillName, "SKILL.md"));
 }
 async function skill(args) {
   const sub = args[0];
@@ -90698,28 +91722,28 @@ function skillInstall(name) {
     console.error("  Expected skills at: " + sourceDir);
     return;
   }
-  mkdirSync15(AGENTS_SKILLS_DIR, { recursive: true });
+  mkdirSync16(AGENTS_SKILLS_DIR, { recursive: true });
   for (const skillName of skills) {
-    const srcDir = join33(sourceDir, skillName);
-    const srcFile = join33(srcDir, "SKILL.md");
-    const destDir = join33(AGENTS_SKILLS_DIR, skillName);
-    if (!existsSync35(srcFile)) {
+    const srcDir = join36(sourceDir, skillName);
+    const srcFile = join36(srcDir, "SKILL.md");
+    const destDir = join36(AGENTS_SKILLS_DIR, skillName);
+    if (!existsSync41(srcFile)) {
       console.error(`[mink] skill not found: ${skillName}`);
       continue;
     }
-    mkdirSync15(destDir, { recursive: true });
-    copyDirRecursive(srcDir, destDir);
-    mkdirSync15(CLAUDE_SKILLS_DIR, { recursive: true });
-    const symlink = join33(CLAUDE_SKILLS_DIR, skillName);
+    mkdirSync16(destDir, { recursive: true });
+    copyDirRecursive2(srcDir, destDir);
+    mkdirSync16(CLAUDE_SKILLS_DIR, { recursive: true });
+    const symlink = join36(CLAUDE_SKILLS_DIR, skillName);
     try {
-      if (existsSync35(symlink)) {
+      if (existsSync41(symlink)) {
         if (lstatSync2(symlink).isSymbolicLink() || lstatSync2(symlink).isFile()) {
           unlinkSync6(symlink);
         } else {
-          rmSync(symlink, { recursive: true, force: true });
+          rmSync3(symlink, { recursive: true, force: true });
         }
       }
-      const relativeTarget = join33("..", "..", ".agents", "skills", skillName);
+      const relativeTarget = join36("..", "..", ".agents", "skills", skillName);
       symlinkSync2(relativeTarget, symlink);
     } catch {}
     console.log(`[mink] installed: ${skillName} -> ${destDir}`);
@@ -90730,15 +91754,15 @@ function skillInstall(name) {
 function skillUninstall(name) {
   const skills = name ? [name] : getAvailableSkills();
   for (const skillName of skills) {
-    const destDir = join33(AGENTS_SKILLS_DIR, skillName);
-    if (!existsSync35(destDir)) {
+    const destDir = join36(AGENTS_SKILLS_DIR, skillName);
+    if (!existsSync41(destDir)) {
       console.log(`[mink] not installed: ${skillName}`);
       continue;
     }
-    rmSync(destDir, { recursive: true, force: true });
-    const symlink = join33(CLAUDE_SKILLS_DIR, skillName);
+    rmSync3(destDir, { recursive: true, force: true });
+    const symlink = join36(CLAUDE_SKILLS_DIR, skillName);
     try {
-      if (existsSync35(symlink))
+      if (existsSync41(symlink))
         unlinkSync6(symlink);
     } catch {}
     console.log(`[mink] uninstalled: ${skillName}`);
@@ -90753,7 +91777,7 @@ function skillList() {
   if (installed.length > 0) {
     console.log("  Installed:");
     for (const s of installed) {
-      console.log(`    ${s}  (${join33(AGENTS_SKILLS_DIR, s)})`);
+      console.log(`    ${s}  (${join36(AGENTS_SKILLS_DIR, s)})`);
     }
   }
   if (notInstalled.length > 0) {
@@ -90769,23 +91793,23 @@ function skillList() {
   console.log("  Install with: mink skill install");
   console.log("  Or via skills CLI: npx skills add drewpayment/mink");
 }
-function copyDirRecursive(src, dest) {
+function copyDirRecursive2(src, dest) {
   const entries = readdirSync11(src, { withFileTypes: true });
   for (const entry of entries) {
-    const srcPath = join33(src, entry.name);
-    const destPath = join33(dest, entry.name);
+    const srcPath = join36(src, entry.name);
+    const destPath = join36(dest, entry.name);
     if (entry.isDirectory()) {
-      mkdirSync15(destPath, { recursive: true });
-      copyDirRecursive(srcPath, destPath);
+      mkdirSync16(destPath, { recursive: true });
+      copyDirRecursive2(srcPath, destPath);
     } else {
-      copyFileSync(srcPath, destPath);
+      copyFileSync2(srcPath, destPath);
     }
   }
 }
 var AGENTS_SKILLS_DIR, CLAUDE_SKILLS_DIR;
 var init_skill = __esm(() => {
-  AGENTS_SKILLS_DIR = join33(homedir6(), ".agents", "skills");
-  CLAUDE_SKILLS_DIR = join33(homedir6(), ".claude", "skills");
+  AGENTS_SKILLS_DIR = join36(homedir7(), ".agents", "skills");
+  CLAUDE_SKILLS_DIR = join36(homedir7(), ".claude", "skills");
 });
 
 // src/commands/agent.ts
@@ -90793,41 +91817,41 @@ var exports_agent = {};
 __export(exports_agent, {
   agent: () => agent
 });
-import { join as join34, resolve as resolve17, dirname as dirname17 } from "path";
-import { homedir as homedir7 } from "os";
+import { join as join37, resolve as resolve18, dirname as dirname18 } from "path";
+import { homedir as homedir8 } from "os";
 import {
-  existsSync as existsSync36,
-  mkdirSync as mkdirSync16,
-  readFileSync as readFileSync28,
+  existsSync as existsSync42,
+  mkdirSync as mkdirSync17,
+  readFileSync as readFileSync29,
   writeFileSync as writeFileSync11
 } from "fs";
 import { createHash as createHash3 } from "crypto";
 import { spawnSync as spawnSync6 } from "child_process";
 function getAgentTemplatePath() {
-  let dir = dirname17(new URL(import.meta.url).pathname);
+  let dir = dirname18(new URL(import.meta.url).pathname);
   while (true) {
-    if (existsSync36(join34(dir, "package.json")) && existsSync36(join34(dir, "agents", TEMPLATE_FILE))) {
-      return join34(dir, "agents", TEMPLATE_FILE);
+    if (existsSync42(join37(dir, "package.json")) && existsSync42(join37(dir, "agents", TEMPLATE_FILE))) {
+      return join37(dir, "agents", TEMPLATE_FILE);
     }
-    const parent = dirname17(dir);
+    const parent = dirname18(dir);
     if (parent === dir)
       break;
     dir = parent;
   }
-  return resolve17(dirname17(new URL(import.meta.url).pathname), "../../agents", TEMPLATE_FILE);
+  return resolve18(dirname18(new URL(import.meta.url).pathname), "../../agents", TEMPLATE_FILE);
 }
 function getMinkVersion() {
-  let dir = dirname17(new URL(import.meta.url).pathname);
+  let dir = dirname18(new URL(import.meta.url).pathname);
   while (true) {
-    const pkgPath = join34(dir, "package.json");
-    if (existsSync36(pkgPath)) {
+    const pkgPath = join37(dir, "package.json");
+    if (existsSync42(pkgPath)) {
       try {
-        const pkg = JSON.parse(readFileSync28(pkgPath, "utf-8"));
+        const pkg = JSON.parse(readFileSync29(pkgPath, "utf-8"));
         if (pkg.name && pkg.version)
           return pkg.version;
       } catch {}
     }
-    const parent = dirname17(dir);
+    const parent = dirname18(dir);
     if (parent === dir)
       break;
     dir = parent;
@@ -90845,35 +91869,35 @@ function sha2562(text) {
   return createHash3("sha256").update(text).digest("hex");
 }
 function claudeAgentsDir() {
-  return join34(homedir7(), ".claude", "agents");
+  return join37(homedir8(), ".claude", "agents");
 }
 function installedAgentPath() {
-  return join34(claudeAgentsDir(), INSTALLED_FILE);
+  return join37(claudeAgentsDir(), INSTALLED_FILE);
 }
 function installAgentDefinition(opts) {
   const templatePath = getAgentTemplatePath();
-  if (!existsSync36(templatePath)) {
+  if (!existsSync42(templatePath)) {
     throw new Error(`[mink agent] bundled agent template not found at ${templatePath}
 ` + "  This usually means the package was installed without bundled assets.");
   }
   const installed = installedAgentPath();
-  if (opts.skip && existsSync36(installed)) {
+  if (opts.skip && existsSync42(installed)) {
     return { action: "skipped", path: installed };
   }
-  const template = readFileSync28(templatePath, "utf-8");
+  const template = readFileSync29(templatePath, "utf-8");
   const rendered = renderTemplate(template, {
     MINK_ROOT: minkRoot(),
     VAULT_PATH: resolveVaultPath(),
     MINK_VERSION: getMinkVersion()
   });
-  const exists = existsSync36(installed);
+  const exists = existsSync42(installed);
   if (!opts.force && exists) {
-    const current = readFileSync28(installed, "utf-8");
+    const current = readFileSync29(installed, "utf-8");
     if (sha2562(current) === sha2562(rendered)) {
       return { action: "unchanged", path: installed };
     }
   }
-  mkdirSync16(claudeAgentsDir(), { recursive: true });
+  mkdirSync17(claudeAgentsDir(), { recursive: true });
   writeFileSync11(installed, rendered);
   return {
     action: exists ? "updated" : "installed",
@@ -90944,8 +91968,8 @@ async function agent(_cwd, rawArgs) {
   }
   const skipUpdate = args.noUpdate || process.env.MINK_AGENT_NO_UPDATE === "1";
   const root = minkRoot();
-  if (!existsSync36(root)) {
-    mkdirSync16(root, { recursive: true });
+  if (!existsSync42(root)) {
+    mkdirSync17(root, { recursive: true });
   }
   let result;
   try {
@@ -90996,25 +92020,25 @@ var init_agent = __esm(() => {
 });
 
 // src/core/sync-merge-drivers.ts
-import { readFileSync as readFileSync29, writeFileSync as writeFileSync12, appendFileSync as appendFileSync2 } from "fs";
-import { join as join35 } from "path";
+import { readFileSync as readFileSync30, writeFileSync as writeFileSync12, appendFileSync as appendFileSync2 } from "fs";
+import { join as join38 } from "path";
 function logWarning(driver, args, err) {
   try {
     const line = `[${new Date().toISOString()}] ${driver} fallback for ${args.filePath}: ${err instanceof Error ? err.message : String(err)}
 `;
-    appendFileSync2(join35(minkRoot(), "sync-warnings.log"), line);
+    appendFileSync2(join38(minkRoot(), "sync-warnings.log"), line);
   } catch {}
 }
 function readJsonOrNull(path12) {
   try {
-    return JSON.parse(readFileSync29(path12, "utf-8"));
+    return JSON.parse(readFileSync30(path12, "utf-8"));
   } catch {
     return null;
   }
 }
 function readTextOrEmpty(path12) {
   try {
-    return readFileSync29(path12, "utf-8");
+    return readFileSync30(path12, "utf-8");
   } catch {
     return "";
   }
@@ -91188,12 +92212,13 @@ async function sync(args) {
       return handleReconcile(args.slice(1));
     case "migrate": {
       const { syncMigrateCommand: syncMigrateCommand2 } = await Promise.resolve().then(() => (init_sync_migrate(), exports_sync_migrate));
-      syncMigrateCommand2();
+      syncMigrateCommand2(args.slice(1));
       return;
     }
     default:
       console.error(`[mink] unknown sync subcommand: ${subcommand}`);
-      console.error("Usage: mink sync [init|status|push|pull|pause|resume|disconnect|reconcile|migrate|merge-driver]");
+      console.error("Usage: mink sync [init|status|push|pull|pause|resume|disconnect|reconcile|merge-driver]");
+      console.error("       mink sync migrate [--dry-run|--rollback]");
       process.exit(1);
   }
 }
@@ -91415,7 +92440,9 @@ function sessionStart(cwd) {
   } catch {}
   try {
     const { readSyncVersion: readSyncVersion2, MINK_SYNC_VERSION: MINK_SYNC_VERSION2 } = (init_sync(), __toCommonJS(exports_sync));
-    if (readSyncVersion2() < MINK_SYNC_VERSION2) {
+    const { resolveConfigValue: resolveConfigValue2 } = (init_global_config(), __toCommonJS(exports_global_config));
+    const identityOn = resolveConfigValue2("projects.identity").value === "git-remote";
+    if (readSyncVersion2() < MINK_SYNC_VERSION2 || identityOn) {
       const { migrateSyncLayout: migrateSyncLayout2 } = (init_sync_migrate(), __toCommonJS(exports_sync_migrate));
       migrateSyncLayout2();
     }
@@ -91439,13 +92466,13 @@ function sessionStart(cwd) {
       const index = loadVaultIndex();
       const inboxCount = Object.values(index.entries).filter((e) => e.category === "inbox").length;
       try {
-        const { join: join8 } = __require("path");
-        const { existsSync: existsSync8 } = __require("fs");
+        const { join: join10 } = __require("path");
+        const { existsSync: existsSync12 } = __require("fs");
         const { resolveVaultPath: resolveVaultPath2 } = (init_vault(), __toCommonJS(exports_vault));
         const { updateMasterIndex: updateMasterIndex2 } = (init_note_linker(), __toCommonJS(exports_note_linker));
         const vaultPath = resolveVaultPath2();
-        const masterIndexPath = join8(vaultPath, "_index.md");
-        if (!existsSync8(masterIndexPath)) {
+        const masterIndexPath = join10(vaultPath, "_index.md");
+        if (!existsSync12(masterIndexPath)) {
           updateMasterIndex2(vaultPath);
         }
       } catch {}
@@ -91469,8 +92496,8 @@ init_state_aggregator();
 init_action_log();
 init_device();
 init_vault();
-import { statSync as statSync5, existsSync as existsSync10, readFileSync as readFileSync9 } from "fs";
-import { join as join10, dirname as dirname4 } from "path";
+import { statSync as statSync5, existsSync as existsSync14, readFileSync as readFileSync10 } from "fs";
+import { join as join12, dirname as dirname4 } from "path";
 function hasActivity(state) {
   return Object.keys(state.reads).length > 0 || state.writes.length > 0;
 }
@@ -91512,10 +92539,10 @@ function sessionStop(sessionFile, finalizer, onReminder = (msg) => console.error
       effectiveFinalizer.updateSession(summary);
     }
     try {
-      const logPath = join10(projDir, "state", deviceId, "action-log.md");
+      const logPath = join12(projDir, "state", deviceId, "action-log.md");
       const logWriter = createActionLogWriter(logPath);
       logWriter.appendSessionEnd(summary);
-      const cfgRaw = safeReadJson(join10(projDir, "config.json"));
+      const cfgRaw = safeReadJson(join12(projDir, "config.json"));
       consolidateLog(logPath, {
         maxEntries: cfgRaw?.actionLogMaxEntries ?? 200,
         retentionDays: cfgRaw?.actionLogRetentionDays ?? 7
@@ -91532,9 +92559,9 @@ function sessionStop(sessionFile, finalizer, onReminder = (msg) => console.error
       }
     }
   }
-  const memoryPath = join10(projDir, "learning-memory.md");
-  const cfgPath = join10(projDir, "config.json");
-  if (existsSync10(memoryPath)) {
+  const memoryPath = join12(projDir, "learning-memory.md");
+  const cfgPath = join12(projDir, "config.json");
+  if (existsSync14(memoryPath)) {
     reflect(projDir, memoryPath, cfgPath);
   }
   if (isLearningMemoryStale(memoryPath)) {
@@ -91554,13 +92581,13 @@ function sessionStop(sessionFile, finalizer, onReminder = (msg) => console.error
   atomicWriteJson(sessionFile, state);
 }
 function writeSessionToWiki(state, projDir) {
-  const metaRaw = safeReadJson(join10(projDir, "project-meta.json"));
+  const metaRaw = safeReadJson(join12(projDir, "project-meta.json"));
   const projectName = metaRaw?.name ?? "unknown";
   const date = new Date().toISOString().split("T")[0];
   const readCount = Object.keys(state.reads).length;
   const writeCount = state.writes.length;
-  const sessionDir = join10(vaultProjects(projectName), "sessions");
-  const sessionFile = join10(sessionDir, `${date}.md`);
+  const sessionDir = join12(vaultProjects(projectName), "sessions");
+  const sessionFile = join12(sessionDir, `${date}.md`);
   const timestamp = new Date().toLocaleTimeString("en-US", {
     hour: "2-digit",
     minute: "2-digit",
@@ -91585,8 +92612,8 @@ function writeSessionToWiki(state, projDir) {
     }
   }
   entry.push("");
-  if (existsSync10(sessionFile)) {
-    const existing = readFileSync9(sessionFile, "utf-8");
+  if (existsSync14(sessionFile)) {
+    const existing = readFileSync10(sessionFile, "utf-8");
     atomicWriteText(sessionFile, existing.trimEnd() + `
 ` + entry.join(`
 `));
@@ -91620,8 +92647,22 @@ switch (command2) {
     sessionStop(sessionPath2(cwd));
     break;
   case "init": {
-    const { init: init2 } = await Promise.resolve().then(() => (init_init(), exports_init));
-    await init2(cwd);
+    const { init: init2, resolveTargetsFromFlag: resolveTargetsFromFlag2 } = await Promise.resolve().then(() => (init_init(), exports_init));
+    const args = process.argv.slice(3);
+    const agentFlagIndex = args.findIndex((a) => a === "--agent" || a.startsWith("--agent="));
+    let agentValue;
+    if (agentFlagIndex !== -1) {
+      const a = args[agentFlagIndex];
+      agentValue = a.includes("=") ? a.split("=").slice(1).join("=") : args[agentFlagIndex + 1];
+    }
+    const yes = args.includes("--yes") || args.includes("-y");
+    const targets = agentValue ? resolveTargetsFromFlag2(agentValue) : undefined;
+    if (agentValue && (!targets || targets.length === 0)) {
+      console.error(`[mink] unknown --agent value: ${agentValue}`);
+      console.error("  Valid: claude, pi, all (or a comma-separated list)");
+      process.exit(1);
+    }
+    await init2(cwd, { targets, interactive: !yes });
     break;
   }
   case "status": {
@@ -91765,11 +92806,11 @@ switch (command2) {
   case "version":
   case "--version":
   case "-v": {
-    const { resolve: resolve18, dirname: dirname18 } = await import("path");
-    const cliPath = resolve18(dirname18(new URL(import.meta.url).pathname));
-    const { readFileSync: readFileSync30 } = await import("fs");
+    const { resolve: resolve19, dirname: dirname19 } = await import("path");
+    const cliPath = resolve19(dirname19(new URL(import.meta.url).pathname));
+    const { readFileSync: readFileSync31 } = await import("fs");
     try {
-      const pkg = JSON.parse(readFileSync30(resolve18(cliPath, "../package.json"), "utf-8"));
+      const pkg = JSON.parse(readFileSync31(resolve19(cliPath, "../package.json"), "utf-8"));
       console.log(`mink ${pkg.version}`);
     } catch {
       console.log("mink (unknown version)");
@@ -91785,7 +92826,8 @@ switch (command2) {
     console.log("Usage: mink <command> [options]");
     console.log();
     console.log("Commands:");
-    console.log("  init                    Initialize Mink in the current project");
+    console.log("  init [--agent X] [--yes] Initialize Mink in the current project");
+    console.log("                          --agent claude|pi|all (default: detect & prompt)");
     console.log("  status                  Display project health at a glance");
     console.log("  scan [--check]          Force a full file index rescan");
     console.log("  config [key] [value]    Manage global user settings");

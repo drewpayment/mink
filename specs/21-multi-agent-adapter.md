@@ -121,9 +121,18 @@ For each supported host, Mink provides an installer that:
 2. The user can target **one host, several, or all** detected hosts in a single
    initialization. The default behavior favors the least surprising outcome:
    wire the host(s) actually detected, and when more than one is detected, make
-   the choice explicit rather than guessing.
-3. Wiring additional hosts later must be possible without disturbing hosts
-   already wired.
+   the choice explicit rather than guessing. When initialization runs
+   interactively, the explicit choice is an on-screen prompt seeded with the
+   detected set; a non-interactive run (script, automation) must never block and
+   instead falls back to the detected set.
+3. The user can also **state the target explicitly** (bypassing detection and
+   any prompt) so initialization is deterministic in scripts.
+4. The resolved set of wired hosts is **recorded as project metadata** and is
+   the authoritative record of which hosts are wired. Subsequent runs read it so
+   re-initialization refreshes the same set.
+5. Wiring additional hosts later must be possible without disturbing hosts
+   already wired; a single-host re-initialization must **not** unwire a host
+   wired earlier.
 
 ### Shared State Across Hosts
 
@@ -162,6 +171,17 @@ GIVEN two supported hosts are present on the machine
 WHEN initialization is asked to target all detected hosts
 THEN both hosts are wired to Mink
 AND both reference the same canonical engine
+AND the recorded host set lists both
+
+GIVEN initialization runs without an interactive terminal
+WHEN no explicit target is stated
+THEN the detected hosts are wired without prompting
+AND initialization does not block waiting for input
+
+GIVEN a host was wired in an earlier initialization
+WHEN initialization later targets only a different host
+THEN the earlier host remains wired
+AND the recorded host set lists both
 
 GIVEN a wired host is about to perform a read operation
 WHEN the adapter receives the host's native read event
