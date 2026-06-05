@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { analyzePreRead } from "../../src/commands/pre-read";
 import { createSessionState, recordRead } from "../../src/core/session";
-import { createEmptyIndex, upsertEntry } from "../../src/core/index-store";
+import { createEmptyIndex, upsertEntry, indexAsLookup } from "../../src/core/index-store";
 import type { FileIndexEntry } from "../../src/types/file-index";
 
 function makeEntry(filePath: string, description: string, estimatedTokens: number): FileIndexEntry {
@@ -20,7 +20,7 @@ describe("analyzePreRead", () => {
     const index = createEmptyIndex();
     upsertEntry(index, makeEntry("src/auth.ts", "Auth middleware", 380));
 
-    const result = analyzePreRead("src/auth.ts", state, index);
+    const result = analyzePreRead("src/auth.ts", state, indexAsLookup(index));
 
     expect(result.repeatedRead).toBe(false);
     expect(state.counters.repeatedReadWarnings).toBe(0);
@@ -34,7 +34,7 @@ describe("analyzePreRead", () => {
     const index = createEmptyIndex();
     upsertEntry(index, makeEntry("src/auth.ts", "Auth middleware", 380));
 
-    const result = analyzePreRead("src/auth.ts", state, index);
+    const result = analyzePreRead("src/auth.ts", state, indexAsLookup(index));
 
     expect(result.repeatedRead).toBe(true);
     expect(state.counters.repeatedReadWarnings).toBe(1);
@@ -57,7 +57,7 @@ describe("analyzePreRead", () => {
     const index = createEmptyIndex();
     upsertEntry(index, makeEntry("src/auth.ts", "Auth middleware", 380));
 
-    const result = analyzePreRead("src/auth.ts", state, index);
+    const result = analyzePreRead("src/auth.ts", state, indexAsLookup(index));
 
     expect(result.indexHit).toBe(true);
     expect(result.entry).not.toBeNull();
@@ -70,7 +70,7 @@ describe("analyzePreRead", () => {
     const state = createSessionState();
     const index = createEmptyIndex();
 
-    const result = analyzePreRead("src/new-feature.ts", state, index);
+    const result = analyzePreRead("src/new-feature.ts", state, indexAsLookup(index));
 
     expect(result.indexHit).toBe(false);
     expect(result.entry).toBeNull();
@@ -84,7 +84,7 @@ describe("analyzePreRead", () => {
     const index = createEmptyIndex();
     upsertEntry(index, makeEntry("src/auth.ts", "Auth middleware", 380));
 
-    const result = analyzePreRead("src/auth.ts", state, index);
+    const result = analyzePreRead("src/auth.ts", state, indexAsLookup(index));
 
     expect(result.indexHit).toBe(true);
     expect(index.header.lifetimeHits).toBe(0);
@@ -107,7 +107,7 @@ describe("analyzePreRead", () => {
     const index = createEmptyIndex();
     upsertEntry(index, makeEntry("src/auth.ts", "Auth middleware", 380));
 
-    const result = analyzePreRead("src/auth.ts", state, index);
+    const result = analyzePreRead("src/auth.ts", state, indexAsLookup(index));
 
     expect(result.repeatedRead).toBe(true);
     expect(result.indexHit).toBe(true);

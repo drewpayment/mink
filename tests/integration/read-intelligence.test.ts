@@ -4,7 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { atomicWriteJson, safeReadJson } from "../../src/core/fs-utils";
 import { createSessionState } from "../../src/core/session";
-import { createEmptyIndex, upsertEntry } from "../../src/core/index-store";
+import { createEmptyIndex, upsertEntry, indexAsLookup } from "../../src/core/index-store";
 import { analyzePreRead } from "../../src/commands/pre-read";
 import { analyzePostRead } from "../../src/commands/post-read";
 import { recordRead } from "../../src/core/session";
@@ -48,7 +48,7 @@ describe("read intelligence integration", () => {
     // Simulate pre-read
     const loadedState = safeReadJson(sessionFile) as SessionState;
     const loadedIndex = safeReadJson(indexFile) as FileIndex;
-    const preResult = analyzePreRead("src/auth.ts", loadedState, loadedIndex);
+    const preResult = analyzePreRead("src/auth.ts", loadedState, indexAsLookup(loadedIndex));
 
     expect(preResult.indexHit).toBe(true);
     expect(preResult.repeatedRead).toBe(false);
@@ -62,7 +62,7 @@ describe("read intelligence integration", () => {
     const content = "const x = 1;\n".repeat(154); // ~2000 chars
     const postState = safeReadJson(sessionFile) as SessionState;
     const postIndex = safeReadJson(indexFile) as FileIndex;
-    const postResult = analyzePostRead("src/auth.ts", content, postIndex);
+    const postResult = analyzePostRead("src/auth.ts", content, indexAsLookup(postIndex));
 
     recordRead(postState, "src/auth.ts", postResult.estimatedTokens, postResult.indexHit);
     atomicWriteJson(sessionFile, postState);
@@ -88,13 +88,13 @@ describe("read intelligence integration", () => {
     upsertEntry(index, makeEntry("src/config.ts", "App config", 200));
 
     // First file: pre-read + post-read
-    analyzePreRead("src/auth.ts", state, index);
-    const postResult1 = analyzePostRead("src/auth.ts", "a".repeat(1400), index);
+    analyzePreRead("src/auth.ts", state, indexAsLookup(index));
+    const postResult1 = analyzePostRead("src/auth.ts", "a".repeat(1400), indexAsLookup(index));
     recordRead(state, "src/auth.ts", postResult1.estimatedTokens, postResult1.indexHit);
 
     // Second file: pre-read + post-read
-    analyzePreRead("src/config.ts", state, index);
-    const postResult2 = analyzePostRead("src/config.ts", "b".repeat(800), index);
+    analyzePreRead("src/config.ts", state, indexAsLookup(index));
+    const postResult2 = analyzePostRead("src/config.ts", "b".repeat(800), indexAsLookup(index));
     recordRead(state, "src/config.ts", postResult2.estimatedTokens, postResult2.indexHit);
 
     // Verify accumulation. Session counters still increment for hit telemetry;
@@ -112,17 +112,17 @@ describe("read intelligence integration", () => {
     upsertEntry(index, makeEntry("src/auth.ts", "Auth middleware", 380));
 
     // First read
-    analyzePreRead("src/auth.ts", state, index);
-    const post1 = analyzePostRead("src/auth.ts", "a".repeat(1400), index);
+    analyzePreRead("src/auth.ts", state, indexAsLookup(index));
+    const post1 = analyzePostRead("src/auth.ts", "a".repeat(1400), indexAsLookup(index));
     recordRead(state, "src/auth.ts", post1.estimatedTokens, post1.indexHit);
 
     // Second read (repeated)
-    const preResult2 = analyzePreRead("src/auth.ts", state, index);
+    const preResult2 = analyzePreRead("src/auth.ts", state, indexAsLookup(index));
     expect(preResult2.repeatedRead).toBe(true);
     expect(state.counters.repeatedReadWarnings).toBe(1);
     expect(preResult2.warnings.some((w) => w.includes("already read"))).toBe(true);
 
-    const post2 = analyzePostRead("src/auth.ts", "a".repeat(1400), index);
+    const post2 = analyzePostRead("src/auth.ts", "a".repeat(1400), indexAsLookup(index));
     recordRead(state, "src/auth.ts", post2.estimatedTokens, post2.indexHit);
 
     expect(state.reads["src/auth.ts"].readCount).toBe(2);
@@ -166,7 +166,7 @@ describe("read intelligence integration", () => {
     const index = createEmptyIndex();
     upsertEntry(index, makeEntry("src/auth.ts", "Auth middleware", 380));
 
-    const result = analyzePostRead("src/auth.ts", null, index);
+    const result = analyzePostRead("src/auth.ts", null, indexAsLookup(index));
 
     expect(result.estimatedTokens).toBe(380);
     expect(result.source).toBe("index-fallback");
@@ -183,7 +183,7 @@ describe("read intelligence integration", () => {
     }
 
     const start = performance.now();
-    const result = analyzePreRead("src/file-300.ts", state, index);
+    const result = analyzePreRead("src/file-300.ts", state, indexAsLookup(index));
     const elapsed = performance.now() - start;
 
     expect(result.indexHit).toBe(true);

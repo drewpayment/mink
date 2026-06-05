@@ -67,15 +67,11 @@ export function addBacklink(
 }
 
 export function updateMasterIndex(vaultRootPath: string): void {
-  const now = new Date().toISOString().split("T")[0];
+  // Prompt-cache stability: keep the prefix (title + stable category sections)
+  // at the top. Volatile fields (updated timestamps) live in the footer so a
+  // regenerated index never busts an LLM provider's prefix prompt cache.
   const sections: string[] = [
-    `---`,
-    `updated: "${new Date().toISOString()}"`,
-    `---`,
-    ``,
     `# Knowledge Base`,
-    ``,
-    `> Last updated: ${now}`,
     ``,
   ];
 
@@ -114,6 +110,15 @@ export function updateMasterIndex(vaultRootPath: string): void {
     }
     sections.push("");
   }
+
+  // ── Footer (volatile, must stay at the END for prompt-cache stability) ──
+  const nowIso = new Date().toISOString();
+  const nowDate = nowIso.split("T")[0];
+  sections.push(`---`);
+  sections.push(``);
+  sections.push(`<!-- mink:footer (volatile — keep at end of file) -->`);
+  sections.push(`> Last updated: ${nowDate} (${nowIso})`);
+  sections.push(``);
 
   const indexPath = vaultMasterIndexPath();
   atomicWriteText(indexPath, sections.join("\n"));

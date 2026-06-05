@@ -3,8 +3,61 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync
 import { join } from "path";
 import { tmpdir } from "os";
 import { safeReadJson } from "../../src/core/fs-utils";
-import { buildHooksConfig, mergeHooksIntoSettings, writeMinkRule, init } from "../../src/commands/init";
+import { buildHooksConfig, mergeHooksIntoSettings, writeMinkRule, init, resolveCliPathFrom } from "../../src/commands/init";
 import { learningMemoryPath } from "../../src/core/paths";
+
+describe("resolveCliPathFrom", () => {
+  // Every form `bun build` and the Node shim can produce must map to the
+  // `dist/cli.js` bin shim, so buildHooksConfig stays on the portable
+  // `mink <subcmd>` form. The pre-fix bug returned `<pkg>/cli.ts` (no src)
+  // when called from `dist/cli.bun.js`, silently breaking every install.
+  const installRoot =
+    "/Users/x/.bun/install/global/node_modules/@drewpayment/mink";
+
+  test("maps dist/cli.js (legacy bundle) to the bin shim", () => {
+    expect(resolveCliPathFrom(`${installRoot}/dist/cli.js`)).toBe(
+      `${installRoot}/dist/cli.js`
+    );
+  });
+
+  test("maps dist/cli.bun.js (current Bun bundle) to the bin shim", () => {
+    expect(resolveCliPathFrom(`${installRoot}/dist/cli.bun.js`)).toBe(
+      `${installRoot}/dist/cli.js`
+    );
+  });
+
+  test("maps dist/cli.node.js (current Node bundle) to the bin shim", () => {
+    expect(resolveCliPathFrom(`${installRoot}/dist/cli.node.js`)).toBe(
+      `${installRoot}/dist/cli.js`
+    );
+  });
+
+  test("source-dev fallback resolves to src/cli.ts when no dist exists", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "mink-resolveCli-"));
+    try {
+      mkdirSync(join(tmp, "src", "commands"), { recursive: true });
+      const initPath = join(tmp, "src", "commands", "init.ts");
+      writeFileSync(initPath, "");
+      expect(resolveCliPathFrom(initPath)).toBe(join(tmp, "src", "cli.ts"));
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("source-dev mode prefers an existing dist/cli.js over src/cli.ts", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "mink-resolveCli-"));
+    try {
+      mkdirSync(join(tmp, "src", "commands"), { recursive: true });
+      mkdirSync(join(tmp, "dist"), { recursive: true });
+      writeFileSync(join(tmp, "dist", "cli.js"), "#!/usr/bin/env node\n");
+      const initPath = join(tmp, "src", "commands", "init.ts");
+      writeFileSync(initPath, "");
+      expect(resolveCliPathFrom(initPath)).toBe(join(tmp, "dist", "cli.js"));
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("buildHooksConfig", () => {
   test("emits the `mink` bin shim for installed (dist) cli paths", () => {

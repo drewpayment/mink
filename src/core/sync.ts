@@ -65,6 +65,12 @@ projects/*/scheduler-manifest.json
 projects/*/design-captures/
 projects/*/.mink-state-counters.json
 
+# SQLite write-ahead log + shared-memory sidecars — local-only, must not
+# travel with the main mink.db (WAL is checkpointed before push).
+projects/*/mink.db-wal
+projects/*/mink.db-shm
+projects/*/mink.db-journal
+
 # Wiki derived/regenerable pages — each device rebuilds locally
 wiki/_index.md
 wiki/.mink-index.json
@@ -74,6 +80,15 @@ wiki/projects/*/architecture.md
 
 const GITATTRIBUTES_CONTENTS = `# Sync v2 — merge drivers eliminate conflicts on shared files.
 # Drivers are registered in .git/config by ensureMergeDriversRegistered().
+#
+# NOTE (sync size tradeoff): marking mink.db 'binary' means git stores a full
+# new blob of the database on every sync rather than a line-level delta the way
+# it did for the old file-index.json/token-ledger.json. For large projects
+# (20k+ files) this grows the ~/.mink sync repo and lengthens clones over time.
+# This is an accepted cost of moving the hot-path stores into SQLite for hook
+# latency. If the repo gets heavy, run a periodic 'git gc'/repack on ~/.mink.
+projects/*/mink.db merge=mink-db-merge
+projects/*/mink.db binary
 projects/*/file-index.json merge=mink-json-union
 projects/*/learning-memory.*.md merge=union
 projects/*/learning-memory.md merge=mink-learning-memory
@@ -120,6 +135,7 @@ export function ensureGitAttributes(): void {
 
 const MERGE_DRIVERS = [
   "mink-json-union",
+  "mink-db-merge",
   "mink-learning-memory",
   "mink-devices",
 ] as const;

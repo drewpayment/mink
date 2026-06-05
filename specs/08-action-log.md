@@ -77,6 +77,15 @@ THEN both entries appear in the log without corruption
 - Very long file paths in log entries — truncate display to last 60 characters with leading ellipsis.
 - Session with zero activity — only header and summary row, no action rows.
 
+## Prompt-Cache Stability
+
+The action log is append-only, which is intrinsically friendly to Anthropic's prefix-hashed prompt cache: existing bytes never change, so the cached prefix stays valid as new rows accrue at the tail. Two rules preserve that property:
+
+1. **Never prepend or rewrite the file header.** The "create on first write" header must be written exactly once. Subsequent session-start hooks append a `### Session — <date> <time>` heading **inside** the body — they must not touch the top of the file.
+2. **Consolidation must compress oldest entries first and preserve byte-for-byte the most recent sessions.** Rewriting the head of the file invalidates the prompt cache for every downstream byte; rewriting the tail does not, because no cache hit covered the not-yet-written tail anyway. Effectively: never edit a row that an LLM may already have cached.
+
+Volatile per-session timestamps live in body rows, not in the file prefix — which is why the action log layout is already cache-safe and needs no footer block.
+
 ## Test Requirements
 
 - Unit: Session header formatting with correct timestamp.

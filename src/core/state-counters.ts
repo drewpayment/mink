@@ -1,46 +1,26 @@
-import { atomicWriteJson, safeReadJson } from "./fs-utils";
-import { fileIndexCountersPath } from "./paths";
+// Wrapper over the per-device counters table. The legacy implementation
+// kept these in projects/<id>/.mink-state-counters.json; Phase 1's
+// importer copies that file's contents into the `counters` table the
+// first time the project DB opens, and the file is moved to
+// legacy-backup/. Both APIs (totals and per-device) remain available so
+// the dashboard and `mink status` keep their existing surface.
 
-// Per-device telemetry counters. Lives at projects/<id>/.mink-state-counters.json
-// and is gitignored so each device's counts never collide. Aggregated views
-// (dashboard, status) sum across devices via aggregateStateCounters().
+import { CountersRepo } from "../repositories/counters-repo";
 
 export interface StateCounters {
   fileIndexHits: number;
   fileIndexMisses: number;
 }
 
-function emptyCounters(): StateCounters {
-  return { fileIndexHits: 0, fileIndexMisses: 0 };
-}
-
-function isStateCounters(value: unknown): value is StateCounters {
-  if (value === null || typeof value !== "object") return false;
-  const obj = value as Record<string, unknown>;
-  return (
-    typeof obj.fileIndexHits === "number" &&
-    typeof obj.fileIndexMisses === "number"
-  );
-}
-
 export function loadCounters(cwd: string): StateCounters {
-  const raw = safeReadJson(fileIndexCountersPath(cwd));
-  if (raw !== null && isStateCounters(raw)) return raw;
-  return emptyCounters();
-}
-
-export function saveCounters(cwd: string, counters: StateCounters): void {
-  atomicWriteJson(fileIndexCountersPath(cwd), counters);
+  const t = CountersRepo.for(cwd).totals();
+  return { fileIndexHits: t.hits, fileIndexMisses: t.misses };
 }
 
 export function incrementFileIndexHit(cwd: string): void {
-  const c = loadCounters(cwd);
-  c.fileIndexHits++;
-  saveCounters(cwd, c);
+  CountersRepo.for(cwd).incrementHit();
 }
 
 export function incrementFileIndexMiss(cwd: string): void {
-  const c = loadCounters(cwd);
-  c.fileIndexMisses++;
-  saveCounters(cwd, c);
+  CountersRepo.for(cwd).incrementMiss();
 }

@@ -21,7 +21,10 @@ export const DEFAULT_EXCLUDES: string[] = [
   ".mink",
 ];
 
-const DEFAULT_MAX_FILES = 500;
+// Phase 5 of the SQLite migration drops the legacy default cap; callers
+// that want one set `maxFiles` explicitly. SQLite's per-row write cost is
+// flat in index size, so capping by default no longer pays off.
+const NO_CAP = Number.POSITIVE_INFINITY;
 
 function matchesPattern(name: string, pattern: string): boolean {
   if (pattern.includes("*")) {
@@ -96,20 +99,21 @@ export interface ScanStats {
 export function scanProjectWithStats(
   projectRoot: string,
   excludes: string[],
-  maxFiles: number = DEFAULT_MAX_FILES
+  maxFiles: number | undefined = NO_CAP
 ): ScanStats {
   const results: ScannedFile[] = [];
   walkDirectory(projectRoot, projectRoot, excludes, results);
   results.sort((a, b) => b.mtimeMs - a.mtimeMs);
   const totalScanned = results.length;
-  const files = results.slice(0, maxFiles);
+  const cap = maxFiles ?? NO_CAP;
+  const files = Number.isFinite(cap) ? results.slice(0, cap) : results;
   return { files, totalScanned, truncated: totalScanned - files.length };
 }
 
 export function scanProject(
   projectRoot: string,
   excludes: string[],
-  maxFiles: number = DEFAULT_MAX_FILES
+  maxFiles: number | undefined = NO_CAP
 ): ScannedFile[] {
   return scanProjectWithStats(projectRoot, excludes, maxFiles).files;
 }
