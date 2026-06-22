@@ -115,6 +115,22 @@ describe("compressOutput — file", () => {
     expect(r!.compressed).toContain("# Title");
     expect(r!.compressed).toContain("## Section");
   });
+
+  test("captures class members and elides method bodies (phase 3 skeleton)", () => {
+    const content =
+      "export class Service {\n" +
+      "  start() {\n" +
+      Array.from({ length: 60 }, (_, i) => `    step${i}();`).join("\n") +
+      "\n  }\n" +
+      "  count: number = 0;\n" +
+      "}\n";
+    const r = compressOutput("Read", content, "src/service.ts");
+    expect(r).not.toBeNull();
+    expect(r!.compressed).toContain("export class Service {");
+    expect(r!.compressed).toContain("start() { … }");
+    expect(r!.compressed).toContain("count: number = 0;");
+    expect(r!.compressed).not.toContain("step30");
+  });
 });
 
 describe("compressOutput — json", () => {
@@ -136,6 +152,21 @@ describe("compressOutput — json", () => {
 
   test("small JSON is left alone", () => {
     expect(compressOutput("mcp__db__query", '{"a":1,"b":[1,2,3]}')).toBeNull();
+  });
+
+  test("crushes arrays nested deep in the structure (phase 3)", () => {
+    // Top level has only short arrays; the long arrays are two levels down, so
+    // this only compresses if crushing recurses.
+    const payload = JSON.stringify({
+      data: [
+        { rows: Array.from({ length: 100 }, (_, i) => i) },
+        { rows: Array.from({ length: 100 }, (_, i) => i) },
+      ],
+    });
+    const r = compressOutput("mcp__db__query", payload);
+    expect(r).not.toBeNull();
+    expect(r!.compressed).toContain("omitted");
+    expect(r!.omittedNote).toContain("sampled out");
   });
 });
 

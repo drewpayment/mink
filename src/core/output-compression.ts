@@ -12,6 +12,7 @@
 // upgrades it to richer AST skeletons behind this same interface.
 
 import type { ContentKind, CompressionResult } from "../types/compression";
+import { extractCodeSkeleton } from "./code-skeleton";
 
 // Tuning constants. Fixed (not config) so output is deterministic and stable.
 const SEARCH_MAX_PER_FILE = 5;
@@ -19,7 +20,6 @@ const LOG_HEAD = 40;
 const LOG_TAIL = 40;
 const TEXT_HEAD = 30;
 const TEXT_TAIL = 20;
-const FILE_MAX_SIGNATURES = 60;
 const JSON_ARRAY_HEAD = 20;
 const JSON_ARRAY_TAIL = 5;
 
@@ -116,60 +116,65 @@ function compressSearch(content: string): { compressed: string; omittedNote: str
 }
 
 // ── Large file reads ────────────────────────────────────────────────────────
-// Deterministic line-based signature extraction: declarations, exports, and
-// markdown headings. Phase 3 swaps in real AST skeletons behind this function.
-const SIGNATURE = new RegExp(
-  [
-    "^\\s*export\\s+",                              // JS/TS exports
-    "^\\s*(?:async\\s+)?function\\s+\\w+",          // functions
-    "^\\s*(?:public|private|protected|static|abstract|export)?\\s*class\\s+\\w+",
-    "^\\s*interface\\s+\\w+",
-    "^\\s*type\\s+\\w+\\s*=",
-    "^\\s*enum\\s+\\w+",
-    "^\\s*def\\s+\\w+",                             // Python
-    "^\\s*(?:pub\\s+)?fn\\s+\\w+",                  // Rust
-    "^\\s*func\\s+\\w+",                            // Go
-    "^#{1,6}\\s+\\S",                               // markdown headings
-  ].join("|")
-);
-
+// Brace-aware structural skeleton (see code-skeleton.ts): declarations and class
+// members with bodies elided. Falls back to a generic text window when the
+// content has no recognisable structure.
 function compressFile(
   filePath: string,
   content: string
 ): { compressed: string; omittedNote: string } | null {
-  const lines = toLines(content);
-  const signatures: string[] = [];
-  for (const line of lines) {
-    if (SIGNATURE.test(line)) {
-      signatures.push(line.trimEnd());
-      if (signatures.length >= FILE_MAX_SIGNATURES) break;
-    }
-  }
+  const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
+  const markdown = ext === ".md" || ext === ".mdx" || ext === ".markdown";
+  const skeleton = extractCodeSkeleton(content, { markdown });
 
-  if (signatures.length === 0) {
+  if (!skeleton) {
     // No recognisable structure — fall back to a generic text window.
     return compressText(content);
   }
 
-  const header = `${filePath} — structural summary (${signatures.length} signature(s) of ${lines.length} lines)`;
+  const header =
+    `${filePath} — structural summary ` +
+    `(${skeleton.lines.length} signature(s) of ${skeleton.totalLines} lines)`;
   return {
-    compressed: [header, ...signatures].join("\n"),
-    omittedNote: `body elided; ${lines.length} lines available via mink retrieve`,
+    compressed: [header, ...skeleton.lines].join("\n"),
+    omittedNote: `bodies elided; ${skeleton.totalLines} lines available via mink retrieve`,
   };
 }
 
 // ── Structured data ─────────────────────────────────────────────────────────
-// Sample long arrays (top-level, or arrays held directly on a top-level object)
-// down to a head+tail, recording how many elements were dropped.
-function sampleArray(arr: unknown[]): { sampled: unknown[]; omitted: number } {
-  if (arr.length <= JSON_ARRAY_HEAD + JSON_ARRAY_TAIL) return { sampled: arr, omitted: 0 };
-  const omitted = arr.length - JSON_ARRAY_HEAD - JSON_ARRAY_TAIL;
-  const sampled = [
-    ...arr.slice(0, JSON_ARRAY_HEAD),
-    `… ${omitted} element(s) omitted — mink retrieve …`,
-    ...arr.slice(arr.length - JSON_ARRAY_TAIL),
-  ];
-  return { sampled, omitted };
+// Recursively "crush" JSON: sample any over-long array (at any depth), recursing
+// into the elements that are kept. Records how many elements were dropped.
+function crush(value: unknown): { value: unknown; omitted: number } {
+  if (Array.isArray(value)) {
+    let omitted = 0;
+    const mapEl = (el: unknown): unknown => {
+      const r = crush(el);
+      omitted += r.omitted;
+      return r.value;
+    };
+    if (value.length <= JSON_ARRAY_HEAD + JSON_ARRAY_TAIL) {
+      return { value: value.map(mapEl), omitted };
+    }
+    const dropped = value.length - JSON_ARRAY_HEAD - JSON_ARRAY_TAIL;
+    omitted += dropped;
+    const out = [
+      ...value.slice(0, JSON_ARRAY_HEAD).map(mapEl),
+      `… ${dropped} element(s) omitted — mink retrieve …`,
+      ...value.slice(value.length - JSON_ARRAY_TAIL).map(mapEl),
+    ];
+    return { value: out, omitted };
+  }
+  if (value && typeof value === "object") {
+    let omitted = 0;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      const r = crush(v);
+      omitted += r.omitted;
+      out[k] = r.value;
+    }
+    return { value: out, omitted };
+  }
+  return { value, omitted: 0 };
 }
 
 function compressJson(content: string): { compressed: string; omittedNote: string } | null {
@@ -179,33 +184,11 @@ function compressJson(content: string): { compressed: string; omittedNote: strin
   } catch {
     return null;
   }
-
-  let totalOmitted = 0;
-  let transformed: unknown = parsed;
-
-  if (Array.isArray(parsed)) {
-    const { sampled, omitted } = sampleArray(parsed);
-    transformed = sampled;
-    totalOmitted += omitted;
-  } else if (parsed && typeof parsed === "object") {
-    const obj = parsed as Record<string, unknown>;
-    const next: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(obj)) {
-      if (Array.isArray(v)) {
-        const { sampled, omitted } = sampleArray(v);
-        next[k] = sampled;
-        totalOmitted += omitted;
-      } else {
-        next[k] = v;
-      }
-    }
-    transformed = next;
-  }
-
-  if (totalOmitted === 0) return null;
+  const { value, omitted } = crush(parsed);
+  if (omitted === 0) return null;
   return {
-    compressed: JSON.stringify(transformed, null, 2),
-    omittedNote: `${totalOmitted} array element(s) sampled out`,
+    compressed: JSON.stringify(value, null, 2),
+    omittedNote: `${omitted} array element(s) sampled out`,
   };
 }
 
