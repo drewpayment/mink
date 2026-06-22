@@ -12,7 +12,7 @@
 // - `meta(key, value)` holds versioning + migration markers. Keep it small;
 //   per-store counters live in `counters` and `ledger_lifetime`.
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export const INITIAL_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -207,6 +207,24 @@ CREATE TABLE IF NOT EXISTS ledger_compression_lifetime (
   total_compressed_tokens INTEGER NOT NULL DEFAULT 0,
   total_measured_savings  INTEGER NOT NULL DEFAULT 0
 );
+
+-- Reversible-compression cache (spec 21 §Reversibility). When a tool output is
+-- compressed, the original is stored here keyed by a short retrieval token and
+-- embedded in the compressed result; "mink retrieve <token>" returns it
+-- byte-exact. Rows expire after the configured retention window; an expired or
+-- unknown token is a graceful miss. This is a local cache, not synced state, so
+-- (unlike other tables) it carries no merge semantics beyond device_id for audit.
+CREATE TABLE IF NOT EXISTS compression_cache (
+  token        TEXT PRIMARY KEY,
+  created_at   TEXT NOT NULL,
+  expires_at   TEXT NOT NULL,
+  tool_name    TEXT NOT NULL,
+  content_kind TEXT NOT NULL,
+  content      TEXT NOT NULL,
+  size_bytes   INTEGER NOT NULL,
+  device_id    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_compression_cache_expires ON compression_cache(expires_at);
 `;
 
 export interface DriverForSchema {

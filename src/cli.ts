@@ -71,6 +71,12 @@ switch (command) {
     break;
   }
 
+  case "retrieve": {
+    const { retrieve } = await import("./commands/retrieve");
+    retrieve(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "cron": {
     const { cron } = await import("./commands/cron");
     await cron(cwd, process.argv.slice(3));
@@ -263,6 +269,7 @@ switch (command) {
     console.log("  restore [backup]        Restore state from a backup");
     console.log("  bug search <term>       Search the bug log");
     console.log("  detect-waste            Detect and flag wasteful patterns");
+    console.log("  retrieve <token>        Return a compressed tool output's original (spec 21)");
     console.log("  reflect                 Generate learning memory reflections");
     console.log("  designqc [target]       Capture design screenshots (spec 13)");
     console.log("  framework-advisor       Generate framework advisor knowledge file (spec 14)");
