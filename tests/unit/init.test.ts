@@ -126,12 +126,16 @@ describe("buildHooksConfig", () => {
     expect(hooks.PreToolUse[2].matcher).toBe("Write");
     expect(hooks.PreToolUse[2].hooks[0].command).toContain("pre-write");
 
-    // PostToolUse: Read (post-read) + Edit (post-write) + Write (post-write)
-    expect(hooks.PostToolUse).toHaveLength(3);
+    // PostToolUse: Read (post-read) + Edit/Write (post-write) + Bash/Grep (post-tool, spec 21)
+    expect(hooks.PostToolUse).toHaveLength(5);
     expect(hooks.PostToolUse[1].matcher).toBe("Edit");
     expect(hooks.PostToolUse[1].hooks[0].command).toContain("post-write");
     expect(hooks.PostToolUse[2].matcher).toBe("Write");
     expect(hooks.PostToolUse[2].hooks[0].command).toContain("post-write");
+    expect(hooks.PostToolUse[3].matcher).toBe("Bash");
+    expect(hooks.PostToolUse[3].hooks[0].command).toContain("post-tool");
+    expect(hooks.PostToolUse[4].matcher).toBe("Grep");
+    expect(hooks.PostToolUse[4].hooks[0].command).toContain("post-tool");
   });
 });
 
@@ -230,11 +234,13 @@ describe("mergeHooksIntoSettings", () => {
     expect(allHooks.PreToolUse.some((e) => e.hooks[0].command.includes("pre-read"))).toBe(true);
     expect(allHooks.PreToolUse.some((e) => e.hooks[0].command.includes("pre-write"))).toBe(true);
 
-    // PostToolUse: 3 entries (Read, Edit, Write)
-    expect(allHooks.PostToolUse).toHaveLength(3);
+    // PostToolUse: 5 entries (Read, Edit, Write, Bash, Grep) — legacy 3 replaced,
+    // spec-21 Bash/Grep added.
+    expect(allHooks.PostToolUse).toHaveLength(5);
     expect(allHooks.PostToolUse.every((e) => e.hooks[0].command.startsWith("mink "))).toBe(true);
     expect(allHooks.PostToolUse.some((e) => e.hooks[0].command.includes("post-read"))).toBe(true);
     expect(allHooks.PostToolUse.some((e) => e.hooks[0].command.includes("post-write"))).toBe(true);
+    expect(allHooks.PostToolUse.some((e) => e.hooks[0].command.includes("post-tool"))).toBe(true);
   });
 
   test("re-init does not duplicate `mink` shim hooks already in settings", () => {
@@ -252,7 +258,7 @@ describe("mergeHooksIntoSettings", () => {
     expect(allHooks.SessionStart).toHaveLength(1);
     expect(allHooks.Stop).toHaveLength(1);
     expect(allHooks.PreToolUse).toHaveLength(3);
-    expect(allHooks.PostToolUse).toHaveLength(3);
+    expect(allHooks.PostToolUse).toHaveLength(5);
   });
 });
 

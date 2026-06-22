@@ -91,6 +91,9 @@ export function buildHooksConfig(cliPath: string): HooksConfig {
       { matcher: "Read", hooks: hook(`${prefix} post-read`) },
       { matcher: "Edit", hooks: hook(`${prefix} post-write`) },
       { matcher: "Write", hooks: hook(`${prefix} post-write`) },
+      // Tool-output compression (spec 21) — a no-op until enabled via config.
+      { matcher: "Bash", hooks: hook(`${prefix} post-tool`) },
+      { matcher: "Grep", hooks: hook(`${prefix} post-tool`) },
     ],
   };
 }
@@ -102,7 +105,8 @@ function isMinkCommand(cmd: string): boolean {
     cmd.includes("pre-read") ||
     cmd.includes("post-read") ||
     cmd.includes("pre-write") ||
-    cmd.includes("post-write");
+    cmd.includes("post-write") ||
+    cmd.includes("post-tool");
   if (!hasMinkSubcommand) return false;
   // Match the new bin-shim format (`mink <subcmd>` or `/abs/path/to/mink <subcmd>`)
   // as well as legacy formats (`bun run .../cli.js ...`, `node .../cli.js ...`,

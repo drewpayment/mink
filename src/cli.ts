@@ -53,6 +53,12 @@ switch (command) {
     break;
   }
 
+  case "post-tool": {
+    const { postTool } = await import("./commands/post-tool");
+    await postTool(cwd);
+    break;
+  }
+
   case "pre-write": {
     const { preWrite } = await import("./commands/pre-write");
     await preWrite(cwd);
@@ -279,6 +285,7 @@ switch (command) {
     console.log("  session-stop            Finalize session and log data");
     console.log("  pre-read / post-read    File read hooks");
     console.log("  pre-write / post-write  File write hooks");
+    console.log("  post-tool               Tool-output compression hook (Bash/Grep/MCP, spec 21)");
     break;
 
   default:
