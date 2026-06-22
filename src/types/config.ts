@@ -18,6 +18,11 @@ export interface GlobalConfig {
   "cli.auto-update-schedule"?: string;
   "cli.auto-update-package-manager"?: string;
   "projects.identity"?: string;
+  "compression.enabled"?: string;
+  "compression.threshold-tokens"?: string;
+  "compression.min-savings-ratio"?: string;
+  "compression.holdout-fraction"?: string;
+  "compression.retention-hours"?: string;
 }
 
 export type ConfigKey = keyof GlobalConfig & string;
@@ -177,6 +182,41 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     envVar: "MINK_PROJECTS_IDENTITY",
     description:
       "Project identity strategy: path-derived (legacy) or git-remote (stable across machines)",
+    scope: "shared",
+  },
+  {
+    key: "compression.enabled",
+    default: "false",
+    envVar: "MINK_COMPRESSION_ENABLED",
+    description: "Enable tool-output compression (spec 21). Off until inline compression ships.",
+    scope: "shared",
+  },
+  {
+    key: "compression.threshold-tokens",
+    default: "800",
+    envVar: "MINK_COMPRESSION_THRESHOLD_TOKENS",
+    description: "Minimum estimated token size before a tool output is eligible for compression",
+    scope: "shared",
+  },
+  {
+    key: "compression.min-savings-ratio",
+    default: "0.25",
+    envVar: "MINK_COMPRESSION_MIN_SAVINGS_RATIO",
+    description: "Discard a compression attempt unless it saves at least this fraction of tokens",
+    scope: "shared",
+  },
+  {
+    key: "compression.holdout-fraction",
+    default: "0.1",
+    envVar: "MINK_COMPRESSION_HOLDOUT_FRACTION",
+    description: "Fraction of eligible outputs left uncompressed as a measured control group",
+    scope: "shared",
+  },
+  {
+    key: "compression.retention-hours",
+    default: "168",
+    envVar: "MINK_COMPRESSION_RETENTION_HOURS",
+    description: "How long compressed originals stay retrievable before eviction",
     scope: "shared",
   },
 ];

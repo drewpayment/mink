@@ -95,7 +95,7 @@ describe("config integration", () => {
 
   test("resolveAllConfig shows all settings with defaults", () => {
     const all = resolveAllConfig();
-    expect(all.length).toBe(19);
+    expect(all.length).toBe(24);
     const byKey = Object.fromEntries(all.map((a) => [a.key, a]));
     expect(byKey["wiki.path"].source).toBe("default");
     expect(byKey["wiki.enabled"].value).toBe("true");

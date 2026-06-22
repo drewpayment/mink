@@ -41,3 +41,36 @@ export interface TokenLedger {
   sessions: LedgerSession[];
   wasteFlags?: WasteFlag[];
 }
+
+// Tool-output compression measurement (spec 21).
+
+// What the caller supplies when recording a compression decision. `id` and
+// `createdAt` are generated when omitted. For a holdout arm, pass the original
+// output unchanged so `compressedTokens === originalTokens` and `holdout: true`.
+export interface CompressionEventInput {
+  toolName: string;
+  contentKind: string;
+  originalTokens: number;
+  compressedTokens: number;
+  holdout: boolean;
+  id?: string;
+  createdAt?: string;
+}
+
+export interface CompressionEvent {
+  id: string;
+  createdAt: string;
+  toolName: string;
+  contentKind: string;
+  originalTokens: number;
+  compressedTokens: number;
+  holdout: boolean;
+}
+
+export interface CompressionLifetime {
+  totalEvents: number;
+  totalHoldoutEvents: number;
+  totalOriginalTokens: number;
+  totalCompressedTokens: number;
+  totalMeasuredSavings: number;
+}

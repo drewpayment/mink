@@ -132,7 +132,7 @@ describe("schema", () => {
     const db = fresh();
     applySchema(db);
     applySchema(db);
-    expect(readMeta(db, "schema_version")).toBe("1");
+    expect(readMeta(db, "schema_version")).toBe("2");
   });
 
   test("writeMeta upserts", () => {

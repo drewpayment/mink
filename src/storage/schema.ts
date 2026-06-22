@@ -12,7 +12,7 @@
 // - `meta(key, value)` holds versioning + migration markers. Keep it small;
 //   per-store counters live in `counters` and `ledger_lifetime`.
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const INITIAL_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -175,6 +175,37 @@ CREATE TABLE IF NOT EXISTS counters (
   device_id         TEXT PRIMARY KEY,
   file_index_hits   INTEGER NOT NULL DEFAULT 0,
   file_index_misses INTEGER NOT NULL DEFAULT 0
+);
+
+-- Tool-output compression measurement (spec 21). One row per compression
+-- decision: either a compressed arm (compressed_tokens < original_tokens) or a
+-- holdout arm (left uncompressed for control, compressed_tokens = original_tokens).
+-- These are append-only telemetry, independent of session lifecycle, written at
+-- the moment a tool output is processed. New table → applied to existing DBs via
+-- IF NOT EXISTS on the next open.
+CREATE TABLE IF NOT EXISTS ledger_compressions (
+  id                TEXT PRIMARY KEY,
+  created_at        TEXT NOT NULL,
+  tool_name         TEXT NOT NULL,
+  content_kind      TEXT NOT NULL,
+  original_tokens   INTEGER NOT NULL DEFAULT 0,
+  compressed_tokens INTEGER NOT NULL DEFAULT 0,
+  holdout           INTEGER NOT NULL DEFAULT 0,
+  device_id         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_compressions_created ON ledger_compressions(created_at);
+CREATE INDEX IF NOT EXISTS idx_ledger_compressions_device  ON ledger_compressions(device_id);
+
+-- Per-device compression aggregates, summed across devices like ledger_lifetime.
+-- measured_savings only credits compressed arms (holdout arms save nothing by
+-- construction), so the reported figure is a true measured delta, not an estimate.
+CREATE TABLE IF NOT EXISTS ledger_compression_lifetime (
+  device_id               TEXT PRIMARY KEY,
+  total_events            INTEGER NOT NULL DEFAULT 0,
+  total_holdout_events    INTEGER NOT NULL DEFAULT 0,
+  total_original_tokens   INTEGER NOT NULL DEFAULT 0,
+  total_compressed_tokens INTEGER NOT NULL DEFAULT 0,
+  total_measured_savings  INTEGER NOT NULL DEFAULT 0
 );
 `;
 

@@ -181,4 +181,61 @@ describe("TokenLedgerRepo", () => {
     TokenLedgerRepo.for(cwd).appendSession(makeSummary("via-static", { tokens: 1 }), "dev-a");
     expect(TokenLedgerRepo.for(cwd).lifetime().totalTokens).toBe(1);
   });
+
+  describe("compression measurement", () => {
+    test("recordCompression credits a compressed arm with measured savings", () => {
+      const repo = new TokenLedgerRepo(openProjectDb(cwd));
+      repo.recordCompression({
+        toolName: "Grep", contentKind: "search",
+        originalTokens: 1000, compressedTokens: 200, holdout: false,
+      }, "dev-a");
+
+      const lt = repo.compressionLifetime();
+      expect(lt.totalEvents).toBe(1);
+      expect(lt.totalHoldoutEvents).toBe(0);
+      expect(lt.totalOriginalTokens).toBe(1000);
+      expect(lt.totalCompressedTokens).toBe(200);
+      expect(lt.totalMeasuredSavings).toBe(800);
+    });
+
+    test("a holdout arm records tokens but saves nothing", () => {
+      const repo = new TokenLedgerRepo(openProjectDb(cwd));
+      repo.recordCompression({
+        toolName: "Read", contentKind: "file",
+        originalTokens: 1200, compressedTokens: 1200, holdout: true,
+      }, "dev-a");
+
+      const lt = repo.compressionLifetime();
+      expect(lt.totalEvents).toBe(1);
+      expect(lt.totalHoldoutEvents).toBe(1);
+      expect(lt.totalOriginalTokens).toBe(1200);
+      expect(lt.totalMeasuredSavings).toBe(0);
+    });
+
+    test("compressionLifetime sums across devices", () => {
+      const repo = new TokenLedgerRepo(openProjectDb(cwd));
+      repo.recordCompression({ toolName: "Grep", contentKind: "search", originalTokens: 1000, compressedTokens: 400, holdout: false }, "dev-a");
+      repo.recordCompression({ toolName: "Bash", contentKind: "log",    originalTokens: 2000, compressedTokens: 500, holdout: false }, "dev-b");
+      const lt = repo.compressionLifetime();
+      expect(lt.totalEvents).toBe(2);
+      expect(lt.totalMeasuredSavings).toBe(600 + 1500);
+    });
+
+    test("compressionEvents returns recorded rows newest-first", () => {
+      const repo = new TokenLedgerRepo(openProjectDb(cwd));
+      repo.recordCompression({ toolName: "Grep", contentKind: "search", originalTokens: 900, compressedTokens: 300, holdout: false, createdAt: "2026-01-01T00:00:00.000Z" }, "dev-a");
+      repo.recordCompression({ toolName: "Bash", contentKind: "log",    originalTokens: 900, compressedTokens: 300, holdout: false, createdAt: "2026-01-02T00:00:00.000Z" }, "dev-a");
+      const events = repo.compressionEvents();
+      expect(events).toHaveLength(2);
+      expect(events[0].toolName).toBe("Bash");
+      expect(events[0].holdout).toBe(false);
+    });
+
+    test("compressionLifetime is zeroed when nothing has been recorded", () => {
+      const repo = new TokenLedgerRepo(openProjectDb(cwd));
+      const lt = repo.compressionLifetime();
+      expect(lt.totalEvents).toBe(0);
+      expect(lt.totalMeasuredSavings).toBe(0);
+    });
+  });
 });
