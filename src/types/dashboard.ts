@@ -1,4 +1,11 @@
-import type { LifetimeCounters, LedgerSession } from "./token-ledger";
+import type {
+  LifetimeCounters,
+  LedgerSession,
+  CompressionLifetime,
+  CompressionArms,
+  CompressionBreakdownRow,
+  CompressionEvent,
+} from "./token-ledger";
 import type { WasteFlag } from "./waste-detection";
 import type { FileIndexHeader, FileIndexEntry } from "./file-index";
 import type { BugEntry } from "./bug-memory";
@@ -59,6 +66,9 @@ export interface OverviewPayload {
     totalWrites: number;
     estimatedSavings: number;
   };
+  // Measured tool-output compression aggregates (spec 21), kept distinct from
+  // the heuristic estimatedSavings above. Optional for back-compat.
+  compression?: CompressionLifetime;
   stateFiles: FileStatus[];
 }
 
@@ -66,6 +76,17 @@ export interface TokenLedgerPayload {
   lifetime: LifetimeCounters;
   sessions: LedgerSession[];
   wasteFlags: WasteFlag[];
+  compression?: CompressionLifetime;
+}
+
+// Dedicated Compression panel payload (spec 21, phase 4).
+export interface CompressionPayload {
+  enabled: boolean;
+  lifetime: CompressionLifetime;
+  arms: CompressionArms;
+  byKind: CompressionBreakdownRow[];
+  byTool: CompressionBreakdownRow[];
+  recent: CompressionEvent[];
 }
 
 export interface FileIndexPayload {

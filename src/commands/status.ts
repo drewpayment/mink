@@ -149,7 +149,19 @@ export function status(cwd: string): void {
     console.log(`    Sessions: ${lt.totalSessions}`);
     console.log(`    Total tokens: ${lt.totalTokens.toLocaleString()}`);
     console.log(`    Reads: ${lt.totalReads}  Writes: ${lt.totalWrites}`);
-    console.log(`    Estimated savings: ${lt.totalEstimatedSavings.toLocaleString()} tokens`);
+    console.log(`    Estimated savings (heuristic): ${lt.totalEstimatedSavings.toLocaleString()} tokens`);
+    const comp = ledger.compression;
+    if (comp && comp.totalEvents > 0) {
+      const ratio =
+        comp.totalOriginalTokens > 0
+          ? Math.round((comp.totalMeasuredSavings / comp.totalOriginalTokens) * 100)
+          : 0;
+      console.log(
+        `    Measured compression savings: ${comp.totalMeasuredSavings.toLocaleString()} tokens` +
+          ` (${ratio}% over ${comp.totalEvents} event${comp.totalEvents === 1 ? "" : "s"}` +
+          `, ${comp.totalHoldoutEvents} held out)`
+      );
+    }
   } catch {
     console.log("  Token ledger: error reading");
   }

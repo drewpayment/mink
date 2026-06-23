@@ -156,7 +156,8 @@ export function OverviewPanel() {
           <div className="vstack">
             <Kpi label="Total sessions" value={fmt(summary?.totalSessions)} className="kpi" />
             <Kpi label="Total tokens"   value={fmt(summary?.totalTokens)} />
-            <Kpi label="Est. savings"   value={fmt(summary?.estimatedSavings)} deltaTone="up" delta="▲ lifetime" />
+            <Kpi label="Savings · estimated" value={fmt(summary?.estimatedSavings)} deltaTone="up" delta="▲ heuristic" />
+            <Kpi label="Savings · measured"  value={fmt(overview?.compression?.totalMeasuredSavings)} deltaTone="up" delta="▲ compression" />
           </div>
         </Card>
       </div>

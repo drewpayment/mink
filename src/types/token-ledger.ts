@@ -40,6 +40,10 @@ export interface TokenLedger {
   lifetime: LifetimeCounters;
   sessions: LedgerSession[];
   wasteFlags?: WasteFlag[];
+  // Measured tool-output compression aggregates (spec 21). Optional because the
+  // legacy JSON-fallback ledger path has no compression data; only the SQLite
+  // snapshot() populates it.
+  compression?: CompressionLifetime;
 }
 
 // Tool-output compression measurement (spec 21).
@@ -73,4 +77,22 @@ export interface CompressionLifetime {
   totalOriginalTokens: number;
   totalCompressedTokens: number;
   totalMeasuredSavings: number;
+}
+
+// Compression aggregates split by arm — the holdout A/B view. The lifetime row
+// sums original/compressed across both arms, so an honest comparison must come
+// from grouping ledger_compressions by the holdout flag.
+export interface CompressionArms {
+  compressed: { events: number; originalTokens: number; compressedTokens: number };
+  holdout: { events: number; originalTokens: number };
+}
+
+// One row of a compression breakdown grouped by a dimension (content kind or
+// tool). `savings` credits compressed arms only.
+export interface CompressionBreakdownRow {
+  key: string;
+  events: number;
+  originalTokens: number;
+  compressedTokens: number;
+  savings: number;
 }

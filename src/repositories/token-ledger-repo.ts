@@ -24,6 +24,8 @@ import type {
   CompressionEvent,
   CompressionEventInput,
   CompressionLifetime,
+  CompressionArms,
+  CompressionBreakdownRow,
 } from "../types/token-ledger";
 import type { SessionSummary } from "../types/session";
 import type { WasteFlag, WastePattern } from "../types/waste-detection";
@@ -185,6 +187,7 @@ export class TokenLedgerRepo {
     const ledger: TokenLedger = {
       lifetime: this.lifetime(),
       sessions: this.activeSessions(),
+      compression: this.compressionLifetime(),
     };
     const flagRows = this.db
       .prepare(
@@ -317,6 +320,58 @@ export class TokenLedgerRepo {
       originalTokens:   Number(r.original_tokens),
       compressedTokens: Number(r.compressed_tokens),
       holdout:          Number(r.holdout) === 1,
+    }));
+  }
+
+  // Compression split by arm (holdout A/B). Compressed-arm carries the savings
+  // story; the holdout arm records the originals we deliberately left
+  // uncompressed as a control.
+  compressionArms(): CompressionArms {
+    const row = this.db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN holdout = 0 THEN 1 END),                 0) AS cEvents,
+        COALESCE(SUM(CASE WHEN holdout = 0 THEN original_tokens END),   0) AS cOriginal,
+        COALESCE(SUM(CASE WHEN holdout = 0 THEN compressed_tokens END), 0) AS cCompressed,
+        COALESCE(SUM(CASE WHEN holdout = 1 THEN 1 END),                 0) AS hEvents,
+        COALESCE(SUM(CASE WHEN holdout = 1 THEN original_tokens END),   0) AS hOriginal
+      FROM ledger_compressions
+    `).get() as Record<string, number> | undefined;
+    return {
+      compressed: {
+        events:          Number(row?.cEvents ?? 0),
+        originalTokens:  Number(row?.cOriginal ?? 0),
+        compressedTokens: Number(row?.cCompressed ?? 0),
+      },
+      holdout: {
+        events:         Number(row?.hEvents ?? 0),
+        originalTokens: Number(row?.hOriginal ?? 0),
+      },
+    };
+  }
+
+  // Compression aggregates grouped by a dimension (content_kind or tool_name),
+  // ordered by measured savings. `savings` credits compressed arms only, so the
+  // breakdown reflects realised reductions, not held-out controls.
+  compressionBreakdown(
+    dimension: "content_kind" | "tool_name"
+  ): CompressionBreakdownRow[] {
+    const rows = this.db.prepare(`
+      SELECT
+        ${dimension} AS key,
+        COUNT(*) AS events,
+        COALESCE(SUM(original_tokens),   0) AS originalTokens,
+        COALESCE(SUM(compressed_tokens), 0) AS compressedTokens,
+        COALESCE(SUM(CASE WHEN holdout = 0 THEN original_tokens - compressed_tokens END), 0) AS savings
+      FROM ledger_compressions
+      GROUP BY ${dimension}
+      ORDER BY savings DESC
+    `).all() as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      key:              String(r.key),
+      events:           Number(r.events),
+      originalTokens:   Number(r.originalTokens),
+      compressedTokens: Number(r.compressedTokens),
+      savings:          Number(r.savings),
     }));
   }
 

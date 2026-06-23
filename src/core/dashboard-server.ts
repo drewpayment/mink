@@ -5,6 +5,7 @@ import { projectDir, designCapturesDir } from "./paths";
 import {
   loadOverview,
   loadTokenLedgerPanel,
+  loadCompressionPanel,
   loadFileIndexPanel,
   loadSchedulerPanel,
   loadLearningMemoryPanel,
@@ -525,6 +526,8 @@ export async function startDashboardServer(
               return jsonResponse(loadOverview(resolvedCwd));
             case "/api/token-ledger":
               return jsonResponse(loadTokenLedgerPanel(resolvedCwd));
+            case "/api/compression":
+              return jsonResponse(loadCompressionPanel(resolvedCwd));
             case "/api/file-index":
               return jsonResponse(loadFileIndexPanel(resolvedCwd));
             case "/api/scheduler":

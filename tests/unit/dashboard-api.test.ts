@@ -5,12 +5,16 @@ import { tmpdir } from "os";
 import {
   loadOverview,
   loadTokenLedgerPanel,
+  loadCompressionPanel,
   loadFileIndexPanel,
   loadSchedulerPanel,
   loadLearningMemoryPanel,
   loadActionLogPanel,
   loadBugLogPanel,
 } from "../../src/core/dashboard-api";
+import { TokenLedgerRepo } from "../../src/repositories/token-ledger-repo";
+import { openProjectDb, _resetDbCacheForTests } from "../../src/storage/db";
+import { projectIdFor } from "../../src/core/project-id";
 
 // Mock the paths module to use temp dirs
 // We write state files directly and test the loaders
@@ -329,5 +333,49 @@ describe("file status checks", () => {
     writeFileSync(join(dir, "corrupt.json"), "not valid json {{{");
     const { safeReadJson } = require("../../src/core/fs-utils");
     expect(safeReadJson(join(dir, "corrupt.json"))).toBeNull();
+  });
+});
+
+describe("loadCompressionPanel (DB-backed, spec 21 phase 4)", () => {
+  let root: string;
+  let cwd: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "mink-cpanel-root-"));
+    process.env.MINK_ROOT_OVERRIDE = root;
+    cwd = mkdtempSync(join(tmpdir(), "mink-cpanel-cwd-"));
+    mkdirSync(join(root, "projects", projectIdFor(cwd)), { recursive: true });
+  });
+
+  afterEach(() => {
+    _resetDbCacheForTests();
+    delete process.env.MINK_ROOT_OVERRIDE;
+    try { rmSync(root, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { rmSync(cwd, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  test("empty project returns a zeroed, disabled-by-default payload", () => {
+    const panel = loadCompressionPanel(cwd);
+    expect(panel.enabled).toBe(false); // compression.enabled default
+    expect(panel.lifetime.totalEvents).toBe(0);
+    expect(panel.arms.compressed.events).toBe(0);
+    expect(panel.byKind).toEqual([]);
+    expect(panel.recent).toEqual([]);
+  });
+
+  test("surfaces recorded events, arms, and breakdowns", () => {
+    const repo = new TokenLedgerRepo(openProjectDb(cwd));
+    repo.recordCompression({ toolName: "Grep", contentKind: "search", originalTokens: 1000, compressedTokens: 200, holdout: false }, "dev-a");
+    repo.recordCompression({ toolName: "Bash", contentKind: "log",    originalTokens: 800,  compressedTokens: 800, holdout: true  }, "dev-a");
+
+    const panel = loadCompressionPanel(cwd);
+    expect(panel.lifetime.totalEvents).toBe(2);
+    expect(panel.lifetime.totalHoldoutEvents).toBe(1);
+    expect(panel.lifetime.totalMeasuredSavings).toBe(800);
+    expect(panel.arms.compressed.events).toBe(1);
+    expect(panel.arms.holdout.events).toBe(1);
+    expect(panel.byKind.map((r) => r.key).sort()).toEqual(["log", "search"]);
+    expect(panel.byTool.find((r) => r.key === "Grep")!.savings).toBe(800);
+    expect(panel.recent).toHaveLength(2);
   });
 });

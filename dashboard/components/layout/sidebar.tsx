@@ -28,6 +28,7 @@ export const NAV: NavGroup[] = [
       { id: "sessions", href: "/overview", label: "Sessions",      icon: "activity", showDot: true },
       { id: "activity", href: "/activity", label: "Activity log",  icon: "pulse" },
       { id: "tokens",   href: "/tokens",   label: "Token ledger",  icon: "chart" },
+      { id: "compression", href: "/compression", label: "Compression", icon: "chart" },
       { id: "waste",    href: "/waste",    label: "Waste detect",  icon: "alert", countKey: "waste" },
     ],
   },

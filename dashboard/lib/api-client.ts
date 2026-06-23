@@ -1,4 +1,4 @@
-import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, SchedulerPayload, BugLogPayload, ActionLogPayload, ActionResult, DesignPayload, ConfigPanelPayload, SyncPanelPayload, ChannelPanelPayload, WikiPanelPayload, WikiNotePayload } from "@mink/types/dashboard";
+import type { OverviewPayload, TokenLedgerPayload, CompressionPayload, FileIndexPayload, SchedulerPayload, BugLogPayload, ActionLogPayload, ActionResult, DesignPayload, ConfigPanelPayload, SyncPanelPayload, ChannelPanelPayload, WikiPanelPayload, WikiNotePayload } from "@mink/types/dashboard";
 import type { LearningMemory } from "@mink/types/learning-memory";
 import type { ProjectsResponse } from "@/types/project";
 
@@ -21,6 +21,10 @@ export function fetchOverview(projectId?: string) {
 
 export function fetchTokenLedger(projectId?: string) {
   return fetchApi<TokenLedgerPayload>("/api/token-ledger", projectId);
+}
+
+export function fetchCompression(projectId?: string) {
+  return fetchApi<CompressionPayload>("/api/compression", projectId);
 }
 
 export function fetchFileIndex(projectId?: string) {
