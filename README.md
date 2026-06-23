@@ -165,18 +165,34 @@ mink init
 This will:
 
 1. Detect your runtime (Bun if available, otherwise Node.js)
-2. Create your project's state directory at `~/.mink/projects/<project-slug>/`
-3. Register Mink's hooks in `.claude/settings.json`
+2. Detect which coding assistant(s) you use and, when run interactively, let you choose
+3. Create your project's state directory at `~/.mink/projects/<project-slug>/`
+4. Wire Mink into each selected assistant
 
 ```
 [mink] initialized
   project:  my-project-a3f2b1
   state:    /Users/you/.mink/projects/my-project-a3f2b1
   runtime:  bun
-  hooks:    /Users/you/dev/my-project/.claude/settings.json
+  agents:   claude
+  Claude Code:
+    hooks: /Users/you/dev/my-project/.claude/settings.json
+    rule:  /Users/you/dev/my-project/.claude/rules/mink.md
 ```
 
-That's it. Mink runs automatically in the background during your Claude Code sessions.
+That's it. Mink runs automatically in the background during your sessions.
+
+#### Choosing an assistant
+
+Mink works with [Claude Code](https://claude.ai/code) and the [Pi](https://pi.dev) coding agent, sharing **one** `~/.mink/` state across both. When run in a terminal, `mink init` detects installed assistants and prompts you to pick. To skip the prompt (CI, scripts), pass `--agent` and `--yes`:
+
+```bash
+mink init --agent claude       # Claude Code only
+mink init --agent pi           # Pi only — writes .pi/extensions/mink.ts
+mink init --agent all --yes    # both, no prompt
+```
+
+For Pi, Mink installs a small extension at `.pi/extensions/mink.ts` that routes Pi's session and tool events into the same `mink` lifecycle commands Claude Code uses. Wiring a second assistant later is additive — it never unwires the first.
 
 ### Verify it's working
 

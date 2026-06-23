@@ -12,6 +12,23 @@ import {
   isInsideVault,
   vaultProjects,
 } from "../core/vault";
+import {
+  type AgentId,
+  AGENTS,
+  detectAgents,
+  resolveTargetsFromFlag,
+} from "../core/agent-detect";
+import { installPi } from "../core/agent-pi";
+import { ask, stdinIsInteractive } from "../core/prompt";
+
+export { resolveTargetsFromFlag };
+
+export interface InitOptions {
+  /** Explicit set of hosts to wire. When omitted, Mink detects and/or prompts. */
+  targets?: AgentId[];
+  /** Allow an interactive agent-selection prompt when stdin is a TTY. */
+  interactive?: boolean;
+}
 
 interface HookCommand {
   type: "command";
@@ -168,17 +185,80 @@ export function mergeHooksIntoSettings(
   atomicWriteJson(settingsPath, existing);
 }
 
+/** Wire Mink into Claude Code: settings.json hooks + the project rule file. */
+export function installClaude(
+  cwd: string,
+  cliPath: string
+): { settingsPath: string; rulePath: string } {
+  const settingsPath = resolve(cwd, ".claude", "settings.json");
+  mergeHooksIntoSettings(settingsPath, buildHooksConfig(cliPath));
+  const rulePath = writeMinkRule(cwd);
+  return { settingsPath, rulePath };
+}
+
+/**
+ * Decide which hosts to wire. Explicit `targets` win; otherwise Mink detects
+ * installed hosts and — only when running interactively at a TTY — asks the
+ * user to confirm. Non-interactive runs fall back to the detected set, and to
+ * Claude Code when nothing is detected (preserving Mink's original behavior).
+ */
+export async function resolveTargets(
+  cwd: string,
+  opts: InitOptions
+): Promise<AgentId[]> {
+  if (opts.targets && opts.targets.length > 0) return opts.targets;
+
+  const detected = detectAgents(cwd);
+  const detectedIds = detected.filter((a) => a.detected).map((a) => a.id);
+
+  if (opts.interactive && stdinIsInteractive()) {
+    return promptForAgents(detected, detectedIds);
+  }
+
+  return detectedIds.length > 0 ? detectedIds : ["claude"];
+}
+
+async function promptForAgents(
+  detected: ReturnType<typeof detectAgents>,
+  defaults: AgentId[]
+): Promise<AgentId[]> {
+  const fallback: AgentId[] = defaults.length > 0 ? defaults : ["claude"];
+
+  console.log("Which assistant(s) should Mink work with?");
+  detected.forEach((a, i) => {
+    const tag = a.detected ? `  (detected — ${a.signals.join(", ")})` : "";
+    console.log(`  ${i + 1}) ${a.label}${tag}`);
+  });
+
+  const answer = (
+    await ask(
+      `Enter numbers (comma-separated), 'a' for all [default: ${fallback.join(", ")}]: `
+    )
+  )
+    .trim()
+    .toLowerCase();
+
+  if (answer === "") return fallback;
+  if (answer === "a" || answer === "all") return AGENTS.map((a) => a.id);
+
+  const picked = answer
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n >= 1 && n <= detected.length)
+    .map((n) => detected[n - 1].id);
+
+  return picked.length > 0 ? picked : fallback;
+}
+
 function isExistingInstallation(cwd: string): boolean {
   const dir = projectDir(cwd);
   if (!existsSync(dir)) return false;
   return existsSync(join(dir, "file-index.json"));
 }
 
-export async function init(cwd: string): Promise<void> {
+export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
   const runtime = detectRuntime();
   const cliPath = resolveCliPath();
-  const hooks = buildHooksConfig(cliPath);
-  const settingsPath = resolve(cwd, ".claude", "settings.json");
   const dir = projectDir(cwd);
   const upgrading = isExistingInstallation(cwd);
 
@@ -189,8 +269,25 @@ export async function init(cwd: string): Promise<void> {
     console.log(`  backup: ${backupName}`);
   }
 
-  mergeHooksIntoSettings(settingsPath, hooks);
-  const rulePath = writeMinkRule(cwd);
+  const targets = await resolveTargets(cwd, opts);
+
+  // Wire each selected host. Each installer is idempotent — re-running replaces
+  // Mink's prior entries rather than duplicating them — and touches only that
+  // host's configuration.
+  const wired: Record<string, string[]> = {};
+  for (const target of targets) {
+    if (target === "claude") {
+      const { settingsPath, rulePath } = installClaude(cwd, cliPath);
+      wired.claude = [`hooks: ${settingsPath}`, `rule:  ${rulePath}`];
+    } else if (target === "pi") {
+      const r = installPi(cwd, cliPath);
+      wired.pi = [
+        `extension: ${r.extensionPath}`,
+        `guidance:  ${r.guidancePath}`,
+        ...(r.notePath ? [`note skill: ${r.notePath}`] : []),
+      ];
+    }
+  }
 
   mkdirSync(dir, { recursive: true });
 
@@ -213,6 +310,13 @@ export async function init(cwd: string): Promise<void> {
     !Array.isArray(existingMeta.pathsByDevice)
       ? (existingMeta.pathsByDevice as Record<string, string>)
       : {};
+  // Record the set of wired hosts as the authoritative source of truth, unioned
+  // with any previously wired host so a single-target re-init never silently
+  // unwires the other.
+  const priorAgents = Array.isArray(existingMeta?.agents)
+    ? (existingMeta!.agents as string[])
+    : [];
+  const agents = Array.from(new Set([...priorAgents, ...targets]));
   atomicWriteJson(metaPath, {
     ...(existingMeta ?? {}),
     cwd,
@@ -220,21 +324,30 @@ export async function init(cwd: string): Promise<void> {
     initTimestamp: existingMeta?.initTimestamp ?? new Date().toISOString(),
     version: "0.1.0",
     pathsByDevice: { ...existingPathsByDevice, [deviceId]: cwd },
+    agents,
     ...(isNotesProject ? { projectType: "notes" } : {}),
   });
+
+  const printWiring = () => {
+    for (const id of Object.keys(wired)) {
+      const label = AGENTS.find((a) => a.id === id)?.label ?? id;
+      console.log(`  ${label}:`);
+      for (const line of wired[id]) console.log(`    ${line}`);
+    }
+  };
 
   if (upgrading) {
     console.log(`[mink] upgrade complete`);
     console.log(`  project:  ${projectId}`);
-    console.log(`  hooks:    ${settingsPath}`);
-    console.log(`  rule:     ${rulePath}`);
+    console.log(`  agents:   ${agents.join(", ")}`);
+    printWiring();
   } else {
     console.log(`[mink] initialized`);
     console.log(`  project:  ${projectId} (${identity.source})`);
     console.log(`  state:    ${dir}`);
     console.log(`  runtime:  ${runtime}`);
-    console.log(`  hooks:    ${settingsPath}`);
-    console.log(`  rule:     ${rulePath}`);
+    console.log(`  agents:   ${agents.join(", ")}`);
+    printWiring();
   }
 
   // Surface a one-time hint when the project is in a git repo with no remote
