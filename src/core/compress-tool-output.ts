@@ -3,7 +3,7 @@
 // replacement text to emit, or null to pass the original through unchanged.
 //
 // Invariants:
-// - Disabled by default (config gate) → no-op.
+// - Enabled by default; the config gate still allows opt-out → no-op when off.
 // - Reversible or nothing: the original is stored BEFORE we return a compressed
 //   result; if storage fails we pass the original through, so a compressed
 //   result is never shown without a retrievable original (spec 22 edge case).

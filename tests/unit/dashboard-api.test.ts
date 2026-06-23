@@ -354,9 +354,9 @@ describe("loadCompressionPanel (DB-backed, spec 22 phase 4)", () => {
     try { rmSync(cwd, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
-  test("empty project returns a zeroed, disabled-by-default payload", () => {
+  test("empty project returns a zeroed, enabled-by-default payload", () => {
     const panel = loadCompressionPanel(cwd);
-    expect(panel.enabled).toBe(false); // compression.enabled default
+    expect(panel.enabled).toBe(true); // compression.enabled default
     expect(panel.lifetime.totalEvents).toBe(0);
     expect(panel.arms.compressed.events).toBe(0);
     expect(panel.byKind).toEqual([]);

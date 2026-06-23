@@ -2,9 +2,8 @@
 //
 // This module is pure: it reads config and makes the eligibility / holdout /
 // min-savings decisions. It never touches the database or the tool payload, so
-// it is trivially testable. Phase 2 wires the actual compressors and the
-// reversible cache on top of these decisions; Phase 1 ships the measurement
-// instrument and leaves `enabled` off by default.
+// it is trivially testable. Compression is enabled by default; users opt out
+// with `mink config set compression.enabled false`.
 
 import { resolveConfigValue } from "./global-config";
 import type { ConfigKey } from "../types/config";

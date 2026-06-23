@@ -108,7 +108,7 @@ export function buildHooksConfig(cliPath: string): HooksConfig {
       { matcher: "Read", hooks: hook(`${prefix} post-read`) },
       { matcher: "Edit", hooks: hook(`${prefix} post-write`) },
       { matcher: "Write", hooks: hook(`${prefix} post-write`) },
-      // Tool-output compression (spec 22) — a no-op until enabled via config.
+      // Tool-output compression (spec 22) — on by default; a no-op when disabled via config.
       { matcher: "Bash", hooks: hook(`${prefix} post-tool`) },
       { matcher: "Grep", hooks: hook(`${prefix} post-tool`) },
     ],
