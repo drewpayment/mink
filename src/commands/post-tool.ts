@@ -1,4 +1,4 @@
-// Generic PostToolUse compression hook (spec 21) for tools that produce large,
+// Generic PostToolUse compression hook (spec 22) for tools that produce large,
 // non-file output — Bash, Grep/Glob, and MCP tools. The Read tool is handled by
 // post-read (which has the on-disk content and ranged-read awareness); this hook
 // compresses the payload text directly.

@@ -158,7 +158,7 @@ describe("hook-contract e2e", () => {
     expect(events).toEqual(["PostToolUse", "PreToolUse", "SessionStart", "Stop"]);
 
     // PreToolUse covers Read + Edit + Write; PostToolUse adds Bash + Grep for
-    // tool-output compression (spec 21).
+    // tool-output compression (spec 22).
     const pre = settings.hooks.PreToolUse.map((e) => e.matcher).sort();
     const post = settings.hooks.PostToolUse.map((e) => e.matcher).sort();
     expect(pre).toEqual(["Edit", "Read", "Write"]);
@@ -368,7 +368,7 @@ describe("hook-contract e2e", () => {
     expect(ledger.lifetime.totalReads).toBeGreaterThanOrEqual(1);
   });
 
-  // ── Tool-output compression (spec 21) ──────────────────────────────────
+  // ── Tool-output compression (spec 22) ──────────────────────────────────
 
   test("PostToolUse/Read compresses a large read and mink retrieve returns the original", async () => {
     const COMPRESS_ENV = {

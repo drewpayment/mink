@@ -129,7 +129,7 @@ The following tests were conspicuously absent. Each represents a behavior that w
 | DASH5 | Search/filter in file index and bug log panels | Interaction correctness |
 | DASH6 | Daemon offline state displays and recovers | Connection resilience |
 
-### Tool-Output Compression Tests (spec 21)
+### Tool-Output Compression Tests (spec 22)
 
 | # | Test | Description |
 |---|------|-------------|

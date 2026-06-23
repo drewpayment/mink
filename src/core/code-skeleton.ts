@@ -1,4 +1,4 @@
-// Deterministic, dependency-free code skeleton extraction (spec 21 phase 3).
+// Deterministic, dependency-free code skeleton extraction (spec 22 phase 3).
 //
 // Produces a structural outline of source: top-level declarations and the direct
 // members of classes/interfaces, with function/method bodies elided to "{ … }".

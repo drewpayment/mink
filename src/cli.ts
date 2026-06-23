@@ -16,8 +16,24 @@ switch (command) {
     break;
 
   case "init": {
-    const { init } = await import("./commands/init");
-    await init(cwd);
+    const { init, resolveTargetsFromFlag } = await import("./commands/init");
+    const args = process.argv.slice(3);
+    const agentFlagIndex = args.findIndex(
+      (a) => a === "--agent" || a.startsWith("--agent=")
+    );
+    let agentValue: string | undefined;
+    if (agentFlagIndex !== -1) {
+      const a = args[agentFlagIndex];
+      agentValue = a.includes("=") ? a.split("=").slice(1).join("=") : args[agentFlagIndex + 1];
+    }
+    const yes = args.includes("--yes") || args.includes("-y");
+    const targets = agentValue ? resolveTargetsFromFlag(agentValue) : undefined;
+    if (agentValue && (!targets || targets.length === 0)) {
+      console.error(`[mink] unknown --agent value: ${agentValue}`);
+      console.error("  Valid: claude, pi, all (or a comma-separated list)");
+      process.exit(1);
+    }
+    await init(cwd, { targets, interactive: !yes });
     break;
   }
 
@@ -233,7 +249,8 @@ switch (command) {
     console.log("Usage: mink <command> [options]");
     console.log();
     console.log("Commands:");
-    console.log("  init                    Initialize Mink in the current project");
+    console.log("  init [--agent X] [--yes] Initialize Mink in the current project");
+    console.log("                          --agent claude|pi|all (default: detect & prompt)");
     console.log("  status                  Display project health at a glance");
     console.log("  scan [--check]          Force a full file index rescan");
     console.log("  config [key] [value]    Manage global user settings");
@@ -275,7 +292,7 @@ switch (command) {
     console.log("  restore [backup]        Restore state from a backup");
     console.log("  bug search <term>       Search the bug log");
     console.log("  detect-waste            Detect and flag wasteful patterns");
-    console.log("  retrieve <token>        Return a compressed tool output's original (spec 21)");
+    console.log("  retrieve <token>        Return a compressed tool output's original (spec 22)");
     console.log("  reflect                 Generate learning memory reflections");
     console.log("  designqc [target]       Capture design screenshots (spec 13)");
     console.log("  framework-advisor       Generate framework advisor knowledge file (spec 14)");
@@ -285,7 +302,7 @@ switch (command) {
     console.log("  session-stop            Finalize session and log data");
     console.log("  pre-read / post-read    File read hooks");
     console.log("  pre-write / post-write  File write hooks");
-    console.log("  post-tool               Tool-output compression hook (Bash/Grep/MCP, spec 21)");
+    console.log("  post-tool               Tool-output compression hook (Bash/Grep/MCP, spec 22)");
     break;
 
   default:

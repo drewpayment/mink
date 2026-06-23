@@ -1,4 +1,4 @@
-// Tool-output compression — configuration and decision logic (spec 21).
+// Tool-output compression — configuration and decision logic (spec 22).
 //
 // This module is pure: it reads config and makes the eligibility / holdout /
 // min-savings decisions. It never touches the database or the tool payload, so
@@ -35,13 +35,13 @@ export function loadCompressionConfig(): CompressionConfig {
 }
 
 // An output is eligible for compression only once it crosses the size threshold;
-// small outputs are never touched (spec 21 §Eligibility).
+// small outputs are never touched (spec 22 §Eligibility).
 export function isEligible(originalTokens: number, config: CompressionConfig): boolean {
   return config.enabled && originalTokens >= config.thresholdTokens;
 }
 
 // A compression attempt is kept only if it saves at least the configured
-// fraction of tokens; otherwise the original is used (spec 21 §Thresholds).
+// fraction of tokens; otherwise the original is used (spec 22 §Thresholds).
 export function meetsMinSavings(
   originalTokens: number,
   compressedTokens: number,
@@ -58,7 +58,7 @@ export function measuredSavings(originalTokens: number, compressedTokens: number
 
 // Deterministic FNV-1a hash → a stable fraction in [0, 1) for a given key. Used
 // so holdout selection is stable per event: the same event always lands in the
-// same arm, which keeps measurement from being double-counted (spec 21 edge
+// same arm, which keeps measurement from being double-counted (spec 22 edge
 // case "Holdout selection must be stable for a given event").
 function hashUnitInterval(key: string): number {
   let h = 0x811c9dc5;

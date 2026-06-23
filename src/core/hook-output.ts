@@ -1,4 +1,4 @@
-// Helpers for PostToolUse hooks that replace a tool's result (spec 21). The
+// Helpers for PostToolUse hooks that replace a tool's result (spec 22). The
 // replacement mechanism is Claude Code's `hookSpecificOutput.updatedToolOutput`
 // (verified against the hooks reference): whatever JSON we print to stdout here
 // substitutes the original output before the model sees it.

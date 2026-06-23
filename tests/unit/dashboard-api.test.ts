@@ -336,7 +336,7 @@ describe("file status checks", () => {
   });
 });
 
-describe("loadCompressionPanel (DB-backed, spec 21 phase 4)", () => {
+describe("loadCompressionPanel (DB-backed, spec 22 phase 4)", () => {
   let root: string;
   let cwd: string;
 

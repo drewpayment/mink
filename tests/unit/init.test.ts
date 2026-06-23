@@ -126,7 +126,7 @@ describe("buildHooksConfig", () => {
     expect(hooks.PreToolUse[2].matcher).toBe("Write");
     expect(hooks.PreToolUse[2].hooks[0].command).toContain("pre-write");
 
-    // PostToolUse: Read (post-read) + Edit/Write (post-write) + Bash/Grep (post-tool, spec 21)
+    // PostToolUse: Read (post-read) + Edit/Write (post-write) + Bash/Grep (post-tool, spec 22)
     expect(hooks.PostToolUse).toHaveLength(5);
     expect(hooks.PostToolUse[1].matcher).toBe("Edit");
     expect(hooks.PostToolUse[1].hooks[0].command).toContain("post-write");
@@ -235,7 +235,7 @@ describe("mergeHooksIntoSettings", () => {
     expect(allHooks.PreToolUse.some((e) => e.hooks[0].command.includes("pre-write"))).toBe(true);
 
     // PostToolUse: 5 entries (Read, Edit, Write, Bash, Grep) — legacy 3 replaced,
-    // spec-21 Bash/Grep added.
+    // spec-22 Bash/Grep added.
     expect(allHooks.PostToolUse).toHaveLength(5);
     expect(allHooks.PostToolUse.every((e) => e.hooks[0].command.startsWith("mink "))).toBe(true);
     expect(allHooks.PostToolUse.some((e) => e.hooks[0].command.includes("post-read"))).toBe(true);

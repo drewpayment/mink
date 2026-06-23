@@ -1,4 +1,4 @@
-// Compression pipeline orchestrator (spec 21). Ties together the config/holdout
+// Compression pipeline orchestrator (spec 22). Ties together the config/holdout
 // decisions, the pure engine, the reversible cache, and the ledger. Returns the
 // replacement text to emit, or null to pass the original through unchanged.
 //
@@ -6,7 +6,7 @@
 // - Disabled by default (config gate) → no-op.
 // - Reversible or nothing: the original is stored BEFORE we return a compressed
 //   result; if storage fails we pass the original through, so a compressed
-//   result is never shown without a retrievable original (spec 21 edge case).
+//   result is never shown without a retrievable original (spec 22 edge case).
 // - Every failure degrades to "no compression" — a hook must never throw.
 // - Holdout arms pass the original through but are still measured.
 
@@ -23,7 +23,7 @@ import { CompressionCacheRepo } from "../repositories/compression-cache-repo";
 import { TokenLedgerRepo } from "../repositories/token-ledger-repo";
 
 // Deterministic FNV-1a → hex, used as a stable per-event key so an identical
-// output always lands in the same holdout arm (spec 21 edge case).
+// output always lands in the same holdout arm (spec 22 edge case).
 function contentKey(s: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {

@@ -188,7 +188,7 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     key: "compression.enabled",
     default: "false",
     envVar: "MINK_COMPRESSION_ENABLED",
-    description: "Enable tool-output compression (spec 21). Off until inline compression ships.",
+    description: "Enable tool-output compression (spec 22). Off until inline compression ships.",
     scope: "shared",
   },
   {

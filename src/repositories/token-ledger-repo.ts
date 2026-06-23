@@ -239,7 +239,7 @@ export class TokenLedgerRepo {
     });
   }
 
-  // ── Compression measurement (spec 21) ────────────────────────────────
+  // ── Compression measurement (spec 22) ────────────────────────────────
 
   // Record one compression decision and fold it into this device's
   // compression-lifetime aggregates, transactionally so the row and the
