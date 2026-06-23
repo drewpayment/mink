@@ -232,7 +232,22 @@ function rotateLogIfNeeded(path: string): void {
 export async function runSelfUpgrade(opts: UpgradeOptions): Promise<UpgradeResult> {
   const result = await runSelfUpgradeInner(opts);
   appendLogEntry({ source: opts.source, ...result });
+  if (result.status === "upgraded") refreshHooksAfterUpgrade();
   return result;
+}
+
+// After a successful self-upgrade the running process is still the OLD code, so
+// regenerating hooks here would write stale templates. Instead spawn the
+// freshly-installed `mink` to refresh every project — it runs the NEW code and
+// stamps the new version. Best-effort: if it fails, each project's session-start
+// self-heal is the fallback. Skipped in dev mode (no global `mink` to invoke).
+function refreshHooksAfterUpgrade(): void {
+  try {
+    if (getInstallInfo().isDevMode) return;
+    spawnSync("mink", ["refresh-hooks", "--all"], { stdio: "ignore" });
+  } catch {
+    // Best-effort; session-start covers any project we miss here.
+  }
 }
 
 async function runSelfUpgradeInner(opts: UpgradeOptions): Promise<UpgradeResult> {

@@ -321,12 +321,21 @@ export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
     ? (existingMeta!.agents as string[])
     : [];
   const agents = Array.from(new Set([...priorAgents, ...targets]));
+  // Stamp the Mink version that generated these hooks so session-start (and
+  // `mink refresh-hooks`) can self-heal stale wiring after an upgrade.
+  let hooksVersion = "0.0.0";
+  try {
+    hooksVersion = require("../core/self-update").getInstallInfo().currentVersion;
+  } catch {
+    // Fall through with a sentinel; a missing/old stamp just forces one refresh.
+  }
   atomicWriteJson(metaPath, {
     ...(existingMeta ?? {}),
     cwd,
     name: basename(cwd),
     initTimestamp: existingMeta?.initTimestamp ?? new Date().toISOString(),
     version: "0.1.0",
+    hooksVersion,
     pathsByDevice: { ...existingPathsByDevice, [deviceId]: cwd },
     agents,
     ...(isNotesProject ? { projectType: "notes" } : {}),

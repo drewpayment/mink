@@ -75,6 +75,12 @@ switch (command) {
     break;
   }
 
+  case "refresh-hooks": {
+    const { refreshHooks } = await import("./commands/refresh-hooks");
+    refreshHooks(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "pre-write": {
     const { preWrite } = await import("./commands/pre-write");
     await preWrite(cwd);
@@ -251,6 +257,7 @@ switch (command) {
     console.log("Commands:");
     console.log("  init [--agent X] [--yes] Initialize Mink in the current project");
     console.log("                          --agent claude|pi|all (default: detect & prompt)");
+    console.log("  refresh-hooks [--all]   Regenerate hook wiring after an upgrade (--all: every project)");
     console.log("  status                  Display project health at a glance");
     console.log("  scan [--check]          Force a full file index rescan");
     console.log("  config [key] [value]    Manage global user settings");
