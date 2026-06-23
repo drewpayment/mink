@@ -25,7 +25,7 @@ export const NAV: NavGroup[] = [
   {
     group: "Overview",
     items: [
-      { id: "sessions", href: "/overview", label: "Sessions",      icon: "activity", showDot: true },
+      { id: "overview", href: "/overview", label: "Overview",      icon: "activity", showDot: true },
       { id: "activity", href: "/activity", label: "Activity log",  icon: "pulse" },
       { id: "tokens",   href: "/tokens",   label: "Token ledger",  icon: "chart" },
       { id: "compression", href: "/compression", label: "Compression", icon: "chart" },
@@ -71,7 +71,7 @@ export function crumbFor(pathname: string): { group: string; label: string } {
       if (match) return { group: g.group, label: it.label };
     }
   }
-  return { group: "Overview", label: "Sessions" };
+  return { group: "Overview", label: "Overview" };
 }
 
 export function Sidebar() {
