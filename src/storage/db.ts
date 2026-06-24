@@ -6,9 +6,9 @@
 // importer runs (see `migrate-json.ts`). The importer is idempotent — once
 // `meta.migrated_from_json_at` is set, it returns immediately.
 
-import { mkdirSync } from "fs";
-import { dirname } from "path";
-import { projectDbPath } from "../core/paths";
+import { mkdirSync, readdirSync, statSync } from "fs";
+import { dirname, join } from "path";
+import { minkRoot, projectDbPath } from "../core/paths";
 import { openDriver, type DbDriver } from "./driver";
 import { applySchema } from "./schema";
 import { migrateJsonIfNeeded } from "./migrate-json";
@@ -118,4 +118,86 @@ export function checkpointAndClose(cwd: string): void {
   }
   entry.closed = true;
   handles.delete(path);
+}
+
+// Checkpoint and close EVERY cached handle in this process. Called before a
+// sync touches the working tree: an open handle keeps recent writes in the
+// gitignored mink.db-wal sidecar, and SQLite can auto-checkpoint (rewriting
+// pages in the main mink.db) at any moment. If `git add` reads mink.db during
+// that checkpoint it captures a torn, corrupt file. Closing first flushes the
+// WAL into the main file and removes the sidecars, so what git sees is a
+// single self-contained, consistent database.
+export function checkpointAndCloseAll(): void {
+  for (const [path, entry] of handles) {
+    if (entry.closed) continue;
+    try {
+      entry.driver.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    } catch {
+      // best effort
+    }
+    try {
+      entry.driver.close();
+    } catch {
+      // best effort
+    }
+    entry.closed = true;
+    handles.delete(path);
+  }
+}
+
+// Enumerate every on-disk project database (~/.mink/projects/*/mink.db).
+// Used by sync to flush and integrity-check each DB before git stages it.
+export function listProjectDbPaths(): string[] {
+  const projectsDir = join(minkRoot(), "projects");
+  let names: string[];
+  try {
+    names = readdirSync(projectsDir);
+  } catch {
+    return [];
+  }
+  const paths: string[] = [];
+  for (const name of names) {
+    const dbPath = join(projectsDir, name, "mink.db");
+    try {
+      if (statSync(dbPath).isFile()) paths.push(dbPath);
+    } catch {
+      // no database in this project directory
+    }
+  }
+  return paths;
+}
+
+// Flush every on-disk project DB's WAL into its main file and verify each one
+// is structurally sound, returning the paths that failed the check. Opening a
+// fresh connection and running `wal_checkpoint(TRUNCATE)` makes the main file
+// self-contained (any committed frames sitting in a sibling's WAL are folded
+// in, since the WAL is shared across connections). `quick_check` then detects
+// page-level corruption — exactly what a torn sync write produces — without
+// the full per-row index scan of `integrity_check`. Callers keep the corrupt
+// paths out of the commit so a local corruption never propagates to other
+// devices.
+export function checkpointAndVerifyProjectDbs(): { corrupt: string[] } {
+  const corrupt: string[] = [];
+  for (const path of listProjectDbPaths()) {
+    let driver: DbDriver | null = null;
+    try {
+      driver = openDriver(path);
+      driver.exec("PRAGMA busy_timeout = 5000");
+      driver.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      const rows = driver.pragma("quick_check") as Array<Record<string, unknown>>;
+      const first = rows && rows.length > 0 ? Object.values(rows[0])[0] : undefined;
+      if (first !== "ok") corrupt.push(path);
+    } catch {
+      // Could not even open/checkpoint it — treat as corrupt so it stays out
+      // of the commit.
+      corrupt.push(path);
+    } finally {
+      try {
+        driver?.close();
+      } catch {
+        // best effort
+      }
+    }
+  }
+  return { corrupt };
 }
