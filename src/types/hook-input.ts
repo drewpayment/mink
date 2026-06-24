@@ -19,6 +19,10 @@ export interface PostToolUseInput {
     // Edit tool
     old_string?: string;
     new_string?: string;
+    // Read tool — present for ranged reads; their output is a slice, so we
+    // don't substitute a whole-file summary for them (spec 22 edge case).
+    offset?: number;
+    limit?: number;
   };
   // Legacy / older hook payload shape — kept for backward compatibility.
   tool_output?: {

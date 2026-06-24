@@ -41,6 +41,17 @@ export function sessionStart(cwd: string): void {
     // Migration is best-effort; never block session-start
   }
 
+  // Self-heal stale hook wiring after a Mink upgrade. Regenerates this project's
+  // configured hooks (Claude settings, Pi extension) when the generating version
+  // changed, so a `mink upgrade` never leaves the user re-running `mink init`.
+  // Idempotent, version-gated, and silent — never blocks session-start.
+  try {
+    const { refreshHooksIfStale } = require("../core/hook-refresh");
+    refreshHooksIfStale(cwd);
+  } catch {
+    // Never crash hooks
+  }
+
   // Sync pull before session begins (if enabled)
   try {
     const { isSyncInitialized, syncPull } = require("../core/sync");

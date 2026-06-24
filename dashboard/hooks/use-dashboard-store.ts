@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { OverviewPayload, TokenLedgerPayload, FileIndexPayload, DesignImagePayload, ConfigPanelPayload, SyncPanelPayload, ChannelPanelPayload, WikiPanelPayload, WikiNotePayload } from "@mink/types/dashboard";
+import type { OverviewPayload, TokenLedgerPayload, CompressionPayload, FileIndexPayload, DesignImagePayload, ConfigPanelPayload, SyncPanelPayload, ChannelPanelPayload, WikiPanelPayload, WikiNotePayload } from "@mink/types/dashboard";
 import type { LearningMemory } from "@mink/types/learning-memory";
 import type { BugEntry } from "@mink/types/bug-memory";
 import type { WasteFlag } from "@mink/types/waste-detection";
@@ -20,6 +20,7 @@ interface DashboardState {
   activeProjectId: string | null;
   overview: OverviewPayload | null;
   ledger: TokenLedgerPayload | null;
+  compression: CompressionPayload | null;
   fileIndex: FileIndexPayload | null;
   tasks: TaskRunRecord[];
   taskDefinitions: TaskDefinition[];
@@ -41,6 +42,7 @@ interface DashboardState {
   setActiveProject: (id: string) => void;
   setOverview: (data: OverviewPayload) => void;
   setLedger: (data: TokenLedgerPayload) => void;
+  setCompression: (data: CompressionPayload) => void;
   setFileIndex: (data: FileIndexPayload) => void;
   setScheduler: (tasks: TaskRunRecord[], definitions: TaskDefinition[], deadLetters: DeadLetterEntry[]) => void;
   setHealth: (health: { uptimeMs: number } | null) => void;
@@ -62,6 +64,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   activeProjectId: null,
   overview: null,
   ledger: null,
+  compression: null,
   fileIndex: null,
   tasks: [],
   taskDefinitions: [],
@@ -85,6 +88,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
       activeProjectId: id,
       overview: null,
       ledger: null,
+      compression: null,
       fileIndex: null,
       tasks: [],
       taskDefinitions: [],
@@ -98,6 +102,7 @@ export const useDashboardStore = create<DashboardState>((set) => ({
     }),
   setOverview: (data) => set({ overview: data }),
   setLedger: (data) => set({ ledger: data, wasteFlags: data.wasteFlags ?? [] }),
+  setCompression: (data) => set({ compression: data }),
   setFileIndex: (data) => set({ fileIndex: data }),
   setScheduler: (tasks, definitions, deadLetters) => set({ tasks, taskDefinitions: definitions, deadLetters }),
   setHealth: (health) => set({ health }),

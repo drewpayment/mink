@@ -5,6 +5,7 @@ import { useDashboardStore, type ActionLogRow } from "./use-dashboard-store";
 import {
   fetchOverview,
   fetchTokenLedger,
+  fetchCompression,
   fetchFileIndex,
   fetchScheduler,
   fetchLearningMemory,
@@ -68,6 +69,7 @@ export function fetchAllData() {
     .catch(console.warn);
 
   fetchTokenLedger(pid).then(store.setLedger).catch(console.warn);
+  fetchCompression(pid).then(store.setCompression).catch(console.warn);
   fetchFileIndex(pid).then(store.setFileIndex).catch(console.warn);
   fetchScheduler(pid).then(applySchedulerData).catch(console.warn);
   fetchLearningMemory(pid).then(store.setLearningMemory).catch(console.warn);
@@ -104,6 +106,8 @@ function handleEvent(payload: { fileId?: string; type?: string; projectId?: stri
   switch (fileId) {
     case "token-ledger":
       fetchTokenLedger(pid).then(store.setLedger).catch(console.warn);
+      // Compression metrics share mink.db with the ledger, so refresh both.
+      fetchCompression(pid).then(store.setCompression).catch(console.warn);
       break;
     case "file-index":
       fetchFileIndex(pid).then(store.setFileIndex).catch(console.warn);

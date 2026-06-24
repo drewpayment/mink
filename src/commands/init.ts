@@ -108,6 +108,9 @@ export function buildHooksConfig(cliPath: string): HooksConfig {
       { matcher: "Read", hooks: hook(`${prefix} post-read`) },
       { matcher: "Edit", hooks: hook(`${prefix} post-write`) },
       { matcher: "Write", hooks: hook(`${prefix} post-write`) },
+      // Tool-output compression (spec 22) — on by default; a no-op when disabled via config.
+      { matcher: "Bash", hooks: hook(`${prefix} post-tool`) },
+      { matcher: "Grep", hooks: hook(`${prefix} post-tool`) },
     ],
   };
 }
@@ -119,7 +122,8 @@ function isMinkCommand(cmd: string): boolean {
     cmd.includes("pre-read") ||
     cmd.includes("post-read") ||
     cmd.includes("pre-write") ||
-    cmd.includes("post-write");
+    cmd.includes("post-write") ||
+    cmd.includes("post-tool");
   if (!hasMinkSubcommand) return false;
   // Match the new bin-shim format (`mink <subcmd>` or `/abs/path/to/mink <subcmd>`)
   // as well as legacy formats (`bun run .../cli.js ...`, `node .../cli.js ...`,
@@ -317,12 +321,21 @@ export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
     ? (existingMeta!.agents as string[])
     : [];
   const agents = Array.from(new Set([...priorAgents, ...targets]));
+  // Stamp the Mink version that generated these hooks so session-start (and
+  // `mink refresh-hooks`) can self-heal stale wiring after an upgrade.
+  let hooksVersion = "0.0.0";
+  try {
+    hooksVersion = require("../core/self-update").getInstallInfo().currentVersion;
+  } catch {
+    // Fall through with a sentinel; a missing/old stamp just forces one refresh.
+  }
   atomicWriteJson(metaPath, {
     ...(existingMeta ?? {}),
     cwd,
     name: basename(cwd),
     initTimestamp: existingMeta?.initTimestamp ?? new Date().toISOString(),
     version: "0.1.0",
+    hooksVersion,
     pathsByDevice: { ...existingPathsByDevice, [deviceId]: cwd },
     agents,
     ...(isNotesProject ? { projectType: "notes" } : {}),

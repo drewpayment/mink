@@ -105,6 +105,19 @@ describe("dashboard server", () => {
     expect(data.wasteFlags).toBeDefined();
   });
 
+  test("GET /api/compression returns the compression payload shape", async () => {
+    const res = await fetch(srv.url + "/api/compression");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(typeof data.enabled).toBe("boolean");
+    expect(data.lifetime).toBeDefined();
+    expect(data.lifetime.totalEvents).toBeDefined();
+    expect(data.arms?.compressed).toBeDefined();
+    expect(Array.isArray(data.byKind)).toBe(true);
+    expect(Array.isArray(data.byTool)).toBe(true);
+    expect(Array.isArray(data.recent)).toBe(true);
+  });
+
   test("GET /api/file-index returns entries as array", async () => {
     const res = await fetch(srv.url + "/api/file-index");
     expect(res.status).toBe(200);

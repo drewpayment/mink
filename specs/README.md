@@ -31,12 +31,14 @@ Mink is a hidden presence that moves alongside the developer. It has two mission
 | 19 | [CLI Self-Update](./19-self-update.md) | Automation |
 | 20 | [Stable Project Identity](./20-stable-project-identity.md) | Core |
 | 21 | [Multi-Agent Adapter](./21-multi-agent-adapter.md) | Core |
+| 22 | [Tool-Output Compression](./22-tool-output-compression.md) | Hooks |
 
 ## Active Delivery Plans
 
 Transient, implementation-oriented plans — delete once delivered.
 
 - [PLAN.md](./PLAN.md) — Wiring PR #39's preview panels (wiki, capture, sync, discord, daemon, config) to real backends.
+- [PLAN-tool-output-compression.md](./PLAN-tool-output-compression.md) — Delivering spec 22 (tool-output compression) in three phases: measurement, inline compression + reversible cache, structural compressors.
 
 ## Conventions
 

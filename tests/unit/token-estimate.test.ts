@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { estimateTokens } from "../../src/core/token-estimate";
+import { estimateTokens, countTokens } from "../../src/core/token-estimate";
 
 describe("estimateTokens", () => {
   test("uses code ratio (3.5) for .ts files", () => {
@@ -69,5 +69,45 @@ describe("estimateTokens", () => {
   test("handles file with no extension using default ratio", () => {
     const content = "a".repeat(375);
     expect(estimateTokens(content, "Makefile")).toBe(100);
+  });
+});
+
+describe("countTokens", () => {
+  test("returns 0 for empty content", () => {
+    expect(countTokens("")).toBe(0);
+  });
+
+  test("is deterministic for the same input", () => {
+    const text = "const x = compress(payload);\nreturn x;";
+    expect(countTokens(text)).toBe(countTokens(text));
+  });
+
+  test("counts a single word as at least one token", () => {
+    expect(countTokens("hello")).toBeGreaterThanOrEqual(1);
+  });
+
+  test("splits long words into sub-word tokens (~4 chars each)", () => {
+    // 16 letters → ceil(16/4) = 4
+    expect(countTokens("abcdefghijklmnop")).toBe(4);
+  });
+
+  test("counts each newline as a token", () => {
+    expect(countTokens("\n\n\n")).toBe(3);
+  });
+
+  test("does not charge for spaces between words", () => {
+    // two 4-char words: 1 + 1 tokens, the space costs nothing
+    expect(countTokens("word word")).toBe(2);
+  });
+
+  test("counts punctuation as its own token", () => {
+    // "a" (1) + "=" (1) + "1" (1)
+    expect(countTokens("a=1")).toBe(3);
+  });
+
+  test("is monotonic — more content never decreases the count", () => {
+    const a = countTokens("function add(a, b) { return a + b; }");
+    const b = countTokens("function add(a, b) { return a + b; } // extra trailing comment");
+    expect(b).toBeGreaterThanOrEqual(a);
   });
 });

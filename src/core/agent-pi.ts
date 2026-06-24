@@ -50,10 +50,15 @@ export function buildPiExtension(cliPath: string): string {
 // top-level oldText,newText). tool_call/tool_result events expose toolName,
 // toolCallId, input; tool_result also exposes content (a content-block array),
 // details, isError. Advisories are surfaced by returning a modified result from
-// the tool_result handler — the documented mechanism. pi.exec has no stdin, so
-// the canonical payload is piped to \`mink\` via a spawned child process. Every
-// host-API access is defensive: the adapter never throws into Pi or blocks a
-// tool — a failure degrades to "no advisory".
+// the tool_result handler — the documented mechanism; that same return path
+// SUBSTITUTES a reversible compressed result whenever a hook prints Claude
+// Code's { hookSpecificOutput: { updatedToolOutput } } envelope on stdout
+// (tool-output compression, spec 22 — Bash/Grep/Glob/MCP via post-tool, large
+// whole-file reads via post-read; the original is retrievable with
+// \`mink retrieve\`). pi.exec has no stdin, so the canonical payload is piped to
+// \`mink\` via a spawned child process. Every host-API access is defensive: the
+// adapter never throws into Pi or blocks a tool — a failure degrades to "no
+// advisory" and the original, uncompressed output.
 
 import { spawn } from "node:child_process";
 
@@ -61,37 +66,46 @@ const MINK_CMD = ${JSON.stringify(cmd)};
 const MINK_BASE_ARGS = ${baseArgs};
 const TIMEOUT_MS = 5000;
 
+// Spawn a \`mink\` subcommand, pipe the canonical payload to its stdin, and
+// collect BOTH streams: stdout carries a compression replacement
+// (Claude Code's { hookSpecificOutput: { updatedToolOutput } } envelope) and
+// stderr carries human-visible advisories. Always resolves to { out, err } —
+// any failure or timeout degrades to empty strings, never a rejection.
 function runMink(sub, payload, cwd) {
   return new Promise((res) => {
     let done = false;
-    const finish = (out) => {
+    const finish = (out, err) => {
       if (done) return;
       done = true;
-      res(out);
+      res({ out: (out || "").trim(), err: (err || "").trim() });
     };
     try {
       const child = spawn(MINK_CMD, [...MINK_BASE_ARGS, sub], {
         cwd,
-        stdio: ["pipe", "ignore", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
       });
+      let stdout = "";
       let stderr = "";
+      child.stdout?.on("data", (d) => {
+        stdout += d.toString();
+      });
       child.stderr?.on("data", (d) => {
         stderr += d.toString();
       });
-      child.on("error", () => finish(""));
-      child.on("close", () => finish(stderr.trim()));
+      child.on("error", () => finish("", ""));
+      child.on("close", () => finish(stdout, stderr));
       const timer = setTimeout(() => {
         try {
           child.kill();
         } catch {}
-        finish("");
+        finish("", "");
       }, TIMEOUT_MS);
       timer.unref?.();
       try {
         child.stdin?.end(payload ? JSON.stringify(payload) : "");
       } catch {}
     } catch {
-      finish("");
+      finish("", "");
     }
   });
 }
@@ -134,6 +148,38 @@ function resultContent(event) {
       .join("\\n");
     return text || null;
   }
+  return null;
+}
+
+// Parse a hook's stdout for a reversible compression replacement. Mink's
+// post-read/post-tool hooks print Claude Code's
+// { hookSpecificOutput: { updatedToolOutput } } envelope on stdout; under Pi we
+// read it here and substitute it into the tool result. Empty/non-JSON → null.
+function parseReplacement(out) {
+  if (!out) return null;
+  try {
+    const j = JSON.parse(out);
+    const r = j?.hookSpecificOutput?.updatedToolOutput;
+    return typeof r === "string" ? r : null;
+  } catch {
+    return null;
+  }
+}
+
+// Map a Pi non-file tool to the canonical Mink tool name the post-tool
+// compression hook accepts (Bash/Grep/Glob, or an mcp__* passthrough). Pi's
+// built-in tool names aren't all pinned, so map common shell/search aliases and
+// return null for anything Mink doesn't compress — those pass through untouched.
+function compressibleName(event) {
+  const raw = String(event?.toolName ?? event?.tool ?? event?.name ?? "");
+  const name = raw.toLowerCase();
+  if (name.startsWith("mcp__")) return raw;
+  if (name.startsWith("mcp")) return "mcp__" + raw;
+  if (name === "bash" || name === "shell" || name === "exec" || name === "command" || name === "run")
+    return "Bash";
+  if (name === "grep" || name === "search" || name === "ripgrep" || name === "rg")
+    return "Grep";
+  if (name === "glob" || name === "find") return "Glob";
   return null;
 }
 
@@ -194,32 +240,54 @@ export default function (pi) {
     const info = toolInfo(event);
     if (!info) return;
     const { sub, payload } = prePayload(info);
-    const advisory = await runMink(sub, payload, cwd);
-    if (advisory) pending.set(keyOf(event), advisory);
+    const { err } = await runMink(sub, payload, cwd);
+    if (err) pending.set(keyOf(event), err);
   });
+
+  // Build the Pi tool_result return value. A compression \`replacement\` (a hook's
+  // stdout) SUBSTITUTES the tool output; \`advisoryParts\` (hook stderr) are
+  // appended as an extra text block — the parity of Claude feeding hook stderr
+  // back. Returns undefined when nothing changes, leaving Pi's result intact.
+  const buildResult = (event, replacement, advisoryParts) => {
+    const advisory = advisoryParts.filter(Boolean).join("\\n");
+    if (replacement == null && !advisory) return undefined;
+    const base =
+      replacement != null
+        ? [{ type: "text", text: replacement }]
+        : Array.isArray(event.content)
+          ? event.content
+          : typeof event.content === "string"
+            ? [{ type: "text", text: event.content }]
+            : [];
+    const content = advisory ? [...base, { type: "text", text: advisory }] : base;
+    return { content, details: event.details, isError: event.isError };
+  };
 
   pi.on?.("tool_result", async (event) => {
     const info = toolInfo(event);
-    if (!info) return;
-    const { sub, payload } = postPayload(info, resultContent(event));
-    const post = await runMink(sub, payload, cwd);
-    const pre = pending.get(keyOf(event)) ?? "";
-    pending.delete(keyOf(event));
-    const advisory = [pre, post].filter(Boolean).join("\\n");
-    if (!advisory) return;
+    if (info) {
+      // File ops: post-read/post-write record state; a large whole-file read may
+      // also emit a reversible compression replacement on stdout.
+      const { sub, payload } = postPayload(info, resultContent(event));
+      const post = await runMink(sub, payload, cwd);
+      const pre = pending.get(keyOf(event)) ?? "";
+      pending.delete(keyOf(event));
+      return buildResult(event, parseReplacement(post.out), [pre, post.err]);
+    }
 
-    // Surface Mink's advisory into the model's context by appending a text
-    // block to the tool result — the parity of Claude feeding hook stderr back.
-    const base = Array.isArray(event.content)
-      ? event.content
-      : typeof event.content === "string"
-        ? [{ type: "text", text: event.content }]
-        : [];
-    return {
-      content: [...base, { type: "text", text: advisory }],
-      details: event.details,
-      isError: event.isError,
-    };
+    // Non-file tools (Bash/Grep/Glob/MCP): route the output text through the
+    // post-tool compression hook and substitute its reversible replacement. The
+    // original is cached host-side, retrievable via \`mink retrieve\`.
+    const canon = compressibleName(event);
+    if (!canon) return;
+    const content = resultContent(event);
+    if (content == null) return;
+    const post = await runMink(
+      "post-tool",
+      { tool_name: canon, tool_output: { content } },
+      cwd
+    );
+    return buildResult(event, parseReplacement(post.out), [post.err]);
   });
 }
 `;
@@ -239,7 +307,8 @@ description: Mink context management is active in this project. Read this to und
 This project uses **Mink** (\`@drewpayment/mink\`) for cross-session context management.
 
 ## How it works
-- Mink runs automatically through a Pi extension at \`.pi/extensions/mink.ts\` that hooks session start/stop and every read/edit/write tool call.
+- Mink runs automatically through a Pi extension at \`.pi/extensions/mink.ts\` that hooks session start/stop and every read/edit/write tool call, plus Bash/Grep/Glob/MCP results.
+- Large tool outputs may be transparently replaced with a compact, reversible summary; if you need the full original, fetch it with \`mink retrieve <token>\` (the token appears in the summary).
 - All state lives in \`~/.mink/\` on the user's machine — **not** in this repository. Do not create or write to any in-repo state directory (no \`.wolf/\`, \`.mink/\`, etc.).
 - Read intelligence, write enforcement, bug memory, and the token ledger are handled by the extension. You do not need to manually read or update any state files.
 - Mink shares one \`~/.mink/\` state across every assistant wired to this project, so history is unified whether the user runs Pi or another assistant.

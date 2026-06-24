@@ -69,6 +69,18 @@ switch (command) {
     break;
   }
 
+  case "post-tool": {
+    const { postTool } = await import("./commands/post-tool");
+    await postTool(cwd);
+    break;
+  }
+
+  case "refresh-hooks": {
+    const { refreshHooks } = await import("./commands/refresh-hooks");
+    refreshHooks(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "pre-write": {
     const { preWrite } = await import("./commands/pre-write");
     await preWrite(cwd);
@@ -84,6 +96,12 @@ switch (command) {
   case "detect-waste": {
     const { detectWaste } = await import("./commands/detect-waste");
     detectWaste(cwd);
+    break;
+  }
+
+  case "retrieve": {
+    const { retrieve } = await import("./commands/retrieve");
+    retrieve(cwd, process.argv.slice(3));
     break;
   }
 
@@ -239,6 +257,7 @@ switch (command) {
     console.log("Commands:");
     console.log("  init [--agent X] [--yes] Initialize Mink in the current project");
     console.log("                          --agent claude|pi|all (default: detect & prompt)");
+    console.log("  refresh-hooks [--all]   Regenerate hook wiring after an upgrade (--all: every project)");
     console.log("  status                  Display project health at a glance");
     console.log("  scan [--check]          Force a full file index rescan");
     console.log("  config [key] [value]    Manage global user settings");
@@ -280,6 +299,7 @@ switch (command) {
     console.log("  restore [backup]        Restore state from a backup");
     console.log("  bug search <term>       Search the bug log");
     console.log("  detect-waste            Detect and flag wasteful patterns");
+    console.log("  retrieve <token>        Return a compressed tool output's original (spec 22)");
     console.log("  reflect                 Generate learning memory reflections");
     console.log("  designqc [target]       Capture design screenshots (spec 13)");
     console.log("  framework-advisor       Generate framework advisor knowledge file (spec 14)");
@@ -289,6 +309,7 @@ switch (command) {
     console.log("  session-stop            Finalize session and log data");
     console.log("  pre-read / post-read    File read hooks");
     console.log("  pre-write / post-write  File write hooks");
+    console.log("  post-tool               Tool-output compression hook (Bash/Grep/MCP, spec 22)");
     break;
 
   default:

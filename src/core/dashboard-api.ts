@@ -80,7 +80,10 @@ import type {
   WikiPanelPayload,
   WikiNotePayload,
   WikiTreeNode,
+  CompressionPayload,
 } from "../types/dashboard";
+import { TokenLedgerRepo } from "../repositories/token-ledger-repo";
+import { loadCompressionConfig } from "./compression";
 import { isDesignEvalReport } from "../types/design-eval";
 import type { DesignEvalReport } from "../types/design-eval";
 import type { FileIndex, FileIndexEntry } from "../types/file-index";
@@ -185,7 +188,7 @@ export function loadOverview(cwd: string): OverviewPayload {
     checkJsonFile("scheduler-manifest.json", schedulerManifestPath(cwd)),
   ];
 
-  return { project, daemon, summary, stateFiles };
+  return { project, daemon, summary, compression: ledger.compression, stateFiles };
 }
 
 export function loadTokenLedgerPanel(cwd: string): TokenLedgerPayload {
@@ -194,6 +197,22 @@ export function loadTokenLedgerPanel(cwd: string): TokenLedgerPayload {
     lifetime: ledger.lifetime,
     sessions: ledger.sessions,
     wasteFlags: ledger.wasteFlags ?? [],
+    compression: ledger.compression,
+  };
+}
+
+// Dedicated Compression panel (spec 22, phase 4). Reads the measured
+// compression aggregates, the holdout A/B split, per-kind/per-tool breakdowns,
+// and recent events, plus whether compression is currently enabled.
+export function loadCompressionPanel(cwd: string): CompressionPayload {
+  const repo = TokenLedgerRepo.for(cwd);
+  return {
+    enabled: loadCompressionConfig().enabled,
+    lifetime: repo.compressionLifetime(),
+    arms: repo.compressionArms(),
+    byKind: repo.compressionBreakdown("content_kind"),
+    byTool: repo.compressionBreakdown("tool_name"),
+    recent: repo.compressionEvents(50),
   };
 }
 

@@ -157,11 +157,12 @@ describe("hook-contract e2e", () => {
     const events = Object.keys(settings.hooks).sort();
     expect(events).toEqual(["PostToolUse", "PreToolUse", "SessionStart", "Stop"]);
 
-    // PreToolUse and PostToolUse each cover Read + Edit + Write.
+    // PreToolUse covers Read + Edit + Write; PostToolUse adds Bash + Grep for
+    // tool-output compression (spec 22).
     const pre = settings.hooks.PreToolUse.map((e) => e.matcher).sort();
     const post = settings.hooks.PostToolUse.map((e) => e.matcher).sort();
     expect(pre).toEqual(["Edit", "Read", "Write"]);
-    expect(post).toEqual(["Edit", "Read", "Write"]);
+    expect(post).toEqual(["Bash", "Edit", "Grep", "Read", "Write"]);
   });
 
   test("every registered command is shell-parseable and resolves to a real CLI subcommand", () => {
@@ -365,5 +366,63 @@ describe("hook-contract e2e", () => {
     const ledger = aggregateTokenLedger(projectCwd);
     expect(ledger.lifetime.totalSessions).toBeGreaterThanOrEqual(1);
     expect(ledger.lifetime.totalReads).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Tool-output compression (spec 22) ──────────────────────────────────
+
+  test("PostToolUse/Read compresses a large read and mink retrieve returns the original", async () => {
+    const COMPRESS_ENV = {
+      MINK_COMPRESSION_ENABLED: "true",
+      MINK_COMPRESSION_THRESHOLD_TOKENS: "50",
+      MINK_COMPRESSION_MIN_SAVINGS_RATIO: "0.25",
+      MINK_COMPRESSION_HOLDOUT_FRACTION: "0",
+      MINK_COMPRESSION_RETENTION_HOURS: "168",
+    };
+    const saved: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(COMPRESS_ENV)) {
+      saved[k] = process.env[k];
+      process.env[k] = v; // runHook spreads process.env into the child
+    }
+
+    try {
+      // A large file with one signature and a big elided body → compresses well.
+      const filePath = join(projectCwd, "src", "big.ts");
+      mkdirSync(join(projectCwd, "src"), { recursive: true });
+      const original =
+        "export function alpha() {\n" +
+        Array.from({ length: 500 }, (_, i) => `  step${i}();`).join("\n") +
+        "\n}\n";
+      writeFileSync(filePath, original);
+
+      const postReadCmd = getRegisteredCommand(settings, "PostToolUse", "Read");
+      const res = await runHook(
+        postReadCmd,
+        projectCwd,
+        JSON.stringify({ tool_name: "Read", tool_input: { file_path: filePath } }),
+        minkRoot
+      );
+      expect(res.exitCode, res.stderr).toBe(0);
+
+      // The hook emitted an updatedToolOutput replacing the read.
+      const payload = JSON.parse(res.stdout);
+      const replaced: string = payload.hookSpecificOutput.updatedToolOutput;
+      expect(replaced).toContain("structural summary");
+      expect(replaced).toContain("export function alpha");
+      expect(replaced.length).toBeLessThan(original.length);
+
+      // Extract the retrieval token and pull the byte-exact original back.
+      const token = replaced.match(/mink retrieve (mc-[0-9a-f]+)/)?.[1];
+      expect(token).toBeTruthy();
+
+      const retrieveCmd = `bun run ${CLI_TS} retrieve ${token}`;
+      const got = await runHook(retrieveCmd, projectCwd, "", minkRoot);
+      expect(got.exitCode, got.stderr).toBe(0);
+      expect(got.stdout).toBe(original);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
   });
 });

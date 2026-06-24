@@ -9,6 +9,8 @@ import { estimateTokens, isBinaryFile } from "../core/token-estimate";
 import { extractDescription } from "../core/description";
 import { createActionLogWriter } from "../core/action-log";
 import { getOrCreateDeviceId } from "../core/device";
+import { compressToolOutput } from "../core/compress-tool-output";
+import { emitUpdatedToolOutput } from "../core/hook-output";
 import type { SessionState } from "../types/session";
 import type { FileIndexEntry, IndexLookup } from "../types/file-index";
 import type { PostToolUseInput } from "../types/hook-input";
@@ -202,6 +204,22 @@ export async function postRead(cwd: string): Promise<void> {
 
     // Persist state
     atomicWriteJson(sessionPath(cwd), state);
+
+    // Tool-output compression (spec 22). Substitute a compact, reversible
+    // summary for a large whole-file read. Skipped for ranged reads (their
+    // output is only a slice) and a no-op unless compression is enabled. Uses
+    // the on-disk content as the canonical original so signature extraction
+    // works on raw source and `mink retrieve` returns the file itself.
+    const isRanged =
+      input.tool_input.offset != null || input.tool_input.limit != null;
+    if (!isRanged && content && content.length > 0) {
+      try {
+        const outcome = compressToolOutput(cwd, "Read", content, filePath);
+        if (outcome) emitUpdatedToolOutput(outcome.updatedToolOutput);
+      } catch {
+        // Compression is advisory — never break the read over it.
+      }
+    }
   } catch {
     // Never crash — exit silently
   } finally {

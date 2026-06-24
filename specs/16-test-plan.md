@@ -129,6 +129,21 @@ The following tests were conspicuously absent. Each represents a behavior that w
 | DASH5 | Search/filter in file index and bug log panels | Interaction correctness |
 | DASH6 | Daemon offline state displays and recovers | Connection resilience |
 
+### Tool-Output Compression Tests (spec 22)
+
+| # | Test | Description |
+|---|------|-------------|
+| TC1 | countTokens is deterministic and monotonic | Measurement validity rests on a stable estimator |
+| TC2 | Ledger records compressed and holdout arms; measured savings credits compressed only | Savings must be measured, not the legacy heuristic |
+| TC3 | Holdout selection is stable per event | An event must never be double-counted across arms |
+| TC4 | Cache store→get returns the byte-exact original | Reversibility is the correctness guarantee |
+| TC5 | Unknown/expired retrieval token is a graceful miss | The assistant is never stranded by an error |
+| TC6 | Each engine strategy (search/log/file/json/text) shrinks and notes omissions | Content-aware compression correctness |
+| TC7 | Engine is deterministic (identical input → identical output) | Prompt-cache stability |
+| TC8 | Code skeleton elides bodies, captures members, masks string braces | Structural summary fidelity |
+| TC9 | Orchestrator: disabled→no-op, below-threshold→pass-through, min-savings gate discards weak | Conservative-by-default behavior |
+| TC10 | E2E: large Read is compressed via updatedToolOutput and `mink retrieve` returns the original | The headline capability, end to end |
+
 ---
 
 ## Testing Strategy

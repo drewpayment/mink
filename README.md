@@ -609,6 +609,8 @@ mink upgrade --force
 
 `mink upgrade` queries the npm registry for `@drewpayment/mink@latest`, semver-compares against the running version, and runs the right install command for whichever package manager you used (`npm install -g` or `bun add -g`, auto-detected).
 
+After a successful upgrade, Mink **regenerates your project hook wiring automatically** so you never have to re-run `mink init`: it refreshes every registered project immediately, and as a fallback each project also self-heals on its next session start (the generated `.claude/`/`.pi/` files are stamped with the version that wrote them). To force a refresh yourself — e.g. for a project on another machine — run `mink refresh-hooks` (current project) or `mink refresh-hooks --all` (every project).
+
 ### Automatic updates on a schedule
 
 To have Mink upgrade itself automatically:

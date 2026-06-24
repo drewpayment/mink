@@ -41,6 +41,7 @@ export function TokenPanel() {
 
   const sessions = ledger?.sessions ?? [];
   const lt = ledger?.lifetime;
+  const measuredSavings = ledger?.compression?.totalMeasuredSavings ?? 0;
   const days = useMemo(() => groupDays(sessions, 7), [sessions]);
 
   const total7 = days.reduce((acc, d) => acc + d.value, 0);
@@ -67,8 +68,8 @@ export function TokenPanel() {
       <div className="grid g-4" style={{ marginBottom: 14 }}>
         <Kpi label="Lifetime tokens" value={formatNum(lt?.totalTokens ?? 0)} />
         <Kpi label="Lifetime reads"  value={formatNum(lt?.totalReads  ?? 0)} />
-        <Kpi label="Lifetime writes" value={formatNum(lt?.totalWrites ?? 0)} />
-        <Kpi label="Lifetime saved"  value={formatNum(lt?.totalEstimatedSavings ?? 0)} deltaTone="up" delta="▲ savings" />
+        <Kpi label="Saved · estimated" value={formatNum(lt?.totalEstimatedSavings ?? 0)} deltaTone="up" delta="▲ heuristic" />
+        <Kpi label="Saved · measured" value={formatNum(measuredSavings)} deltaTone="up" delta="▲ compression" />
       </div>
 
       <div className="grid g-2">
