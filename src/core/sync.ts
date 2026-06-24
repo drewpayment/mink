@@ -1,7 +1,11 @@
 import { existsSync, writeFileSync, readFileSync } from "fs";
-import { join } from "path";
+import { join, relative } from "path";
 import { execSync } from "child_process";
 import { minkRoot, syncVersionPath } from "./paths";
+import {
+  checkpointAndCloseAll,
+  checkpointAndVerifyProjectDbs,
+} from "../storage/db";
 import { resolveConfigValue, setConfigValue } from "./global-config";
 import { updateDeviceHeartbeat } from "./device";
 import { parkConflictingState } from "./conflict-park";
@@ -309,6 +313,14 @@ export function syncPull(
   ensureGitAttributes();
   ensureMergeDriversRegistered();
 
+  // Close every cached DB handle before git rewrites the working tree. A pull
+  // can replace mink.db (fast-forward, merge, or stash pop) while a stale
+  // mink.db-wal — gitignored, so it survives the swap — still points at the
+  // old file; the next open would replay those frames onto the new database
+  // and corrupt it. Closing first checkpoints and removes our sidecars so the
+  // incoming mink.db is opened clean.
+  checkpointAndCloseAll();
+
   try {
     // Stash any uncommitted local changes as safety net
     const status = gitSafe("status --porcelain");
@@ -369,6 +381,14 @@ export function syncPush(
     /* never crash hooks */
   }
 
+  // Make every project DB self-contained and consistent BEFORE git reads it.
+  // Closing our cached handles flushes their WAL into the main mink.db and
+  // stops a background auto-checkpoint from racing `git add` into a torn read;
+  // the verify pass folds in any shared-WAL frames and flags structurally
+  // corrupt files so we can keep them out of the commit.
+  checkpointAndCloseAll();
+  const { corrupt } = checkpointAndVerifyProjectDbs();
+
   try {
     const status = gitSafe("status --porcelain");
     const hasChanges = status !== null && status.trim().length > 0;
@@ -376,6 +396,18 @@ export function syncPush(
 
     if (hasChanges) {
       git("add -A");
+      // Never commit a corrupt database — that's how the corruption reached
+      // every other device (it gets pulled). Unstage each bad file so the
+      // last-known-good blob already on the remote stays authoritative, and
+      // tell the user to recover the local copy.
+      for (const dbPath of corrupt) {
+        const rel = relative(minkRoot(), dbPath);
+        gitSafe(`reset -- "${rel}"`);
+        onMessage(
+          `[mink] sync: ${rel} failed an integrity check and was kept out of this commit — ` +
+            `restore it with 'mink sync pull' on a healthy device, or from a backup`
+        );
+      }
       const now = new Date();
       const timestamp = now.toISOString().replace("T", " ").slice(0, 16);
       gitSafe(`commit -m "mink: sync ${timestamp}"`);
