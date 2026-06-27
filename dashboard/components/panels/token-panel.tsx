@@ -8,29 +8,35 @@ import { Bar } from "@/components/ui/bar";
 import { Btn } from "@/components/ui/btn";
 import { BarChart, type BarDatum } from "@/components/ui/bar-chart";
 import { formatNum } from "@/lib/format";
+import { useFormat } from "@/hooks/use-format";
+import type { TimezoneMode } from "@/lib/format";
 import type { LedgerSession } from "@mink/types/token-ledger";
 
-function dayKey(iso: string): string {
+function dayKey(iso: string, timezone: TimezoneMode = "local"): string {
   try {
-    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return new Date(iso).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      timeZone: timezone === "utc" ? "UTC" : undefined,
+    });
   } catch {
     return iso.slice(0, 10);
   }
 }
 
-function groupDays(sessions: LedgerSession[], windowDays = 7): BarDatum[] {
+function groupDays(sessions: LedgerSession[], timezone: TimezoneMode = "local", windowDays = 7): BarDatum[] {
   const now = Date.now();
   const dayMs = 24 * 60 * 60 * 1000;
   const buckets: Record<string, number> = {};
   const order: string[] = [];
   for (let i = windowDays - 1; i >= 0; i--) {
     const d = new Date(now - i * dayMs);
-    const key = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const key = dayKey(d.toISOString(), timezone);
     buckets[key] = 0;
     order.push(key);
   }
   for (const s of sessions) {
-    const key = dayKey(s.startTimestamp);
+    const key = dayKey(s.startTimestamp, timezone);
     if (key in buckets) buckets[key] += s.totals?.estimatedTokens ?? 0;
   }
   return order.map((label) => ({ label, value: buckets[label], color: "var(--fg-2)" }));
@@ -38,11 +44,12 @@ function groupDays(sessions: LedgerSession[], windowDays = 7): BarDatum[] {
 
 export function TokenPanel() {
   const ledger = useDashboardStore((s) => s.ledger);
+  const { formatDateTime, timezone } = useFormat();
 
   const sessions = ledger?.sessions ?? [];
   const lt = ledger?.lifetime;
   const measuredSavings = ledger?.compression?.totalMeasuredSavings ?? 0;
-  const days = useMemo(() => groupDays(sessions, 7), [sessions]);
+  const days = useMemo(() => groupDays(sessions, timezone), [sessions, timezone]);
 
   const total7 = days.reduce((acc, d) => acc + d.value, 0);
   const savings7 = sessions
@@ -129,7 +136,7 @@ export function TokenPanel() {
                 return (
                   <tr key={s.sessionId}>
                     <td className="mono">{s.sessionId}</td>
-                    <td>{s.startTimestamp ? new Date(s.startTimestamp).toLocaleString() : "—"}</td>
+                    <td>{s.startTimestamp ? formatDateTime(s.startTimestamp) : "—"}</td>
                     <td className="right num">{s.totals?.readCount ?? 0}</td>
                     <td className="right num">{s.totals?.writeCount ?? 0}</td>
                     <td className="right num">{formatNum(tokens)}</td>

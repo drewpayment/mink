@@ -6,7 +6,8 @@ import { Kpi } from "@/components/ui/kpi";
 import { Chip } from "@/components/ui/chip";
 import { Bar } from "@/components/ui/bar";
 import { Btn } from "@/components/ui/btn";
-import { formatNum, formatDateTime } from "@/lib/format";
+import { formatNum } from "@/lib/format";
+import { useFormat } from "@/hooks/use-format";
 import type { WasteFlag, WastePattern } from "@mink/types/waste-detection";
 
 // Pattern severity mapping — impact heuristic based on tokens wasted.
@@ -27,6 +28,7 @@ function patternLabel(p: WastePattern): string {
 
 export function WastePanel() {
   const flags = useDashboardStore((s) => s.wasteFlags);
+  const { formatTime } = useFormat();
 
   const total = flags.reduce((acc, f) => acc + f.estimatedTokensWasted, 0);
   const counts = flags.reduce(
@@ -54,7 +56,7 @@ export function WastePanel() {
         <Kpi label="Wasted (tok)" value={formatNum(total)} />
         <Kpi label="Patterns" value={flags.length} delta={`${counts.high} high · ${counts.med} med · ${counts.low} low`} />
         <Kpi label="Est. $ lost" value={`$${(total / 1_000_000 * 3).toFixed(2)}`} delta="@ $3 / Mtok" />
-        <Kpi label="Last scan" value={flags[0] ? formatDateTime(flags[0].detectedAt).split(" ")[1] ?? "—" : "—"} />
+        <Kpi label="Last scan" value={flags[0] ? formatTime(flags[0].detectedAt) : "—"} />
       </div>
 
       <Card title="Detected patterns" sub="sorted by impact" flush>

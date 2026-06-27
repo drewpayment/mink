@@ -7,9 +7,11 @@ import { Btn } from "@/components/ui/btn";
 import { Toggle } from "@/components/ui/toggle";
 import { useDashboardStore } from "@/hooks/use-dashboard-store";
 import { triggerSyncPull, triggerSyncPush, triggerSyncDisconnect } from "@/lib/api-client";
+import { useFormat } from "@/hooks/use-format";
+import type { TimeFormatOpts } from "@/lib/format";
 import type { SyncPendingChange } from "@mink/types/dashboard";
 
-function formatTimestamp(iso: string): string {
+function formatTimestamp(iso: string, opts: TimeFormatOpts = {}): string {
   if (!iso) return "—";
   try {
     const d = new Date(iso);
@@ -19,6 +21,8 @@ function formatTimestamp(iso: string): string {
       minute: "2-digit",
       day: "2-digit",
       month: "short",
+      hour12: opts.clock === "12h" ? true : opts.clock === "24h" ? false : undefined,
+      timeZone: opts.timezone === "utc" ? "UTC" : undefined,
     });
   } catch {
     return iso;
@@ -61,6 +65,7 @@ function EmptyState() {
 
 export function SyncPanel() {
   const s = useDashboardStore((st) => st.sync);
+  const { timezone, clock } = useFormat();
   const [busy, setBusy] = useState<"pull" | "push" | "disconnect" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -137,11 +142,11 @@ export function SyncPanel() {
         </div>
         <div className="kpi">
           <div className="label">Last push</div>
-          <div className="value mono" style={{ fontSize: 14 }}>{formatTimestamp(s.lastPush)}</div>
+          <div className="value mono" style={{ fontSize: 14 }}>{formatTimestamp(s.lastPush, { timezone, clock })}</div>
         </div>
         <div className="kpi">
           <div className="label">Last pull</div>
-          <div className="value mono" style={{ fontSize: 14 }}>{formatTimestamp(s.lastPull)}</div>
+          <div className="value mono" style={{ fontSize: 14 }}>{formatTimestamp(s.lastPull, { timezone, clock })}</div>
         </div>
       </div>
 
