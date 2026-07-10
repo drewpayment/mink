@@ -80,17 +80,21 @@ export function sparkline(values: number[], width: number): string {
   if (width <= 0) return "";
   if (values.length === 0) return " ".repeat(width);
 
+  // Non-finite samples (corrupt rows) are treated as 0 — one NaN must not
+  // poison the min/max pass and blank the whole line.
+  const safe = values.map((v) => (Number.isFinite(v) ? v : 0));
+
   const buckets: number[] = new Array(width);
   for (let i = 0; i < width; i++) {
-    const start = Math.floor((i * values.length) / width);
-    const end = Math.max(start + 1, Math.floor(((i + 1) * values.length) / width));
+    const start = Math.floor((i * safe.length) / width);
+    const end = Math.max(start + 1, Math.floor(((i + 1) * safe.length) / width));
     let sum = 0;
     let count = 0;
-    for (let j = start; j < end && j < values.length; j++) {
-      sum += values[j];
+    for (let j = start; j < end && j < safe.length; j++) {
+      sum += safe[j];
       count += 1;
     }
-    buckets[i] = count > 0 ? sum / count : (values[Math.min(start, values.length - 1)] ?? 0);
+    buckets[i] = count > 0 ? sum / count : (safe[Math.min(start, safe.length - 1)] ?? 0);
   }
 
   const max = Math.max(...buckets);

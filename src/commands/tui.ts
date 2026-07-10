@@ -69,8 +69,10 @@ export async function tui(cwd: string, args: string[]): Promise<void> {
   }
 
   function repaint(): void {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
+    // `columns`/`rows` can be 0 (not undefined) on a fresh pty before the
+    // kernel delivers window-size info — `||` covers both.
+    const cols = process.stdout.columns || 80;
+    const rows = process.stdout.rows || 24;
     if (!model) {
       // First build failed before anything was ever rendered — nothing to
       // compose a full Overview layout from, so show a minimal message.
@@ -119,15 +121,15 @@ export async function tui(cwd: string, args: string[]): Promise<void> {
       repaint();
       return;
     }
-    if (key.name === "r") {
-      rebuild();
-      repaint();
-      return;
-    }
     if (helpOpen) {
       // Any key closes the help overlay (per spec) — swallow it here rather
       // than also acting as a scroll/refresh command underneath.
       helpOpen = false;
+      repaint();
+      return;
+    }
+    if (key.name === "r") {
+      rebuild();
       repaint();
       return;
     }

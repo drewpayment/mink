@@ -73,6 +73,12 @@ describe("sparkline", () => {
     const out = sparkline([1, 2, 3, 4, 5, 6, 7, 8], 8);
     expect(SPARK_CHARS.indexOf(out[out.length - 1])).toBeGreaterThan(SPARK_CHARS.indexOf(out[0]));
   });
+
+  test("non-finite samples degrade to 0 instead of blanking the line", () => {
+    expect(sparkline([1, NaN, 3], 10).length).toBe(10);
+    expect(sparkline([Infinity, 2, -Infinity], 6).length).toBe(6);
+    expect(sparkline([NaN, NaN], 4)).toBe("▁▁▁▁");
+  });
 });
 
 describe("hbar", () => {

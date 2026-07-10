@@ -47,6 +47,8 @@ When the daemon isn't running yet, the dashboard greets you with a guided onboar
 
 ## TUI Dashboard
 
+<!-- TODO: screenshot of `mink tui` at 120×40 -->
+
 Prefer the terminal? `mink tui` opens a fullscreen, btop-style dashboard with the same Overview numbers as the web UI — total tokens saved, lifetime KPIs, last-7-days activity, the current session, measured compression, and session history — live-refreshing as hooks fire. No web server, no browser tab.
 
 ```

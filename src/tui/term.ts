@@ -44,7 +44,11 @@ export function exitTui(): void {
  * Ctrl-C, SIGTERM, and crashes — so a bug in the TUI can never leave the
  * user's terminal stuck in alternate-screen/raw mode.
  */
+let safetyNetInstalled = false;
+
 export function installSafetyNet(): void {
+  if (safetyNetInstalled) return;
+  safetyNetInstalled = true;
   process.on("exit", () => exitTui());
   process.on("SIGINT", () => {
     exitTui();
@@ -77,7 +81,8 @@ export function onResize(cb: (cols: number, rows: number) => void): () => void {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
-      cb(process.stdout.columns ?? 80, process.stdout.rows ?? 24);
+      // 0 is a real pre-window-size pty value — `||` covers 0 and undefined.
+      cb(process.stdout.columns || 80, process.stdout.rows || 24);
     }, 50);
   };
 
