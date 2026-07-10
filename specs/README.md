@@ -32,6 +32,7 @@ Mink is a hidden presence that moves alongside the developer. It has two mission
 | 20 | [Stable Project Identity](./20-stable-project-identity.md) | Core |
 | 21 | [Multi-Agent Adapter](./21-multi-agent-adapter.md) | Core |
 | 22 | [Tool-Output Compression](./22-tool-output-compression.md) | Hooks |
+| 23 | [TUI Dashboard](./23-tui-dashboard.md) | Interfaces |
 
 ## Active Delivery Plans
 
