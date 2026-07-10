@@ -69,7 +69,6 @@ coverage/
 
 # Build output
 dist/
-!dist/cli.js
 build/Release
 
 # TypeScript cache
