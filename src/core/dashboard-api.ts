@@ -201,7 +201,7 @@ export function loadTokenLedgerPanel(cwd: string): TokenLedgerPayload {
   };
 }
 
-// Dedicated Compression panel (spec 21, phase 4). Reads the measured
+// Dedicated Compression panel (spec 22, phase 4). Reads the measured
 // compression aggregates, the holdout A/B split, per-kind/per-tool breakdowns,
 // and recent events, plus whether compression is currently enabled.
 export function loadCompressionPanel(cwd: string): CompressionPayload {

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.13.0](https://github.com/drewpayment/mink/compare/v0.12.0...v0.13.0) (2026-06-24)
+
+
+### Features
+
+* **compression:** enable tool-output compression by default ([20698be](https://github.com/drewpayment/mink/commit/20698be99e78c4a48f0990cd00a888bf52332a5d))
+* **compression:** phase 1 measurement foundation for tool-output compression ([446024f](https://github.com/drewpayment/mink/commit/446024fe4bd8479350a0597e443502cbd29bc296))
+* **compression:** phase 2a — reversible cache + mink retrieve ([de03d36](https://github.com/drewpayment/mink/commit/de03d366532e9e3d9f808fcfd0bbd030f70fa3f4))
+* **compression:** phase 2b — deterministic content-aware compression engine ([536811a](https://github.com/drewpayment/mink/commit/536811a435a38c1c1f0677eaffcff3a572705a09))
+* **compression:** phase 2c — wire inline tool-output compression into hooks ([445a0a6](https://github.com/drewpayment/mink/commit/445a0a63e5dc51a3a27564de84a9b2b3107b004a))
+* **compression:** phase 3 — structural code skeletons + recursive JSON crush ([0843669](https://github.com/drewpayment/mink/commit/08436699a88a6c765b762e34f1d1e759ae9a52b6))
+* **compression:** surface measured compression in dashboard, status & ledger ([18a3404](https://github.com/drewpayment/mink/commit/18a34046deace9b855c50b38367141092077d3ab))
+* **dashboard:** unify token + compression savings into one Overview ([0982d30](https://github.com/drewpayment/mink/commit/0982d30245aad661b325c23d5d3395e20dd7c0a7))
+* **pi:** make tool-output compression work under the Pi adapter ([7a57e7f](https://github.com/drewpayment/mink/commit/7a57e7faf32482afa7900a89fd1daeef9eef12e6))
+* tool-output compression (spec 21) ([519d254](https://github.com/drewpayment/mink/commit/519d254c15a6fd6b13ffead1df52965ad49a73b1))
+* **upgrade:** auto-refresh hook wiring after upgrade (no manual re-init) ([229a4e2](https://github.com/drewpayment/mink/commit/229a4e2455707195198676e723182d0dc96c1537))
+
 ## [0.12.0](https://github.com/drewpayment/mink/compare/v0.11.0...v0.12.0) (2026-06-05)
 
 

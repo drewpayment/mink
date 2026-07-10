@@ -66,7 +66,7 @@ export interface OverviewPayload {
     totalWrites: number;
     estimatedSavings: number;
   };
-  // Measured tool-output compression aggregates (spec 21), kept distinct from
+  // Measured tool-output compression aggregates (spec 22), kept distinct from
   // the heuristic estimatedSavings above. Optional for back-compat.
   compression?: CompressionLifetime;
   stateFiles: FileStatus[];
@@ -79,7 +79,7 @@ export interface TokenLedgerPayload {
   compression?: CompressionLifetime;
 }
 
-// Dedicated Compression panel payload (spec 21, phase 4).
+// Dedicated Compression panel payload (spec 22, phase 4).
 export interface CompressionPayload {
   enabled: boolean;
   lifetime: CompressionLifetime;

@@ -40,13 +40,13 @@ export interface TokenLedger {
   lifetime: LifetimeCounters;
   sessions: LedgerSession[];
   wasteFlags?: WasteFlag[];
-  // Measured tool-output compression aggregates (spec 21). Optional because the
+  // Measured tool-output compression aggregates (spec 22). Optional because the
   // legacy JSON-fallback ledger path has no compression data; only the SQLite
   // snapshot() populates it.
   compression?: CompressionLifetime;
 }
 
-// Tool-output compression measurement (spec 21).
+// Tool-output compression measurement (spec 22).
 
 // What the caller supplies when recording a compression decision. `id` and
 // `createdAt` are generated when omitted. For a holdout arm, pass the original

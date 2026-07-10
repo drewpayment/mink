@@ -1,4 +1,4 @@
-// Tool-output compression types (spec 21). The decision/config types live in
+// Tool-output compression types (spec 22). The decision/config types live in
 // src/core/compression.ts; these describe the reversible cache and the engine's
 // content-aware output.
 

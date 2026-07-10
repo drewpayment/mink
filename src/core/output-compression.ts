@@ -1,4 +1,4 @@
-// Tool-output compression engine (spec 21 §Content-Aware Compression).
+// Tool-output compression engine (spec 22 §Content-Aware Compression).
 //
 // Pure, deterministic, dependency-free. Each compressor takes a tool output
 // string and returns a smaller body plus a note of what was dropped, or null
@@ -8,7 +8,7 @@
 // "mink retrieve" footer. Keeping this layer pure makes every strategy trivially
 // testable and prompt-cache-stable (identical input → identical output).
 //
-// The "file" strategy does line-based signature extraction; spec 21's phase 3
+// The "file" strategy does line-based signature extraction; spec 22's phase 3
 // upgrades it to richer AST skeletons behind this same interface.
 
 import type { ContentKind, CompressionResult } from "../types/compression";

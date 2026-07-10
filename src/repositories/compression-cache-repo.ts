@@ -1,4 +1,4 @@
-// Reversible-compression cache repository (spec 21 §Reversibility). Stores the
+// Reversible-compression cache repository (spec 22 §Reversibility). Stores the
 // byte-exact original of a compressed tool output keyed by a short retrieval
 // token, with a TTL. `get` treats an expired row as a miss and evicts it lazily,
 // so a stale token can never return partial or wrong content.

@@ -42,9 +42,9 @@ afterEach(() => {
 });
 
 describe("loadCompressionConfig", () => {
-  test("returns conservative defaults when nothing is configured", () => {
+  test("returns enabled-by-default with conservative thresholds when nothing is configured", () => {
     const cfg = loadCompressionConfig();
-    expect(cfg.enabled).toBe(false);
+    expect(cfg.enabled).toBe(true);
     expect(cfg.thresholdTokens).toBe(800);
     expect(cfg.minSavingsRatio).toBe(0.25);
     expect(cfg.holdoutFraction).toBe(0.1);

@@ -58,7 +58,8 @@ afterEach(() => {
 
 describe("compressToolOutput", () => {
   test("is a no-op when compression is disabled", () => {
-    // No env set → default enabled=false.
+    // Compression is on by default, so disable it explicitly for this case.
+    process.env.MINK_COMPRESSION_ENABLED = "false";
     expect(compressToolOutput(cwd, "Bash", BIG_LOG)).toBeNull();
   });
 

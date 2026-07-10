@@ -205,7 +205,7 @@ export async function postRead(cwd: string): Promise<void> {
     // Persist state
     atomicWriteJson(sessionPath(cwd), state);
 
-    // Tool-output compression (spec 21). Substitute a compact, reversible
+    // Tool-output compression (spec 22). Substitute a compact, reversible
     // summary for a large whole-file read. Skipped for ranged reads (their
     // output is only a slice) and a no-op unless compression is enabled. Uses
     // the on-disk content as the canonical original so signature extraction

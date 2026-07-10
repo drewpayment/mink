@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS counters (
   file_index_misses INTEGER NOT NULL DEFAULT 0
 );
 
--- Tool-output compression measurement (spec 21). One row per compression
+-- Tool-output compression measurement (spec 22). One row per compression
 -- decision: either a compressed arm (compressed_tokens < original_tokens) or a
 -- holdout arm (left uncompressed for control, compressed_tokens = original_tokens).
 -- These are append-only telemetry, independent of session lifecycle, written at
@@ -208,7 +208,7 @@ CREATE TABLE IF NOT EXISTS ledger_compression_lifetime (
   total_measured_savings  INTEGER NOT NULL DEFAULT 0
 );
 
--- Reversible-compression cache (spec 21 §Reversibility). When a tool output is
+-- Reversible-compression cache (spec 22 §Reversibility). When a tool output is
 -- compressed, the original is stored here keyed by a short retrieval token and
 -- embedded in the compressed result; "mink retrieve <token>" returns it
 -- byte-exact. Rows expire after the configured retention window; an expired or

@@ -1,6 +1,6 @@
-# Delivery Plan — Tool-Output Compression (Spec 21)
+# Delivery Plan — Tool-Output Compression (Spec 22)
 
-**Status:** Transient. Delete this file once spec 21 is fully delivered and tool-output compression
+**Status:** Transient. Delete this file once spec 22 is fully delivered and tool-output compression
 ships with measured savings in the ledger.
 
 **Branch convention:** cut feature branches per phase from the integration work; target PRs at the
@@ -8,7 +8,7 @@ agreed integration branch, **never at `main`**. Each phase below is independentl
 
 ## Background
 
-Spec 21 is the first capability that actively shrinks the live payload the assistant consumes. The
+Spec 22 is the first capability that actively shrinks the live payload the assistant consumes. The
 interception point is native to Claude Code: a `PostToolUse` hook may return
 `hookSpecificOutput.updatedToolOutput` to replace a tool's result before the assistant sees it
 (verified against the Claude Code hooks reference). No HTTP proxy, no SDK wrapper, and — per the
@@ -105,9 +105,9 @@ deterministic.
 
 ## Cross-cutting
 
-- Tests per spec 21's Test Requirements (unit per strategy + threshold + holdout + tokenizer;
+- Tests per spec 22's Test Requirements (unit per strategy + threshold + holdout + tokenizer;
   integration round-trip + paired-arm ledger; property byte-exactness + savings math; edge + perf).
-- Update `specs/16-test-plan.md` coverage notes to include spec 21.
+- Update `specs/16-test-plan.md` coverage notes to include spec 22.
 - Keep defaults conservative; let holdout-measured savings justify any later loosening.
 
 ## What this plan intentionally does not cover
