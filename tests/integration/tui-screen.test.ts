@@ -124,6 +124,24 @@ describe("renderOverview — 80x24 content area", () => {
     expect(frame).toContain(fmtNum(model.savings.total));
   });
 
+  test("last-7-days rows show 7-day totals, not just today's bucket", () => {
+    // Regression: a project with week-long activity but nothing today must
+    // not render 0 next to a clearly non-empty sparkline.
+    const quietToday = makeFixtureModel();
+    quietToday.last7Days[quietToday.last7Days.length - 1] = {
+      day: "Wed 7/9",
+      saved: 0,
+      tokensIn: 0,
+      writes: 0,
+    };
+    const sum = (key: "saved" | "tokensIn" | "writes") =>
+      quietToday.last7Days.reduce((acc, d) => acc + d[key], 0);
+    const quietFrame = renderOverview(quietToday, makeState(), 80, rows).toString();
+    expect(quietFrame).toContain(fmtNum(sum("saved")));
+    expect(quietFrame).toContain(fmtNum(sum("tokensIn")));
+    expect(quietFrame).toContain(fmtNum(sum("writes")));
+  });
+
   test("shows every panel title", () => {
     for (const title of PANEL_TITLES) expect(frame).toContain(title);
   });

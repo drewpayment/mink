@@ -110,8 +110,10 @@ function renderLast7Days(screen: Screen, model: OverviewModel, x: number, y: num
     const values = model.last7Days.map((d) => d[series.key]);
     screen.drawText(innerX, rowY, padToWidth(series.label, labelW), { fg: "dim" });
     screen.drawText(innerX + labelW, rowY, sparkline(values, sparkW), { fg: series.style });
-    const last = values[values.length - 1] ?? 0;
-    screen.drawText(innerX + labelW + sparkW + 1, rowY, fmtNum(last), { fg: "text" }, valueW);
+    // 7-day total — showing only today's bucket reads as an empty/broken
+    // panel on any project without activity today.
+    const total = values.reduce((sum, v) => sum + v, 0);
+    screen.drawText(innerX + labelW + sparkW + 1, rowY, fmtNum(total), { fg: "text" }, valueW);
   });
 
   const axisY = y + 1 + SPARK_SERIES.length;
