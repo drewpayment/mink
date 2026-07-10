@@ -15,8 +15,6 @@ import type { Key } from "./term";
 import { overviewScreen } from "./overview-screen";
 import { sessionsScreen } from "./sessions-screen";
 import { compressionScreen } from "./compression-screen";
-import { memoryScreen } from "./memory-screen";
-import { wikiScreen } from "./wiki-screen";
 
 /** Per-screen UI state, kept alive across tab switches so scroll position survives a trip to another tab. */
 export interface ScreenUiState {
@@ -65,8 +63,6 @@ export const SCREENS: TuiScreen[] = [
   overviewScreen,
   sessionsScreen,
   compressionScreen,
-  memoryScreen,
-  wikiScreen,
 ];
 
 /**

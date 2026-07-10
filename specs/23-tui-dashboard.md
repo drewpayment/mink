@@ -55,16 +55,13 @@ Boxed panels with titled borders, in the spirit of btop:
 | `q`, `Ctrl-C` | quit (restore terminal) |
 | `?` | help overlay (shell keys + active screen's keys) |
 | `r` | force refresh of the active screen |
-| `Tab`/`Shift-Tab`, `1`–`5` | switch screens (Overview, Sessions, Compression, Memory, Wiki) |
+| `Tab`/`Shift-Tab`, `1`–`3` | switch screens (Overview, Sessions, Compression) |
 | `j`/`k`, `↓`/`↑`, `g`/`G` | scroll/select within the active screen |
 | `p` | open the project picker |
 | `j`/`k`, `↓`/`↑` (picker open) | move selection |
 | Enter (picker open) | switch to the selected project |
 | Esc, `p`, `q` (picker open) | close the picker without switching |
-| `b`/`l` (Memory screen) | focus bugs / learnings section |
-| `/` (Wiki screen) | search mode — type to filter, Enter confirms, Esc clears |
-
-A screen may declare `capturesInput` (e.g. Wiki's search mode) to receive every key — including shell-owned ones like `q`/`p`/digits — while a text input has focus; `Ctrl-C` always quits regardless.
+A screen may declare `capturesInput` (e.g. a search/filter mode) to receive every key — including shell-owned ones like `q`/`p`/digits — while a text input has focus; `Ctrl-C` always quits regardless.
 
 ### Visual language
 
@@ -133,15 +130,16 @@ Contracts:
 
 ## Shipped screens (originally the roadmap)
 
-All built on the screen-registry architecture (one file + one `SCREENS` entry each):
+Built on the screen-registry architecture (one file + one `SCREENS` entry each):
 
 1. **Sessions** (`2`): master-detail session drill-down — full table (newest first, uncapped) + detail pane with per-session KPIs, index-hit-rate bar, and project-level waste flags (the payload carries no per-session attribution).
 2. **Compression** (`3`): measured-savings KPIs, per-content-kind breakdown table, scrolling recent-events feed; disabled/empty states mirror the web panel.
-3. **Memory** (`4`): bugs + learnings browser — `b`/`l` switches section focus, independent cursors, detail pane with full text.
-4. **Wiki** (`5`): note list with `/`-search (substring on title + path, via `capturesInput`) and a preview pane for the selected note.
+
+Memory (bugs/learnings browser) and Wiki (`/`-search with preview) screens were built and QA-validated, then deliberately removed to keep the TUI focused on core token-efficiency features. Their implementations (and tests) are recoverable from git history if demand returns — the `capturesInput` contract they motivated remains in the screen registry.
 
 ## Roadmap (post-v2, only on demand)
 
+- Restore Memory and/or Wiki screens (recover from git history).
 - Wiki: print selected note path on exit (lazygit-style "open in editor").
 - Theming/config (`~/.mink/config` keys), layout presets, mouse support.
 

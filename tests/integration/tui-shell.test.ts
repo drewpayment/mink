@@ -74,12 +74,14 @@ describe("renderShell — tab bar", () => {
     expect(tabRow).not.toContain("Gamma");
   });
 
-  test("the real registry renders all five screens in tab order", () => {
+  test("the real registry renders the three core screens in tab order", () => {
     const frame = renderShell(SCREENS, 0, null, makeState(), makeShellState(), 80, 24).toString();
     const tabRow = frame.split("\n")[0]!;
-    for (const [i, title] of ["Overview", "Sessions", "Compression", "Memory", "Wiki"].entries()) {
+    for (const [i, title] of ["Overview", "Sessions", "Compression"].entries()) {
       expect(tabRow).toContain(`${i + 1} ${title}`);
     }
+    expect(tabRow).not.toContain("Memory");
+    expect(tabRow).not.toContain("Wiki");
   });
 
   describe("active-tab styling", () => {
@@ -130,7 +132,7 @@ describe("renderShell — footer", () => {
     expect(single.split("\n").at(-1)).not.toContain("Tab/1-");
 
     const real = renderShell(SCREENS, 0, null, makeState(), makeShellState(), 80, 24).toString();
-    expect(real.split("\n").at(-1)).toContain("Tab/1-5 screens");
+    expect(real.split("\n").at(-1)).toContain("Tab/1-3 screens");
   });
 });
 
