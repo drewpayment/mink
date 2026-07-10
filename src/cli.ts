@@ -117,6 +117,12 @@ switch (command) {
     break;
   }
 
+  case "tui": {
+    const { tui } = await import("./commands/tui");
+    await tui(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "daemon": {
     const { daemon } = await import("./commands/daemon");
     await daemon(cwd, process.argv.slice(3));
@@ -292,6 +298,7 @@ switch (command) {
     console.log();
     console.log("Automation & Analysis:");
     console.log("  dashboard [--port=N]    Open the real-time web dashboard");
+    console.log("  tui [--interval=ms]     Open the fullscreen terminal dashboard (spec 23)");
     console.log("  daemon <cmd>            Manage the background daemon (start|stop|restart|logs|install|uninstall)");
     console.log("  cron <cmd> [id]         Manage scheduled tasks (list|run|retry)");
     console.log("  update [options]        Update Mink hooks across registered projects");

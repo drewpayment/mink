@@ -45,6 +45,25 @@ When the daemon isn't running yet, the dashboard greets you with a guided onboar
 
 ![Onboarding — welcome back screen shown when the daemon is offline](docs/images/onboarding.png)
 
+## TUI Dashboard
+
+Prefer the terminal? `mink tui` opens a fullscreen, btop-style dashboard with the same Overview numbers as the web UI — total tokens saved, lifetime KPIs, last-7-days activity, the current session, measured compression, and session history — live-refreshing as hooks fire. No web server, no browser tab.
+
+```
+mink tui
+mink tui --interval=500   # refresh every 500ms instead of the 1s default (min 250ms)
+```
+
+| Key | Action |
+|---|---|
+| `q`, `Ctrl-C` | Quit (restores the terminal cleanly) |
+| `?` | Toggle the help overlay |
+| `r` | Force an immediate refresh |
+| `j`/`k`, `↓`/`↑` | Scroll session history |
+| `g`/`G` | Jump to top/bottom of session history |
+
+It needs an interactive terminal at least 80×24; piped or non-TTY invocations print a short notice and exit instead of entering the alternate screen, and a too-small terminal shows a centered message until you resize.
+
 ## How It Works
 
 Mink registers as a set of [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) that fire on key lifecycle events. Each hook is a lightweight CLI call that reads and updates JSON state files stored in `~/.mink/`.
@@ -86,6 +105,7 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 ### Interfaces
 - **CLI** — 25+ commands covering lifecycle hooks, state management, notes/wiki, scheduling, configuration, backup/restore, and more
 - **Real-time Dashboard** — Web UI with 10 panels, SSE live updates, light/dark themes, virtual scrolling, and interactive charts
+- **TUI Dashboard** — `mink tui` reproduces the Overview panel in a fullscreen terminal UI, no web server required
 
 ### Notes & Wiki
 - **Wiki Vault** — Obsidian-compatible markdown vault that accumulates knowledge across all projects
