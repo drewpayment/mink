@@ -53,14 +53,18 @@ Boxed panels with titled borders, in the spirit of btop:
 | Key | Action |
 |---|---|
 | `q`, `Ctrl-C` | quit (restore terminal) |
-| `?` | help overlay |
-| `r` | force refresh now |
-| `j`/`k`, `↓`/`↑` | scroll session history |
-| `g`/`G` | history top/bottom |
+| `?` | help overlay (shell keys + active screen's keys) |
+| `r` | force refresh of the active screen |
+| `Tab`/`Shift-Tab`, `1`–`5` | switch screens (Overview, Sessions, Compression, Memory, Wiki) |
+| `j`/`k`, `↓`/`↑`, `g`/`G` | scroll/select within the active screen |
 | `p` | open the project picker |
 | `j`/`k`, `↓`/`↑` (picker open) | move selection |
 | Enter (picker open) | switch to the selected project |
 | Esc, `p`, `q` (picker open) | close the picker without switching |
+| `b`/`l` (Memory screen) | focus bugs / learnings section |
+| `/` (Wiki screen) | search mode — type to filter, Enter confirms, Esc clears |
+
+A screen may declare `capturesInput` (e.g. Wiki's search mode) to receive every key — including shell-owned ones like `q`/`p`/digits — while a text input has focus; `Ctrl-C` always quits regardless.
 
 ### Visual language
 
@@ -127,13 +131,19 @@ Contracts:
 - Non-TTY guard: invoking the command with stdout not a TTY exits 0 with a notice, emitting no escape codes.
 - All tests must pass under `bun test` alongside the existing suite.
 
-## Roadmap (post-v1 recommendations, in value order)
+## Shipped screens (originally the roadmap)
 
-1. **Sessions panel** (`2` key / tab): full session drill-down — per-session reads/writes/index hits, waste flags. The data already ships in `loadTokenLedgerPanel`.
-2. **Compression panel**: recent compression events feed + per-kind breakdown (already in `loadCompressionPanel`).
-3. **Bugs & learnings browser**: read-only list from bug memory / learning memory — high value for "what does mink know about this repo".
-4. **Wiki quick-search**: fuzzy-find notes, print path on exit (lazygit-style "open in editor").
-5. Theming/config (`~/.mink/config` keys), layout presets, mouse support — only on demand.
+All built on the screen-registry architecture (one file + one `SCREENS` entry each):
+
+1. **Sessions** (`2`): master-detail session drill-down — full table (newest first, uncapped) + detail pane with per-session KPIs, index-hit-rate bar, and project-level waste flags (the payload carries no per-session attribution).
+2. **Compression** (`3`): measured-savings KPIs, per-content-kind breakdown table, scrolling recent-events feed; disabled/empty states mirror the web panel.
+3. **Memory** (`4`): bugs + learnings browser — `b`/`l` switches section focus, independent cursors, detail pane with full text.
+4. **Wiki** (`5`): note list with `/`-search (substring on title + path, via `capturesInput`) and a preview pane for the selected note.
+
+## Roadmap (post-v2, only on demand)
+
+- Wiki: print selected note path on exit (lazygit-style "open in editor").
+- Theming/config (`~/.mink/config` keys), layout presets, mouse support.
 
 ## Definition of done (v1)
 

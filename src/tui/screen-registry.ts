@@ -13,6 +13,10 @@
 import type { Screen } from "./screen";
 import type { Key } from "./term";
 import { overviewScreen } from "./overview-screen";
+import { sessionsScreen } from "./sessions-screen";
+import { compressionScreen } from "./compression-screen";
+import { memoryScreen } from "./memory-screen";
+import { wikiScreen } from "./wiki-screen";
 
 /** Per-screen UI state, kept alive across tab switches so scroll position survives a trip to another tab. */
 export interface ScreenUiState {
@@ -37,11 +41,25 @@ export interface TuiScreen<M = unknown> {
   onKey?(key: Key, state: ScreenUiState, model: M | null): boolean;
   /** Extra help-overlay rows appended after the shell's own key list. */
   helpKeys?: Array<[string, string]>;
+  /**
+   * Returns true when the screen wants first refusal on EVERY key,
+   * including ones the shell would otherwise treat as global chrome
+   * (q/p/r/?/Tab/digit hotkeys) — e.g. while a search/filter text input
+   * has focus and the user may type any of those characters. The shell
+   * checks this before its own key-ownership table and, if true, routes
+   * the key straight to onKey. Ctrl-C still always tears down the app.
+   */
+  capturesInput?(model: M | null): boolean;
 }
 
-// Ordered; array index is tab position. Overview is screen 1 — Sessions and
-// Compression land here as follow-up entries, each a one-file + one-line add.
-export const SCREENS: TuiScreen[] = [overviewScreen];
+// Ordered; array index is tab position.
+export const SCREENS: TuiScreen[] = [
+  overviewScreen,
+  sessionsScreen,
+  compressionScreen,
+  memoryScreen,
+  wikiScreen,
+];
 
 /**
  * Pure screen-switch resolution: given the currently active index and a key

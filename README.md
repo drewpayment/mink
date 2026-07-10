@@ -49,7 +49,13 @@ When the daemon isn't running yet, the dashboard greets you with a guided onboar
 
 <!-- TODO: screenshot of `mink tui` at 120×40 -->
 
-Prefer the terminal? `mink tui` opens a fullscreen, btop-style dashboard with the same Overview numbers as the web UI — total tokens saved, lifetime KPIs, last-7-days activity, the current session, measured compression, and session history — live-refreshing as hooks fire. No web server, no browser tab.
+Prefer the terminal? `mink tui` opens a fullscreen, btop-style dashboard — five tabbed screens, live-refreshing as hooks fire, no web server, no browser tab:
+
+1. **Overview** — the web dashboard's Overview numbers: total tokens saved, lifetime KPIs, last-7-days activity, current session, measured compression, session history
+2. **Sessions** — drill into any session: reads, writes, tokens, savings, index hit rate, waste flags
+3. **Compression** — measured-savings KPIs, per-content-kind breakdown, recent events feed
+4. **Memory** — browse what mink knows: bug memory and learned rules, with full-text detail
+5. **Wiki** — search your vault (`/` to filter) with a live note preview
 
 ```
 mink tui
@@ -59,13 +65,13 @@ mink tui --interval=500   # refresh every 500ms instead of the 1s default (min 2
 | Key | Action |
 |---|---|
 | `q`, `Ctrl-C` | Quit (restores the terminal cleanly) |
-| `?` | Toggle the help overlay |
+| `Tab`/`Shift-Tab`, `1`–`5` | Switch screens |
+| `?` | Help overlay (includes the active screen's keys) |
 | `r` | Force an immediate refresh |
-| `j`/`k`, `↓`/`↑` | Scroll session history (or move selection in the project picker) |
-| `g`/`G` | Jump to top/bottom of session history |
-| `p` | Open the project picker |
-| Enter | Switch to the selected project (picker open) |
-| Esc, `p`, `q` | Close the project picker without switching (picker open) |
+| `j`/`k`, `↓`/`↑`, `g`/`G` | Scroll / move selection in the active screen |
+| `p` | Open the project picker (Enter switches, Esc closes) |
+| `b`/`l` | Memory screen: focus bugs / learnings |
+| `/` | Wiki screen: search — type to filter, Enter confirms, Esc clears |
 
 It needs an interactive terminal at least 80×24; piped or non-TTY invocations print a short notice and exit instead of entering the alternate screen, and a too-small terminal shows a centered message until you resize.
 

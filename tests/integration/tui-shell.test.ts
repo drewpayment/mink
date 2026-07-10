@@ -65,12 +65,21 @@ describe("renderShell — tab bar", () => {
     expect(tabRow).toContain("│");
   });
 
-  test("only registered screens render — an unregistered future tab is simply absent", () => {
+  test("only registered screens render — an unregistered tab is simply absent", () => {
+    const onlyAlpha = FAKE_SCREENS.slice(0, 1);
+    const frame = renderShell(onlyAlpha, 0, onlyAlpha[0]!.buildModel("/tmp"), makeState(), makeShellState(), 80, 24).toString();
+    const tabRow = frame.split("\n")[0]!;
+    expect(tabRow).toContain("1 Alpha");
+    expect(tabRow).not.toContain("Beta");
+    expect(tabRow).not.toContain("Gamma");
+  });
+
+  test("the real registry renders all five screens in tab order", () => {
     const frame = renderShell(SCREENS, 0, null, makeState(), makeShellState(), 80, 24).toString();
     const tabRow = frame.split("\n")[0]!;
-    expect(tabRow).toContain("1 Overview");
-    expect(tabRow).not.toContain("Sessions");
-    expect(tabRow).not.toContain("Compression");
+    for (const [i, title] of ["Overview", "Sessions", "Compression", "Memory", "Wiki"].entries()) {
+      expect(tabRow).toContain(`${i + 1} ${title}`);
+    }
   });
 
   describe("active-tab styling", () => {
@@ -116,8 +125,12 @@ describe("renderShell — footer", () => {
     const multi = renderShell(FAKE_SCREENS, 0, FAKE_SCREENS[0]!.buildModel("/tmp"), makeState(), makeShellState(), 80, 24).toString();
     expect(multi.split("\n").at(-1)).toContain("Tab/1-3 screens");
 
-    const single = renderShell(SCREENS, 0, null, makeState(), makeShellState(), 80, 24).toString();
+    const onlyAlpha = FAKE_SCREENS.slice(0, 1);
+    const single = renderShell(onlyAlpha, 0, onlyAlpha[0]!.buildModel("/tmp"), makeState(), makeShellState(), 80, 24).toString();
     expect(single.split("\n").at(-1)).not.toContain("Tab/1-");
+
+    const real = renderShell(SCREENS, 0, null, makeState(), makeShellState(), 80, 24).toString();
+    expect(real.split("\n").at(-1)).toContain("Tab/1-5 screens");
   });
 });
 
