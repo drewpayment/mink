@@ -10,13 +10,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDateTime } from "@/lib/format";
+import { useFormat } from "@/hooks/use-format";
 import { Image, X } from "lucide-react";
 import type { DesignImagePayload } from "@mink/types/dashboard";
 
 export function DesignPanel() {
   const designImages = useDashboardStore((s) => s.designImages);
   const connected = useDashboardStore((s) => s.connected);
+  const { formatDateTime } = useFormat();
   const [selectedImage, setSelectedImage] = useState<DesignImagePayload | null>(null);
 
   if (!connected && designImages.length === 0) {

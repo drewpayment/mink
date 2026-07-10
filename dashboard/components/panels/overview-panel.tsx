@@ -12,6 +12,8 @@ import { Icon } from "@/components/ui/icon";
 import { LineChart, type LineSeries } from "@/components/ui/line-chart";
 import { BarChart, type BarDatum } from "@/components/ui/bar-chart";
 import { formatUptime } from "@/lib/format";
+import { useFormat } from "@/hooks/use-format";
+import type { TimezoneMode } from "@/lib/format";
 import type { LedgerSession } from "@mink/types/token-ledger";
 
 function fmt(n: number | undefined | null): string {
@@ -32,9 +34,13 @@ const miniLabel: React.CSSProperties = {
   fontWeight: 600,
 };
 
-function dayKey(iso: string): string {
+function dayKey(iso: string, timezone: TimezoneMode = "local"): string {
   try {
-    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return new Date(iso).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      timeZone: timezone === "utc" ? "UTC" : undefined,
+    });
   } catch {
     return iso.slice(0, 10);
   }
@@ -51,19 +57,19 @@ interface DayAgg {
 // attribution (no session_id on compression events), so it is deliberately
 // NOT folded into these daily buckets — see the Compression card for the
 // lifetime measured figure.
-function groupLast7Days(sessions: LedgerSession[]): DayAgg[] {
+function groupLast7Days(sessions: LedgerSession[], timezone: TimezoneMode = "local"): DayAgg[] {
   const now = Date.now();
   const dayMs = 24 * 60 * 60 * 1000;
   const buckets: Record<string, DayAgg> = {};
   const order: string[] = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date(now - i * dayMs);
-    const key = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const key = dayKey(d.toISOString(), timezone);
     buckets[key] = { x: key, inT: 0, outT: 0, saved: 0 };
     order.push(key);
   }
   for (const s of sessions) {
-    const key = dayKey(s.startTimestamp);
+    const key = dayKey(s.startTimestamp, timezone);
     if (!buckets[key]) continue;
     const reads = (s.totals?.estimatedTokens ?? 0);
     const writes = (s.totals?.writeCount ?? 0) * 600;
@@ -141,12 +147,13 @@ export function OverviewPanel() {
   const ledger = useDashboardStore((s) => s.ledger);
   const compression = useDashboardStore((s) => s.compression);
   const health = useDashboardStore((s) => s.health);
+  const { formatDateTime, timezone } = useFormat();
 
   const summary = overview?.summary;
   const sessions = ledger?.sessions ?? [];
   const liveSession = sessions.length > 0 ? sessions[sessions.length - 1] : null;
 
-  const agg = useMemo(() => groupLast7Days(sessions), [sessions]);
+  const agg = useMemo(() => groupLast7Days(sessions, timezone), [sessions, timezone]);
   const series: LineSeries[] = [
     { name: "saved", color: "var(--accent)", fill: true,  data: agg.map((a) => ({ x: a.x, y: Math.round(a.saved / 1000) })) },
     { name: "in",    color: "var(--fg-2)",   fill: false, data: agg.map((a) => ({ x: a.x, y: Math.round(a.inT   / 1000) })) },
@@ -343,7 +350,7 @@ export function OverviewPanel() {
                       : <Chip tone="accent">● live</Chip>}
                   </td>
                   <td className="mono">{s.sessionId}</td>
-                  <td>{s.startTimestamp ? new Date(s.startTimestamp).toLocaleString() : "—"}</td>
+                  <td>{s.startTimestamp ? formatDateTime(s.startTimestamp) : "—"}</td>
                   <td className="right num">{s.totals?.readCount ?? 0}</td>
                   <td className="right num">{s.totals?.writeCount ?? 0}</td>
                   <td className="right num">{fmt(s.totals?.estimatedTokens)}</td>

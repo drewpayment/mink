@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/panel-card";
 import { Chip } from "@/components/ui/chip";
 import { Btn } from "@/components/ui/btn";
 import { Icon } from "@/components/ui/icon";
-import { formatDateTime } from "@/lib/format";
+import { useFormat } from "@/hooks/use-format";
 import type { BugEntry } from "@mink/types/bug-memory";
 
 type Only = "all" | "open" | "fixed";
@@ -17,6 +17,7 @@ function isFixed(b: BugEntry): boolean {
 
 export function BugPanel() {
   const bugs = useDashboardStore((s) => s.bugs);
+  const { formatDateTime } = useFormat();
   const [q, setQ] = useState("");
   const [only, setOnly] = useState<Only>("all");
   const [activeTags, setActiveTags] = useState<string[]>([]);

@@ -7,7 +7,8 @@ import { Chip } from "@/components/ui/chip";
 import { Btn } from "@/components/ui/btn";
 import { Icon } from "@/components/ui/icon";
 import { triggerRescan } from "@/lib/api-client";
-import { formatDateTime, formatNum } from "@/lib/format";
+import { formatNum } from "@/lib/format";
+import { useFormat } from "@/hooks/use-format";
 import type { FileIndexEntry } from "@mink/types/file-index";
 
 function ageStatus(iso: string): "hot" | "fresh" | "stale" | "cold" {
@@ -43,6 +44,7 @@ function toneFor(s: "hot" | "fresh" | "stale" | "cold"): "accent" | "" | "amber"
 export function FileIndexPanel() {
   const fileIndex = useDashboardStore((s) => s.fileIndex);
   const activeProjectId = useDashboardStore((s) => s.activeProjectId);
+  const { formatDateTime } = useFormat();
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [rescanning, setRescanning] = useState(false);

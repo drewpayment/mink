@@ -29,8 +29,19 @@ export function Tweaks() {
   const setDensity = usePreferences((s) => s.setDensity);
   const liveFeel = usePreferences((s) => s.liveFeel);
   const setLiveFeel = usePreferences((s) => s.setLiveFeel);
+  const timezone = usePreferences((s) => s.timezone);
+  const setTimezone = usePreferences((s) => s.setTimezone);
+  const clock = usePreferences((s) => s.clock);
+  const setClock = usePreferences((s) => s.setClock);
 
   if (!open) return null;
+
+  let localZone = "";
+  try {
+    localZone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
+  } catch {
+    localZone = "";
+  }
 
   return (
     <div className="tweaks" role="dialog" aria-label="Tweaks">
@@ -91,6 +102,45 @@ export function Tweaks() {
               type="button"
               className={density === k ? "on" : ""}
               onClick={() => setDensity(k)}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="tw-row">
+        <span className="label">
+          Timezone
+          {timezone === "local" && localZone && (
+            <span className="muted" style={{ marginLeft: 6, fontSize: 10.5 }}>
+              {localZone}
+            </span>
+          )}
+        </span>
+        <div className="seg">
+          {([["local", "Local"], ["utc", "UTC"]] as const).map(([k, l]) => (
+            <button
+              key={k}
+              type="button"
+              className={timezone === k ? "on" : ""}
+              onClick={() => setTimezone(k)}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="tw-row">
+        <span className="label">Clock</span>
+        <div className="seg">
+          {([["12h", "12h"], ["24h", "24h"]] as const).map(([k, l]) => (
+            <button
+              key={k}
+              type="button"
+              className={clock === k ? "on" : ""}
+              onClick={() => setClock(k)}
             >
               {l}
             </button>

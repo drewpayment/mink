@@ -7,11 +7,13 @@ import { Btn } from "@/components/ui/btn";
 import { Icon } from "@/components/ui/icon";
 import { useDashboardStore } from "@/hooks/use-dashboard-store";
 import { fetchWikiNote } from "@/lib/api-client";
+import { useFormat } from "@/hooks/use-format";
+import type { TimeFormatOpts } from "@/lib/format";
 
 const CATS = ["all", "inbox", "projects", "areas", "resources", "archives"] as const;
 type Cat = (typeof CATS)[number];
 
-function formatTimestamp(iso: string): string {
+function formatTimestamp(iso: string, opts: TimeFormatOpts = {}): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -20,6 +22,8 @@ function formatTimestamp(iso: string): string {
     minute: "2-digit",
     day: "2-digit",
     month: "short",
+    hour12: opts.clock === "12h" ? true : opts.clock === "24h" ? false : undefined,
+    timeZone: opts.timezone === "utc" ? "UTC" : undefined,
   });
 }
 
@@ -27,6 +31,7 @@ export function WikiPanel() {
   const wiki = useDashboardStore((s) => s.wiki);
   const wikiNote = useDashboardStore((s) => s.wikiNote);
   const setWikiNote = useDashboardStore((s) => s.setWikiNote);
+  const { timezone, clock } = useFormat();
   const [cat, setCat] = useState<Cat>("all");
   const [selected, setSelected] = useState<string | null>(null);
   const [noteError, setNoteError] = useState<string | null>(null);
@@ -166,7 +171,7 @@ export function WikiPanel() {
                         {n.category}
                       </Chip>
                     </td>
-                    <td className="right mono muted">{formatTimestamp(n.lastModified)}</td>
+                    <td className="right mono muted">{formatTimestamp(n.lastModified, { timezone, clock })}</td>
                   </tr>
                 ))}
               </tbody>

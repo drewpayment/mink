@@ -6,6 +6,7 @@ import { Kpi } from "@/components/ui/kpi";
 import { Bar } from "@/components/ui/bar";
 import { BarChart, type BarDatum } from "@/components/ui/bar-chart";
 import { formatNum } from "@/lib/format";
+import { useFormat } from "@/hooks/use-format";
 import type { CompressionBreakdownRow } from "@mink/types/token-ledger";
 
 function pct(n: number, d: number): number {
@@ -57,6 +58,7 @@ function BreakdownTable({ title, sub, rows }: { title: string; sub: string; rows
 
 export function CompressionPanel() {
   const c = useDashboardStore((s) => s.compression);
+  const { formatDateTime } = useFormat();
 
   const lifetime = c?.lifetime;
   const arms = c?.arms;
@@ -181,7 +183,7 @@ export function CompressionPanel() {
                 <tbody>
                   {(c?.recent ?? []).map((e) => (
                     <tr key={e.id}>
-                      <td>{e.createdAt ? new Date(e.createdAt).toLocaleString() : "—"}</td>
+                      <td>{e.createdAt ? formatDateTime(e.createdAt) : "—"}</td>
                       <td className="mono">{e.toolName}</td>
                       <td className="mono">{e.contentKind}</td>
                       <td className="right num">{formatNum(e.originalTokens)}</td>

@@ -8,7 +8,7 @@ import { Btn } from "@/components/ui/btn";
 import { Toggle } from "@/components/ui/toggle";
 import { TabsLine } from "@/components/ui/tabs-line";
 import { triggerTaskRun, triggerDeadLetterRetry } from "@/lib/api-client";
-import { formatDateTime } from "@/lib/format";
+import { useFormat } from "@/hooks/use-format";
 
 type Tab = "tasks" | "dlq";
 
@@ -22,6 +22,7 @@ function statusTone(status: string): "accent" | "amber" | "red" | "" {
 export function SchedulerPanel() {
   const taskDefinitions = useDashboardStore((s) => s.taskDefinitions);
   const tasks = useDashboardStore((s) => s.tasks);
+  const { formatDateTime, formatTime } = useFormat();
   const deadLetters = useDashboardStore((s) => s.deadLetters);
   const activeProjectId = useDashboardStore((s) => s.activeProjectId);
 
@@ -73,7 +74,7 @@ export function SchedulerPanel() {
         <div className="kpi">
           <div className="label">Next run</div>
           <div className="value mono" style={{ fontSize: 14 }}>
-            {nextRun ? formatDateTime(nextRun).split(" ")[1] ?? formatDateTime(nextRun) : "—"}
+            {nextRun ? formatTime(nextRun) : "—"}
           </div>
         </div>
         <div className="kpi">

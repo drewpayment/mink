@@ -24,6 +24,9 @@ function parseActionLogEntries(data: ActionLogPayload): ActionLogRow[] {
   const entries: ActionLogRow[] = [];
   const sessions = data?.sessions ?? [];
   for (const session of sessions) {
+    // The session header carries the UTC date (YYYY-MM-DD); row times are HH:MM (UTC).
+    // Pair them so the client can render in the user's chosen timezone/clock format.
+    const date = session.date;
     const lines = (session.content || "").split("\n");
     for (const line of lines) {
       if (!line.startsWith("|") || line.includes("---")) continue;
@@ -32,8 +35,12 @@ function parseActionLogEntries(data: ActionLogPayload): ActionLogRow[] {
         .map((c) => c.trim())
         .filter(Boolean);
       if (cols.length >= 5 && cols[0] !== "Time") {
+        const time = cols[0];
+        const iso =
+          date && /^\d{2}:\d{2}$/.test(time) ? `${date}T${time}:00Z` : undefined;
         entries.push({
-          time: cols[0],
+          time,
+          iso,
           action: cols[1],
           files: cols[2],
           outcome: cols[3],

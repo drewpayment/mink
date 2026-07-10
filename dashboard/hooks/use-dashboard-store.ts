@@ -8,6 +8,8 @@ import type { RegisteredProject } from "@/types/project";
 
 export interface ActionLogRow {
   time: string;
+  /** Full UTC instant (ISO) reconstructed from the session date + row time, when available. */
+  iso?: string;
   action: string;
   files: string;
   outcome: string;
