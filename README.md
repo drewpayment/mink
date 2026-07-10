@@ -47,18 +47,22 @@ When the daemon isn't running yet, the dashboard greets you with a guided onboar
 
 ## TUI Dashboard
 
-<!-- TODO: screenshot of `mink tui` at 120×40 -->
+Prefer the terminal? `mink tui` opens a fullscreen, [btop](https://github.com/aristocratos/btop)-style dashboard right in your terminal — no web server, no browser tab, instant startup:
 
-Prefer the terminal? `mink tui` opens a fullscreen, btop-style dashboard — three tabbed screens, live-refreshing as hooks fire, no web server, no browser tab:
-
-1. **Overview** — the web dashboard's Overview numbers: total tokens saved, lifetime KPIs, last-7-days activity, current session, measured compression, session history
-2. **Sessions** — drill into any session: reads, writes, tokens, savings, index hit rate, waste flags
-3. **Compression** — measured-savings KPIs, per-content-kind breakdown, recent events feed
+![mink tui — Overview screen with live token savings, 7-day usage sparklines, current session, measured compression, and session history](docs/images/tui-overview.png)
 
 ```
 mink tui
 mink tui --interval=500   # refresh every 500ms instead of the 1s default (min 250ms)
 ```
+
+Three tabbed screens, switched with `Tab` or `1`–`3`:
+
+1. **Overview** — the web dashboard's Overview numbers: total tokens saved (heuristic + measured), lifetime KPIs, last-7-days sparklines with weekly totals, the current session, measured compression, and session history
+2. **Sessions** — drill into any session: reads, writes, tokens, savings, index hit rate, and project waste flags
+3. **Compression** — measured-savings KPIs, per-content-kind breakdown, and a recent-events feed
+
+The TUI reads the same `~/.mink/` state as the web dashboard through the same data layer, so the numbers always match — it just skips the HTTP server and repaints on a ~1s tick as your sessions' hooks fire. Press `p` to switch between any of your registered projects without leaving the dashboard.
 
 | Key | Action |
 |---|---|
@@ -69,7 +73,7 @@ mink tui --interval=500   # refresh every 500ms instead of the 1s default (min 2
 | `j`/`k`, `↓`/`↑`, `g`/`G` | Scroll / move selection in the active screen |
 | `p` | Open the project picker (Enter switches, Esc closes) |
 
-It needs an interactive terminal at least 80×24; piped or non-TTY invocations print a short notice and exit instead of entering the alternate screen, and a too-small terminal shows a centered message until you resize.
+Implementation notes for the curious: it's a zero-dependency ANSI renderer (alternate screen + diff-based repaint, so no flicker), width-safe for CJK and emoji, degrades from truecolor to 256-color to plain (honoring `NO_COLOR`), and restores your terminal on every exit path — including crashes. It needs an interactive terminal of at least 80×24; piped or non-TTY invocations print a short notice and exit cleanly, and a too-small terminal shows a centered message until you resize. Works identically under Node and Bun.
 
 ## How It Works
 
