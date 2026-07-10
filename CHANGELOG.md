@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/drewpayment/mink/compare/v0.13.0...v0.14.0) (2026-07-10)
+
+
+### Features
+
+* **dashboard:** user-configurable timezone & 12/24h clock for timestamps ([#92](https://github.com/drewpayment/mink/issues/92)) ([598f80e](https://github.com/drewpayment/mink/commit/598f80e256e6eb0f0dbeb22a9c829876ed5ccd50))
+
 ## [0.13.0](https://github.com/drewpayment/mink/compare/v0.12.0...v0.13.0) (2026-06-24)
 
 
