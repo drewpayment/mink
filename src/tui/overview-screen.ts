@@ -6,56 +6,16 @@
  */
 
 import { Screen } from "./screen";
-import { drawBox, statTile, sparkline, hbar, stackedBar, drawTable, drawHelpOverlay, drawListOverlay } from "./widgets";
+import { drawBox, statTile, sparkline, hbar, stackedBar, drawTable } from "./widgets";
 import { stringWidth, padToWidth } from "./width";
-import { fmtNum, fmtDuration, fmtTime, type OverviewModel } from "./overview-model";
-
-export const MIN_COLS = 80;
-export const MIN_ROWS = 24;
-
-export interface PickerItem {
-  name: string;
-  cwd: string;
-  isCurrent: boolean;
-}
-
-export interface PickerState {
-  open: boolean;
-  index: number;
-  items: PickerItem[];
-}
-
-export interface UiState {
-  scrollOffset: number;
-  helpOpen: boolean;
-  picker: PickerState | null;
-  lastRefresh: string; // preformatted time, e.g. "14:32:05"
-}
+import { fmtNum, fmtDuration, fmtTime, buildOverviewModel, type OverviewModel } from "./overview-model";
+import type { TuiScreen, ScreenUiState } from "./screen-registry";
+import type { Key } from "./term";
 
 const HELP_KEYS: Array<[string, string]> = [
-  ["q, Ctrl-C", "quit"],
-  ["?", "toggle this help"],
-  ["r", "force refresh"],
   ["j/k, ↓/↑", "scroll session history"],
   ["g/G", "history top/bottom"],
-  ["p", "project picker"],
 ];
-
-/** Centered "terminal too small" message — never renders garbage below the minimum size. */
-export function renderTooSmall(cols: number, rows: number): Screen {
-  const screen = new Screen(Math.max(cols, 0), Math.max(rows, 0));
-  const lines = [
-    "Terminal too small",
-    `need at least ${MIN_COLS}×${MIN_ROWS}`,
-    `(current ${cols}×${rows})`,
-  ];
-  const startY = Math.max(0, Math.floor((screen.rows - lines.length) / 2));
-  lines.forEach((line, i) => {
-    const x = Math.max(0, Math.floor((screen.cols - stringWidth(line)) / 2));
-    screen.drawText(x, startY + i, line, { fg: "warn", bold: i === 0 });
-  });
-  return screen;
-}
 
 // ── Header ───────────────────────────────────────────────────────────────
 
@@ -233,7 +193,7 @@ function renderCompression(screen: Screen, model: OverviewModel, x: number, y: n
 
 // ── History table ────────────────────────────────────────────────────────
 
-function renderHistory(screen: Screen, model: OverviewModel, state: UiState, x: number, y: number, w: number, h: number): void {
+function renderHistory(screen: Screen, model: OverviewModel, state: ScreenUiState, x: number, y: number, w: number, h: number): void {
   drawBox(screen, { x, y, w, h, title: "Session history — newest first", focused: true });
   if (h < 3) return;
 
@@ -275,48 +235,19 @@ function renderHistory(screen: Screen, model: OverviewModel, state: UiState, x: 
   });
 }
 
-// ── Footer ───────────────────────────────────────────────────────────────
-
-function renderFooter(screen: Screen, state: UiState, x: number, y: number, w: number): void {
-  const hints = "q quit · ? help · r refresh · j/k/g/G scroll · p projects";
-  const updated = `updated ${state.lastRefresh}`;
-  screen.drawText(x, y, hints, { fg: "dim" }, w);
-  const updatedX = x + w - stringWidth(updated);
-  if (updatedX > x + stringWidth(hints) + 1) {
-    screen.drawText(updatedX, y, updated, { fg: "dim" }, w);
-  }
-}
-
-// ── Project picker overlay ───────────────────────────────────────────────
-
-function renderPicker(screen: Screen, picker: PickerState): void {
-  const hasItems = picker.items.length > 0;
-  const items = hasItems
-    ? picker.items.map((p) => (p.isCurrent ? `${p.name}  (current)` : p.name))
-    : ["No registered projects"];
-  const subItems = hasItems ? picker.items.map((p) => p.cwd) : undefined;
-  const selectedIndex = hasItems ? picker.index : -1;
-
-  drawListOverlay(screen, {
-    title: "Projects",
-    items,
-    selectedIndex,
-    subItems,
-    footerHint: hasItems ? "↵ switch · Esc/p close" : "Esc/p close",
-  });
-}
-
 // ── Top-level layout ─────────────────────────────────────────────────────
 
-/** Composes the full Overview layout for a `cols`×`rows` terminal. Pure — safe to snapshot-test. */
-export function renderOverview(model: OverviewModel, state: UiState, cols: number, rows: number): Screen {
-  if (cols < MIN_COLS || rows < MIN_ROWS) return renderTooSmall(cols, rows);
-
+/**
+ * Composes the Overview panels (header/lifetime/last-7-days/session/
+ * compression/history) into the `cols`×`rows` canvas the shell hands this
+ * screen — no tab bar, footer, or picker/help chrome; those are the shell's
+ * job (see shell.ts). Pure — safe to snapshot-test.
+ */
+export function renderOverview(model: OverviewModel, state: ScreenUiState, cols: number, rows: number): Screen {
   const screen = new Screen(cols, rows);
 
   const headerH = 4;
-  const footerH = 1;
-  const remaining = rows - headerH - footerH;
+  const remaining = rows - headerH;
   const statsRowH = Math.max(6, Math.min(10, Math.floor(remaining * 0.4)));
   const historyH = Math.max(3, remaining - statsRowH * 2);
 
@@ -336,18 +267,42 @@ export function renderOverview(model: OverviewModel, state: UiState, cols: numbe
   y += statsRowH;
 
   renderHistory(screen, model, state, 0, y, cols, historyH);
-  y += historyH;
-
-  renderFooter(screen, state, 0, y, cols);
-
-  // Picker and help are mutually exclusive overlays; the picker wins if a
-  // caller somehow sets both, since it represents an in-progress action
-  // (project switch) rather than a passive reference view.
-  if (state.picker?.open) {
-    renderPicker(screen, state.picker);
-  } else if (state.helpOpen) {
-    drawHelpOverlay(screen, HELP_KEYS);
-  }
 
   return screen;
 }
+
+// ── Key handling ─────────────────────────────────────────────────────────
+
+/** Scrolling the session history table — the only interactive element this screen owns. */
+function onKey(key: Key, state: ScreenUiState, model: OverviewModel | null): boolean {
+  const maxOffset = Math.max(0, (model?.history.length ?? 0) - 1);
+  if (key.name === "j" || key.name === "down") {
+    state.scrollOffset = Math.min(state.scrollOffset + 1, maxOffset);
+    return true;
+  }
+  if (key.name === "k" || key.name === "up") {
+    state.scrollOffset = Math.max(0, state.scrollOffset - 1);
+    return true;
+  }
+  if (key.name === "g") {
+    state.scrollOffset = 0;
+    return true;
+  }
+  if (key.name === "G") {
+    state.scrollOffset = maxOffset;
+    return true;
+  }
+  return false;
+}
+
+// ── Registry entry ───────────────────────────────────────────────────────
+
+export const overviewScreen: TuiScreen<OverviewModel> = {
+  id: "overview",
+  title: "Overview",
+  hotkey: "1",
+  buildModel: buildOverviewModel,
+  render: renderOverview,
+  onKey,
+  helpKeys: HELP_KEYS,
+};

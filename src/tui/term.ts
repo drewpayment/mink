@@ -101,6 +101,7 @@ export function onResize(cb: (cols: number, rows: number) => void): () => void {
 export interface Key {
   name: string;
   ctrl: boolean;
+  shift?: boolean;
 }
 
 const ARROW_NAMES: Record<string, string> = { A: "up", B: "down", C: "right", D: "left" };
@@ -114,6 +115,12 @@ function parseKeys(input: string): Key[] {
     if (ch === "\x1b") {
       if (input[i + 1] === "[" && ARROW_NAMES[input[i + 2] ?? ""]) {
         keys.push({ name: ARROW_NAMES[input[i + 2]], ctrl: false });
+        i += 3;
+        continue;
+      }
+      if (input[i + 1] === "[" && input[i + 2] === "Z") {
+        // CSI Z — the standard "back tab" sequence a terminal sends for Shift-Tab.
+        keys.push({ name: "tab", ctrl: false, shift: true });
         i += 3;
         continue;
       }

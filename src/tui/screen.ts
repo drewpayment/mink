@@ -102,6 +102,23 @@ export class Screen {
     }
   }
 
+  /**
+   * Copies this screen's cells into `dest` at (offsetX, offsetY), clipping
+   * to `dest`'s bounds. Used by the shell to composite a screen's
+   * self-contained render output into the full-frame canvas below the tab
+   * bar and above the footer.
+   */
+  blitInto(dest: Screen, offsetX: number, offsetY: number): void {
+    for (let y = 0; y < this.rows; y++) {
+      for (let x = 0; x < this.cols; x++) {
+        const dx = x + offsetX;
+        const dy = y + offsetY;
+        if (!dest.inBounds(dx, dy)) continue;
+        dest.cells[dest.index(dx, dy)] = this.cells[this.index(x, y)];
+      }
+    }
+  }
+
   resize(cols: number, rows: number): void {
     this.cols = Math.max(0, cols);
     this.rows = Math.max(0, rows);

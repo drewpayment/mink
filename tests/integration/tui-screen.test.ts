@@ -1,13 +1,20 @@
 import { describe, test, expect } from "bun:test";
-import { renderOverview, renderTooSmall, MIN_COLS, MIN_ROWS, type UiState, type PickerItem } from "../../src/tui/overview-screen";
+import { renderOverview } from "../../src/tui/overview-screen";
+import { contentRows } from "../../src/tui/shell";
 import { fmtNum, deriveOverviewModel, type OverviewModel } from "../../src/tui/overview-model";
+import type { ScreenUiState } from "../../src/tui/screen-registry";
 import type { OverviewPayload, TokenLedgerPayload, CompressionPayload } from "../../src/types/dashboard";
 import type { LedgerSession } from "../../src/types/token-ledger";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────
+//
+// renderOverview only composes the Overview panels — no tab bar, footer, or
+// picker/help chrome (that's shell.ts's job, covered in tui-shell.test.ts).
+// Sizes below use shell.contentRows() so the panel layout is exercised at
+// the same dimensions the shell actually hands the screen at 80x24/120x40.
 
-function makeState(overrides: Partial<UiState> = {}): UiState {
-  return { scrollOffset: 0, helpOpen: false, picker: null, lastRefresh: "14:32:05", ...overrides };
+function makeState(overrides: Partial<ScreenUiState> = {}): ScreenUiState {
+  return { scrollOffset: 0, selectedIndex: 0, lastRefresh: "14:32:05", ...overrides };
 }
 
 function makeHistoryEntry(i: number): OverviewModel["history"][number] {
@@ -107,9 +114,10 @@ const PANEL_TITLES = [
 
 // ── Full-frame snapshots ─────────────────────────────────────────────────
 
-describe("renderOverview — 80x24", () => {
+describe("renderOverview — 80x24 content area", () => {
   const model = makeFixtureModel();
-  const frame = renderOverview(model, makeState(), 80, 24).toString();
+  const rows = contentRows(24);
+  const frame = renderOverview(model, makeState(), 80, rows).toString();
 
   test("shows the project name and total saved", () => {
     expect(frame).toContain("mink-fixture");
@@ -124,23 +132,17 @@ describe("renderOverview — 80x24", () => {
     expect(frame).toContain("sess-fixture-0");
   });
 
-  test("shows footer key hints and last-refresh time", () => {
-    expect(frame).toContain("q quit");
-    expect(frame).toContain("? help");
-    expect(frame).toContain("r refresh");
-    expect(frame).toContain("updated 14:32:05");
-  });
-
-  test("frame is exactly 80 columns wide and 24 rows tall", () => {
+  test("frame is exactly 80 columns wide and matches the requested row count", () => {
     const lines = frame.split("\n");
-    expect(lines).toHaveLength(24);
+    expect(lines).toHaveLength(rows);
     for (const line of lines) expect(line.length).toBe(80);
   });
 });
 
-describe("renderOverview — 120x40", () => {
+describe("renderOverview — 120x40 content area", () => {
   const model = makeFixtureModel();
-  const frame = renderOverview(model, makeState(), 120, 40).toString();
+  const rows = contentRows(40);
+  const frame = renderOverview(model, makeState(), 120, rows).toString();
 
   test("shows the project name and total saved", () => {
     expect(frame).toContain("mink-fixture");
@@ -156,9 +158,9 @@ describe("renderOverview — 120x40", () => {
     expect(frame).toContain("sess-fixture-9");
   });
 
-  test("frame is exactly 120 columns wide and 40 rows tall", () => {
+  test("frame is exactly 120 columns wide and matches the requested row count", () => {
     const lines = frame.split("\n");
-    expect(lines).toHaveLength(40);
+    expect(lines).toHaveLength(rows);
     for (const line of lines) expect(line.length).toBe(120);
   });
 });
@@ -166,12 +168,14 @@ describe("renderOverview — 120x40", () => {
 // ── Empty state ──────────────────────────────────────────────────────────
 
 describe("renderOverview — empty state (fresh project)", () => {
+  const rows = contentRows(24);
+
   test("renders without throwing", () => {
-    expect(() => renderOverview(makeEmptyModel(), makeState(), 80, 24)).not.toThrow();
+    expect(() => renderOverview(makeEmptyModel(), makeState(), 80, rows)).not.toThrow();
   });
 
   test("shows friendly empty-state text for session, compression, and history", () => {
-    const frame = renderOverview(makeEmptyModel(), makeState(), 80, 24).toString();
+    const frame = renderOverview(makeEmptyModel(), makeState(), 80, rows).toString();
     expect(frame).toContain("No sessions yet.");
     expect(frame).toContain("No measured compression data yet.");
     expect(frame).toContain("No sessions yet — history will appear here.");
@@ -207,139 +211,9 @@ describe("renderOverview — empty state (fresh project)", () => {
       recent: [],
     };
     const model = deriveOverviewModel(overview, ledger, compression);
-    expect(() => renderOverview(model, makeState(), 80, 24)).not.toThrow();
-    const frame = renderOverview(model, makeState(), 80, 24).toString();
+    expect(() => renderOverview(model, makeState(), 80, rows)).not.toThrow();
+    const frame = renderOverview(model, makeState(), 80, rows).toString();
     expect(frame).toContain("fresh-proj");
-  });
-});
-
-// ── Help overlay ─────────────────────────────────────────────────────────
-
-describe("renderOverview — help overlay", () => {
-  test("draws a centered help box with key/description pairs when helpOpen is true", () => {
-    const frame = renderOverview(makeFixtureModel(), makeState({ helpOpen: true }), 80, 24).toString();
-    expect(frame).toContain("Help");
-    expect(frame).toContain("quit");
-    expect(frame).toContain("toggle this help");
-    expect(frame).toContain("scroll session history");
-  });
-
-  test("no overlay when helpOpen is false", () => {
-    const frame = renderOverview(makeFixtureModel(), makeState({ helpOpen: false }), 80, 24).toString();
-    expect(frame).not.toContain("toggle this help");
-  });
-});
-
-// ── Project picker overlay ───────────────────────────────────────────────
-
-function makePickerItems(n: number, currentIndex = 0): PickerItem[] {
-  return Array.from({ length: n }, (_, i) => ({
-    name: `proj-${i}`,
-    cwd: `/home/dev/proj-${i}`,
-    isCurrent: i === currentIndex,
-  }));
-}
-
-describe("renderOverview — project picker overlay", () => {
-  test("draws a centered box with items, a selection marker, and the current-project marker", () => {
-    const items = makePickerItems(3, 1);
-    const frame = renderOverview(
-      makeFixtureModel(),
-      makeState({ picker: { open: true, index: 1, items } }),
-      80,
-      24,
-    ).toString();
-
-    expect(frame).toContain("Projects");
-    expect(frame).toContain("proj-0");
-    expect(frame).toContain("proj-1  (current)");
-    expect(frame).toContain("proj-2");
-    expect(frame).toContain("▸"); // selection marker on the highlighted row
-  });
-
-  test("no overlay when picker is null or closed", () => {
-    const closed = renderOverview(makeFixtureModel(), makeState({ picker: null }), 80, 24).toString();
-    expect(closed).not.toContain("Projects");
-
-    const items = makePickerItems(2);
-    const explicitlyClosed = renderOverview(
-      makeFixtureModel(),
-      makeState({ picker: { open: false, index: 0, items } }),
-      80,
-      24,
-    ).toString();
-    expect(explicitlyClosed).not.toContain("Projects");
-  });
-
-  test("a selection index beyond the item count clamps rather than throwing", () => {
-    const items = makePickerItems(3);
-    expect(() =>
-      renderOverview(makeFixtureModel(), makeState({ picker: { open: true, index: 999, items } }), 80, 24),
-    ).not.toThrow();
-    const frame = renderOverview(
-      makeFixtureModel(),
-      makeState({ picker: { open: true, index: 999, items } }),
-      80,
-      24,
-    ).toString();
-    expect(frame).toContain("proj-2"); // last item still renders as the (clamped) selection
-  });
-
-  test("an empty registry shows a friendly placeholder instead of a blank list", () => {
-    const frame = renderOverview(
-      makeFixtureModel(),
-      makeState({ picker: { open: true, index: 0, items: [] } }),
-      80,
-      24,
-    ).toString();
-    expect(frame).toContain("Projects");
-    expect(frame).toContain("No registered projects");
-  });
-
-  test("picker takes precedence over the help overlay when both are open", () => {
-    const items = makePickerItems(2);
-    const frame = renderOverview(
-      makeFixtureModel(),
-      makeState({ helpOpen: true, picker: { open: true, index: 0, items } }),
-      80,
-      24,
-    ).toString();
-    expect(frame).toContain("Projects");
-    expect(frame).not.toContain("Help");
-  });
-
-  test("scrolls when there are more items than fit in the overlay height", () => {
-    const items = makePickerItems(30);
-    const frame = renderOverview(
-      makeFixtureModel(),
-      makeState({ picker: { open: true, index: 0, items } }),
-      80,
-      24,
-    ).toString();
-    expect(frame).toContain("proj-0");
-    expect(frame).not.toContain("proj-29"); // scrolled out of the visible window
-    expect(frame).toContain("▼"); // more items below the current window
-  });
-});
-
-// ── Too-small terminal ───────────────────────────────────────────────────
-
-describe("renderTooSmall", () => {
-  test("shows a centered message with the minimum size", () => {
-    const frame = renderTooSmall(60, 15).toString();
-    expect(frame).toContain("Terminal too small");
-    expect(frame).toContain(`${MIN_COLS}×${MIN_ROWS}`);
-    expect(frame).toContain("60×15");
-  });
-
-  test("renderOverview itself falls back to the too-small message below the minimum", () => {
-    const frame = renderOverview(makeFixtureModel(), makeState(), 60, 15).toString();
-    expect(frame).toContain("Terminal too small");
-  });
-
-  test("does not throw at degenerate sizes", () => {
-    expect(() => renderTooSmall(0, 0)).not.toThrow();
-    expect(() => renderTooSmall(1, 1)).not.toThrow();
   });
 });
 
@@ -347,16 +221,57 @@ describe("renderTooSmall", () => {
 
 describe("renderOverview — session history scroll window", () => {
   test("scrollOffset 0 shows the newest entries first", () => {
-    const frame = renderOverview(makeFixtureModel(), makeState({ scrollOffset: 0 }), 120, 40).toString();
+    const frame = renderOverview(makeFixtureModel(), makeState({ scrollOffset: 0 }), 120, contentRows(40)).toString();
     expect(frame).toContain("sess-fixture-0");
   });
 
   test("a large scrollOffset shifts the visible window toward older entries", () => {
     const model = makeFixtureModel();
-    const atTop = renderOverview(model, makeState({ scrollOffset: 0 }), 80, 24).toString();
-    const scrolled = renderOverview(model, makeState({ scrollOffset: model.history.length - 1 }), 80, 24).toString();
+    const rows = contentRows(24);
+    const atTop = renderOverview(model, makeState({ scrollOffset: 0 }), 80, rows).toString();
+    const scrolled = renderOverview(model, makeState({ scrollOffset: model.history.length - 1 }), 80, rows).toString();
     expect(atTop).not.toBe(scrolled);
     // The last (oldest) history entry should be visible once scrolled to the bottom.
     expect(scrolled).toContain(`sess-fixture-${model.history.length - 1}`);
+  });
+});
+
+// ── Screen key handling ──────────────────────────────────────────────────
+
+describe("overviewScreen.onKey — history scrolling", () => {
+  test("j/down, k/up, g, G move and clamp scrollOffset against the model's history length", async () => {
+    const { overviewScreen } = await import("../../src/tui/overview-screen");
+    const model = makeFixtureModel();
+    const state = makeState({ scrollOffset: 0 });
+
+    expect(overviewScreen.onKey!({ name: "j", ctrl: false }, state, model)).toBe(true);
+    expect(state.scrollOffset).toBe(1);
+
+    expect(overviewScreen.onKey!({ name: "G", ctrl: false }, state, model)).toBe(true);
+    expect(state.scrollOffset).toBe(model.history.length - 1);
+
+    // Clamps rather than overshooting past the last entry.
+    expect(overviewScreen.onKey!({ name: "down", ctrl: false }, state, model)).toBe(true);
+    expect(state.scrollOffset).toBe(model.history.length - 1);
+
+    expect(overviewScreen.onKey!({ name: "g", ctrl: false }, state, model)).toBe(true);
+    expect(state.scrollOffset).toBe(0);
+
+    // k/up at the top clamps at 0 rather than going negative.
+    expect(overviewScreen.onKey!({ name: "up", ctrl: false }, state, model)).toBe(true);
+    expect(state.scrollOffset).toBe(0);
+  });
+
+  test("unrelated keys are not consumed", async () => {
+    const { overviewScreen } = await import("../../src/tui/overview-screen");
+    const state = makeState();
+    expect(overviewScreen.onKey!({ name: "x", ctrl: false }, state, makeFixtureModel())).toBe(false);
+  });
+
+  test("a null model (build failed before first success) doesn't throw and clamps to 0", async () => {
+    const { overviewScreen } = await import("../../src/tui/overview-screen");
+    const state = makeState({ scrollOffset: 0 });
+    expect(overviewScreen.onKey!({ name: "G", ctrl: false }, state, null)).toBe(true);
+    expect(state.scrollOffset).toBe(0);
   });
 });
