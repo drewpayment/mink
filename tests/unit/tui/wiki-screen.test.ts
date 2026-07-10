@@ -302,3 +302,19 @@ describe("createWikiScreen instances are isolated", () => {
     expect(b.capturesInput(richModel)).toBe(false);
   });
 });
+
+describe("onProjectSwitch", () => {
+  test("clears the search query, exits search mode, and resets selection", () => {
+    const screen = createWikiScreen();
+    const state = makeState();
+    screen.onKey!({ name: "/", ctrl: false }, state, richModel);
+    screen.onKey!({ name: "x", ctrl: false }, state, richModel);
+    expect(screen.capturesInput(richModel)).toBe(true);
+
+    screen.onProjectSwitch!();
+    expect(screen.capturesInput(richModel)).toBe(false);
+    const frame = screen.render(richModel, state, 80, 22).toString();
+    expect(frame).not.toContain('filter: "x"');
+    expect(frame).toContain("/ to search notes");
+  });
+});

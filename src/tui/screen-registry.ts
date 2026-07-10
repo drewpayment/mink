@@ -50,6 +50,14 @@ export interface TuiScreen<M = unknown> {
    * the key straight to onKey. Ctrl-C still always tears down the app.
    */
   capturesInput?(model: M | null): boolean;
+  /**
+   * Called when the user switches projects via the picker, so screens with
+   * closure-local UI state (search query, section focus, cursors) reset it
+   * — a filter typed against one project must not silently apply to the
+   * next. Screens whose state lives entirely in ScreenUiState omit this;
+   * the shell resets those fields itself.
+   */
+  onProjectSwitch?(): void;
 }
 
 // Ordered; array index is tab position.

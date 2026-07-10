@@ -342,6 +342,12 @@ export function createMemoryScreen(): TuiScreen<MemoryModel> {
     return false;
   }
 
+  function onProjectSwitch(): void {
+    focus = "bugs";
+    bugIndex = 0;
+    learningIndex = 0;
+  }
+
   return {
     id: "memory",
     title: "Memory",
@@ -349,6 +355,7 @@ export function createMemoryScreen(): TuiScreen<MemoryModel> {
     buildModel: buildMemoryModel,
     render,
     onKey,
+    onProjectSwitch,
     helpKeys: HELP_KEYS,
   };
 }

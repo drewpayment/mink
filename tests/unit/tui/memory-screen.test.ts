@@ -220,3 +220,18 @@ describe("createMemoryScreen instances are isolated", () => {
     expect(b.render(richModel, makeState(), 80, contentRows(24)).toString()).toContain("Bug detail");
   });
 });
+
+describe("onProjectSwitch", () => {
+  test("resets section focus to bugs and both cursors to 0", () => {
+    const screen = createMemoryScreen();
+    const state = makeState();
+    screen.onKey!({ name: "l", ctrl: false }, state, richModel);
+    screen.onKey!({ name: "j", ctrl: false }, state, richModel);
+    const before = screen.render(richModel, state, 80, 22).toString();
+    expect(before).toContain("Learning detail");
+
+    screen.onProjectSwitch!();
+    const after = screen.render(richModel, state, 80, 22).toString();
+    expect(after).toContain("Bug detail");
+  });
+});

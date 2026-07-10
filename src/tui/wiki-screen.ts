@@ -21,12 +21,9 @@
  *     the preview fetch in here keeps `render` a pure, fixture-testable
  *     function instead of doing file I/O mid-render.
  *
- * IMPORTANT — see the capturesInput() method below and
- * scratchpad/captures-input.patch: search mode needs first refusal on every
- * keystroke, including ones the shell currently treats as global chrome
- * (q/p/r/?/Tab/digits). That contract change is NOT yet applied to
- * screen-registry.ts/shell.ts/tui.ts; this file implements against the
- * assumption that it will be.
+ * Search mode declares capturesInput (see screen-registry.ts) so it gets
+ * first refusal on every keystroke, including ones the shell otherwise
+ * treats as global chrome (q/p/r/?/Tab/digits). Ctrl-C still always quits.
  */
 
 import { Screen } from "./screen";
@@ -385,6 +382,12 @@ export function createWikiScreen(): WikiScreenType {
     return false;
   }
 
+  function onProjectSwitch(): void {
+    query = "";
+    searchMode = false;
+    selectedIndex = 0;
+  }
+
   return {
     id: "wiki",
     title: "Wiki",
@@ -393,6 +396,7 @@ export function createWikiScreen(): WikiScreenType {
     render,
     onKey,
     capturesInput,
+    onProjectSwitch,
     helpKeys: HELP_KEYS,
   };
 }
