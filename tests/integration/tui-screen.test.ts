@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { renderOverview, renderTooSmall, MIN_COLS, MIN_ROWS, type UiState } from "../../src/tui/overview-screen";
+import { renderOverview, renderTooSmall, MIN_COLS, MIN_ROWS, type UiState, type PickerItem } from "../../src/tui/overview-screen";
 import { fmtNum, deriveOverviewModel, type OverviewModel } from "../../src/tui/overview-model";
 import type { OverviewPayload, TokenLedgerPayload, CompressionPayload } from "../../src/types/dashboard";
 import type { LedgerSession } from "../../src/types/token-ledger";
@@ -7,7 +7,7 @@ import type { LedgerSession } from "../../src/types/token-ledger";
 // ── Fixtures ─────────────────────────────────────────────────────────────
 
 function makeState(overrides: Partial<UiState> = {}): UiState {
-  return { scrollOffset: 0, helpOpen: false, lastRefresh: "14:32:05", ...overrides };
+  return { scrollOffset: 0, helpOpen: false, picker: null, lastRefresh: "14:32:05", ...overrides };
 }
 
 function makeHistoryEntry(i: number): OverviewModel["history"][number] {
@@ -227,6 +227,98 @@ describe("renderOverview — help overlay", () => {
   test("no overlay when helpOpen is false", () => {
     const frame = renderOverview(makeFixtureModel(), makeState({ helpOpen: false }), 80, 24).toString();
     expect(frame).not.toContain("toggle this help");
+  });
+});
+
+// ── Project picker overlay ───────────────────────────────────────────────
+
+function makePickerItems(n: number, currentIndex = 0): PickerItem[] {
+  return Array.from({ length: n }, (_, i) => ({
+    name: `proj-${i}`,
+    cwd: `/home/dev/proj-${i}`,
+    isCurrent: i === currentIndex,
+  }));
+}
+
+describe("renderOverview — project picker overlay", () => {
+  test("draws a centered box with items, a selection marker, and the current-project marker", () => {
+    const items = makePickerItems(3, 1);
+    const frame = renderOverview(
+      makeFixtureModel(),
+      makeState({ picker: { open: true, index: 1, items } }),
+      80,
+      24,
+    ).toString();
+
+    expect(frame).toContain("Projects");
+    expect(frame).toContain("proj-0");
+    expect(frame).toContain("proj-1  (current)");
+    expect(frame).toContain("proj-2");
+    expect(frame).toContain("▸"); // selection marker on the highlighted row
+  });
+
+  test("no overlay when picker is null or closed", () => {
+    const closed = renderOverview(makeFixtureModel(), makeState({ picker: null }), 80, 24).toString();
+    expect(closed).not.toContain("Projects");
+
+    const items = makePickerItems(2);
+    const explicitlyClosed = renderOverview(
+      makeFixtureModel(),
+      makeState({ picker: { open: false, index: 0, items } }),
+      80,
+      24,
+    ).toString();
+    expect(explicitlyClosed).not.toContain("Projects");
+  });
+
+  test("a selection index beyond the item count clamps rather than throwing", () => {
+    const items = makePickerItems(3);
+    expect(() =>
+      renderOverview(makeFixtureModel(), makeState({ picker: { open: true, index: 999, items } }), 80, 24),
+    ).not.toThrow();
+    const frame = renderOverview(
+      makeFixtureModel(),
+      makeState({ picker: { open: true, index: 999, items } }),
+      80,
+      24,
+    ).toString();
+    expect(frame).toContain("proj-2"); // last item still renders as the (clamped) selection
+  });
+
+  test("an empty registry shows a friendly placeholder instead of a blank list", () => {
+    const frame = renderOverview(
+      makeFixtureModel(),
+      makeState({ picker: { open: true, index: 0, items: [] } }),
+      80,
+      24,
+    ).toString();
+    expect(frame).toContain("Projects");
+    expect(frame).toContain("No registered projects");
+  });
+
+  test("picker takes precedence over the help overlay when both are open", () => {
+    const items = makePickerItems(2);
+    const frame = renderOverview(
+      makeFixtureModel(),
+      makeState({ helpOpen: true, picker: { open: true, index: 0, items } }),
+      80,
+      24,
+    ).toString();
+    expect(frame).toContain("Projects");
+    expect(frame).not.toContain("Help");
+  });
+
+  test("scrolls when there are more items than fit in the overlay height", () => {
+    const items = makePickerItems(30);
+    const frame = renderOverview(
+      makeFixtureModel(),
+      makeState({ picker: { open: true, index: 0, items } }),
+      80,
+      24,
+    ).toString();
+    expect(frame).toContain("proj-0");
+    expect(frame).not.toContain("proj-29"); // scrolled out of the visible window
+    expect(frame).toContain("▼"); // more items below the current window
   });
 });
 

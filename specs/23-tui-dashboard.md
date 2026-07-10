@@ -11,6 +11,7 @@ Give power users the dashboard's Overview visibility in a single fullscreen term
 - Live refresh while open (~1s tick) reflecting hook activity as it happens.
 - Works identically under bun and node from the existing dual-runtime bundle.
 - Zero new runtime dependencies.
+- **Multi-project switcher**: `p` opens a project picker overlay (all registered projects, current one marked) and switches the live dashboard to the selected project's cwd without restarting the process.
 
 ## Non-goals (v1)
 
@@ -56,6 +57,10 @@ Boxed panels with titled borders, in the spirit of btop:
 | `r` | force refresh now |
 | `j`/`k`, `↓`/`↑` | scroll session history |
 | `g`/`G` | history top/bottom |
+| `p` | open the project picker |
+| `j`/`k`, `↓`/`↑` (picker open) | move selection |
+| Enter (picker open) | switch to the selected project |
+| Esc, `p`, `q` (picker open) | close the picker without switching |
 
 ### Visual language
 
@@ -128,8 +133,7 @@ Contracts:
 2. **Compression panel**: recent compression events feed + per-kind breakdown (already in `loadCompressionPanel`).
 3. **Bugs & learnings browser**: read-only list from bug memory / learning memory — high value for "what does mink know about this repo".
 4. **Wiki quick-search**: fuzzy-find notes, print path on exit (lazygit-style "open in editor").
-5. **Multi-project switcher**: `p` to cycle registered projects (dashboard-api already supports project listing).
-6. Theming/config (`~/.mink/config` keys), layout presets, mouse support — only on demand.
+5. Theming/config (`~/.mink/config` keys), layout presets, mouse support — only on demand.
 
 ## Definition of done (v1)
 

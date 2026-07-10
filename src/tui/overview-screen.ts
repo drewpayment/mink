@@ -6,16 +6,29 @@
  */
 
 import { Screen } from "./screen";
-import { drawBox, statTile, sparkline, hbar, stackedBar, drawTable, drawHelpOverlay } from "./widgets";
+import { drawBox, statTile, sparkline, hbar, stackedBar, drawTable, drawHelpOverlay, drawListOverlay } from "./widgets";
 import { stringWidth, padToWidth } from "./width";
 import { fmtNum, fmtDuration, fmtTime, type OverviewModel } from "./overview-model";
 
 export const MIN_COLS = 80;
 export const MIN_ROWS = 24;
 
+export interface PickerItem {
+  name: string;
+  cwd: string;
+  isCurrent: boolean;
+}
+
+export interface PickerState {
+  open: boolean;
+  index: number;
+  items: PickerItem[];
+}
+
 export interface UiState {
   scrollOffset: number;
   helpOpen: boolean;
+  picker: PickerState | null;
   lastRefresh: string; // preformatted time, e.g. "14:32:05"
 }
 
@@ -25,6 +38,7 @@ const HELP_KEYS: Array<[string, string]> = [
   ["r", "force refresh"],
   ["j/k, ↓/↑", "scroll session history"],
   ["g/G", "history top/bottom"],
+  ["p", "project picker"],
 ];
 
 /** Centered "terminal too small" message — never renders garbage below the minimum size. */
@@ -264,13 +278,32 @@ function renderHistory(screen: Screen, model: OverviewModel, state: UiState, x: 
 // ── Footer ───────────────────────────────────────────────────────────────
 
 function renderFooter(screen: Screen, state: UiState, x: number, y: number, w: number): void {
-  const hints = "q quit · ? help · r refresh · j/k scroll · g/G top/bottom";
+  const hints = "q quit · ? help · r refresh · j/k/g/G scroll · p projects";
   const updated = `updated ${state.lastRefresh}`;
   screen.drawText(x, y, hints, { fg: "dim" }, w);
   const updatedX = x + w - stringWidth(updated);
   if (updatedX > x + stringWidth(hints) + 1) {
     screen.drawText(updatedX, y, updated, { fg: "dim" }, w);
   }
+}
+
+// ── Project picker overlay ───────────────────────────────────────────────
+
+function renderPicker(screen: Screen, picker: PickerState): void {
+  const hasItems = picker.items.length > 0;
+  const items = hasItems
+    ? picker.items.map((p) => (p.isCurrent ? `${p.name}  (current)` : p.name))
+    : ["No registered projects"];
+  const subItems = hasItems ? picker.items.map((p) => p.cwd) : undefined;
+  const selectedIndex = hasItems ? picker.index : -1;
+
+  drawListOverlay(screen, {
+    title: "Projects",
+    items,
+    selectedIndex,
+    subItems,
+    footerHint: hasItems ? "↵ switch · Esc/p close" : "Esc/p close",
+  });
 }
 
 // ── Top-level layout ─────────────────────────────────────────────────────
@@ -307,7 +340,14 @@ export function renderOverview(model: OverviewModel, state: UiState, cols: numbe
 
   renderFooter(screen, state, 0, y, cols);
 
-  if (state.helpOpen) drawHelpOverlay(screen, HELP_KEYS);
+  // Picker and help are mutually exclusive overlays; the picker wins if a
+  // caller somehow sets both, since it represents an in-progress action
+  // (project switch) rather than a passive reference view.
+  if (state.picker?.open) {
+    renderPicker(screen, state.picker);
+  } else if (state.helpOpen) {
+    drawHelpOverlay(screen, HELP_KEYS);
+  }
 
   return screen;
 }

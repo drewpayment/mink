@@ -229,6 +229,85 @@ export function drawTable(screen: Screen, opts: TableOptions): void {
   }
 }
 
+// ── List overlay ─────────────────────────────────────────────────────────
+
+export interface ListOverlayOptions {
+  title: string;
+  items: string[];
+  /** -1 means no row is selectable/highlighted (e.g. a placeholder message). */
+  selectedIndex: number;
+  footerHint?: string;
+  /** Dim-styled suffix per item (e.g. a cwd), same length as `items`. */
+  subItems?: string[];
+}
+
+/**
+ * Draws a centered bordered overlay listing selectable items — same
+ * centered-box shape as drawHelpOverlay, but with a highlighted selected
+ * row (▸ marker, accent style) and a scrolling window when items exceed
+ * ~70% of the screen height.
+ */
+export function drawListOverlay(screen: Screen, opts: ListOverlayOptions): void {
+  const { title, items, selectedIndex, footerHint, subItems } = opts;
+  if (screen.cols <= 0 || screen.rows <= 0) return;
+
+  const MARKER_W = 2; // "▸ " / "  "
+  const itemsWidth = items.reduce((max, item, i) => {
+    const sub = subItems?.[i] ? " " + subItems[i] : "";
+    return Math.max(max, MARKER_W + stringWidth(item) + stringWidth(sub));
+  }, 0);
+  const contentWidth = Math.max(20, itemsWidth, footerHint ? stringWidth(footerHint) : 0);
+  const w = Math.min(screen.cols, contentWidth + 4);
+
+  const footerRows = footerHint ? 1 : 0;
+  const chrome = 3 + footerRows; // top border, blank padding row, bottom border, optional footer
+  const maxH = Math.max(6, Math.floor(screen.rows * 0.7));
+  const desiredH = chrome + Math.max(1, items.length);
+  const h = Math.min(screen.rows, maxH, Math.max(6, desiredH));
+
+  const x = Math.max(0, Math.floor((screen.cols - w) / 2));
+  const y = Math.max(0, Math.floor((screen.rows - h) / 2));
+
+  drawBox(screen, { x, y, w, h, title, focused: true });
+
+  const bodyH = Math.max(0, h - chrome);
+  if (bodyH <= 0) return;
+
+  const clampedSelected =
+    items.length > 0 && selectedIndex >= 0 ? Math.max(0, Math.min(selectedIndex, items.length - 1)) : -1;
+
+  let offset = 0;
+  if (clampedSelected >= bodyH) offset = clampedSelected - bodyH + 1;
+  offset = Math.max(0, Math.min(offset, Math.max(0, items.length - bodyH)));
+
+  const visible = items.slice(offset, offset + bodyH);
+  visible.forEach((item, i) => {
+    const rowIndex = offset + i;
+    const rowY = y + 2 + i;
+    const isSelected = rowIndex === clampedSelected;
+    const marker = isSelected ? "▸ " : "  ";
+    const style: Style = isSelected ? { fg: "accent", bold: true } : { fg: "text" };
+    const label = marker + item;
+    screen.drawText(x + 2, rowY, label, style, w - 4);
+    const sub = subItems?.[rowIndex];
+    if (sub) {
+      const usedW = stringWidth(label);
+      const subX = x + 2 + usedW + 1;
+      const subMaxW = w - 4 - usedW - 1;
+      if (subMaxW > 0) screen.drawText(subX, rowY, sub, { fg: "dim" }, subMaxW);
+    }
+  });
+
+  const hasMoreAbove = offset > 0;
+  const hasMoreBelow = offset + bodyH < items.length;
+  if (hasMoreAbove) screen.set(x + w - 2, y, "▲", { fg: "dim" });
+  if (hasMoreBelow) screen.set(x + w - 2, y + h - 1, "▼", { fg: "dim" });
+
+  if (footerHint) {
+    screen.drawText(x + 2, y + h - 2, footerHint, { fg: "dim" }, w - 4);
+  }
+}
+
 // ── Help overlay ─────────────────────────────────────────────────────────
 
 /** Draws a centered bordered overlay listing key → description pairs. */

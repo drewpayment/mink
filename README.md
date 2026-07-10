@@ -61,8 +61,11 @@ mink tui --interval=500   # refresh every 500ms instead of the 1s default (min 2
 | `q`, `Ctrl-C` | Quit (restores the terminal cleanly) |
 | `?` | Toggle the help overlay |
 | `r` | Force an immediate refresh |
-| `j`/`k`, `↓`/`↑` | Scroll session history |
+| `j`/`k`, `↓`/`↑` | Scroll session history (or move selection in the project picker) |
 | `g`/`G` | Jump to top/bottom of session history |
+| `p` | Open the project picker |
+| Enter | Switch to the selected project (picker open) |
+| Esc, `p`, `q` | Close the project picker without switching (picker open) |
 
 It needs an interactive terminal at least 80×24; piped or non-TTY invocations print a short notice and exit instead of entering the alternate screen, and a too-small terminal shows a centered message until you resize.
 
