@@ -45,6 +45,36 @@ When the daemon isn't running yet, the dashboard greets you with a guided onboar
 
 ![Onboarding — welcome back screen shown when the daemon is offline](docs/images/onboarding.png)
 
+## TUI Dashboard
+
+Prefer the terminal? `mink tui` opens a fullscreen, [btop](https://github.com/aristocratos/btop)-style dashboard right in your terminal — no web server, no browser tab, instant startup:
+
+![mink tui — Overview screen with live token savings, 7-day usage sparklines, current session, measured compression, and session history](docs/images/tui-overview.png)
+
+```
+mink tui
+mink tui --interval=500   # refresh every 500ms instead of the 1s default (min 250ms)
+```
+
+Three tabbed screens, switched with `Tab` or `1`–`3`:
+
+1. **Overview** — the web dashboard's Overview numbers: total tokens saved (heuristic + measured), lifetime KPIs, last-7-days sparklines with weekly totals, the current session, measured compression, and session history
+2. **Sessions** — drill into any session: reads, writes, tokens, savings, index hit rate, and project waste flags
+3. **Compression** — measured-savings KPIs, per-content-kind breakdown, and a recent-events feed
+
+The TUI reads the same `~/.mink/` state as the web dashboard through the same data layer, so the numbers always match — it just skips the HTTP server and repaints on a ~1s tick as your sessions' hooks fire. Press `p` to switch between any of your registered projects without leaving the dashboard.
+
+| Key | Action |
+|---|---|
+| `q`, `Ctrl-C` | Quit (restores the terminal cleanly) |
+| `Tab`/`Shift-Tab`, `1`–`3` | Switch screens |
+| `?` | Help overlay (includes the active screen's keys) |
+| `r` | Force an immediate refresh |
+| `j`/`k`, `↓`/`↑`, `g`/`G` | Scroll / move selection in the active screen |
+| `p` | Open the project picker (Enter switches, Esc closes) |
+
+Implementation notes for the curious: it's a zero-dependency ANSI renderer (alternate screen + diff-based repaint, so no flicker), width-safe for CJK and emoji, degrades from truecolor to 256-color to plain (honoring `NO_COLOR`), and restores your terminal on every exit path — including crashes. It needs an interactive terminal of at least 80×24; piped or non-TTY invocations print a short notice and exit cleanly, and a too-small terminal shows a centered message until you resize. Works identically under Node and Bun.
+
 ## How It Works
 
 Mink registers as a set of [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) that fire on key lifecycle events. Each hook is a lightweight CLI call that reads and updates JSON state files stored in `~/.mink/`.
@@ -86,6 +116,7 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 ### Interfaces
 - **CLI** — 25+ commands covering lifecycle hooks, state management, notes/wiki, scheduling, configuration, backup/restore, and more
 - **Real-time Dashboard** — Web UI with 10 panels, SSE live updates, light/dark themes, virtual scrolling, and interactive charts
+- **TUI Dashboard** — `mink tui` reproduces the Overview panel in a fullscreen terminal UI, no web server required
 
 ### Notes & Wiki
 - **Wiki Vault** — Obsidian-compatible markdown vault that accumulates knowledge across all projects
