@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.15.0](https://github.com/drewpayment/mink/compare/v0.14.0...v0.15.0) (2026-07-13)
+
+
+### Features
+
+* **tui:** mink tui command — fullscreen overview dashboard (spec 23, phase 2) ([5981b44](https://github.com/drewpayment/mink/commit/5981b44edcbad9e9adcdf2662064d13849627539))
+* **tui:** project-switcher overlay — p opens registered-project picker ([c06263b](https://github.com/drewpayment/mink/commit/c06263bb836b19897557710d6fa7fbad9af62b73))
+* **tui:** sessions, compression, memory & wiki screens — five-tab TUI ([146b5ca](https://github.com/drewpayment/mink/commit/146b5ca0f9e366a1ef6ada1f5fcd26ce4a5e7f36))
+* **tui:** terminal dashboard (mink tui) + PR [#91](https://github.com/drewpayment/mink/issues/91)/[#58](https://github.com/drewpayment/mink/issues/58) content ([7753637](https://github.com/drewpayment/mink/commit/77536373241752a1bb671a6adbd9355ee68434c6))
+* **tui:** terminal primitives + overview view-model (spec 23, phase 1) ([ec265b4](https://github.com/drewpayment/mink/commit/ec265b45460cf011338e6ed0993b56afe7f1cdd9))
+
+
+### Bug Fixes
+
+* **tui:** last-7-days right-edge numbers show weekly totals, not today's bucket ([375d015](https://github.com/drewpayment/mink/commit/375d0151632b3bd3b3f04a66853993cd9c583d7a))
+* **tui:** QA findings — 0x0 pty geometry, help-overlay key order, hardening ([b4a9ea9](https://github.com/drewpayment/mink/commit/b4a9ea95c77ee01c05193c5aab675ae1e1271636))
+* **tui:** QA round 2 — per-screen state reset on project switch, q closes help ([d6a0a51](https://github.com/drewpayment/mink/commit/d6a0a51fd5fff3f2a6a15bae5f74ffd292b7f140))
+
 ## [0.14.0](https://github.com/drewpayment/mink/compare/v0.13.0...v0.14.0) (2026-07-10)
 
 
