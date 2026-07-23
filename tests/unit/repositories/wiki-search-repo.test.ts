@@ -83,6 +83,16 @@ describe("WikiSearchRepo", () => {
     const results = repo.search("kubernetes networking");
     expect(results.length).toBe(2);
     expect(results[0].path).toBe("inbox/titled.md");
+    // Regression: score direction must agree with array order. A previous
+    // version computed `1/(1+abs(rank))`, which — since abs() erases bm25's
+    // sign (more negative = better) — actually gave the WORSE (body-only)
+    // match the HIGHER score even though the array itself (sorted by the
+    // raw SQL ORDER BY) was in the right order. Any consumer sorting or
+    // thresholding on `score` directly, rather than trusting array order,
+    // got backwards relevance.
+    expect(results[0].score).toBeGreaterThan(results[1].score);
+    expect(results[0].score).toBeGreaterThan(0);
+    expect(results[0].score).toBeLessThan(1);
   });
 
   test("filters: --category restricts results", () => {
@@ -153,6 +163,115 @@ describe("WikiSearchRepo", () => {
     repo.deleteNote("a.md");
     expect(repo.search("widget")).toEqual([]);
     expect(repo.outlinksFor("a.md")).toEqual([]);
+  });
+
+  describe("deleteNote — no dangling citations of a removed note", () => {
+    test("clears inbound resolved_path so a deleted note stops being cited as a backlink", () => {
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(note({ path: "alpha.md", title: "Alpha" }));
+      repo.upsertNote(note({ path: "beta.md", title: "Beta" }));
+      repo.replaceLinksForSource("alpha.md", [{ target: "Beta", resolvedPath: "beta.md" }]);
+      expect(repo.backlinksFor("beta.md")).toEqual([{ path: "alpha.md", title: "Alpha" }]);
+
+      repo.deleteNote("beta.md");
+
+      expect(repo.backlinksFor("beta.md")).toEqual([]);
+    });
+
+    test("relatedFor no longer cites a deleted note as an outlink (proven repro: rm beta.md)", () => {
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(note({ path: "alpha.md", title: "Alpha" }));
+      repo.upsertNote(note({ path: "beta.md", title: "Beta" }));
+      repo.replaceLinksForSource("alpha.md", [{ target: "Beta", resolvedPath: "beta.md" }]);
+      expect(repo.relatedFor("alpha.md").some((r) => r.path === "beta.md")).toBe(true);
+
+      repo.deleteNote("beta.md");
+
+      const related = repo.relatedFor("alpha.md");
+      expect(related.some((r) => r.path === "beta.md")).toBe(false);
+    });
+
+    test("outlinksFor reports a deleted target as unresolved (path: null), not the stale path", () => {
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(note({ path: "alpha.md", title: "Alpha" }));
+      repo.upsertNote(note({ path: "beta.md", title: "Beta" }));
+      repo.replaceLinksForSource("alpha.md", [{ target: "Beta", resolvedPath: "beta.md" }]);
+
+      repo.deleteNote("beta.md");
+
+      const outlinks = repo.outlinksFor("alpha.md");
+      expect(outlinks).toEqual([{ target: "Beta", path: null, title: null }]);
+    });
+
+    test("belt-and-suspenders: outlinksFor/relatedFor ignore a links row whose resolved_path is stale even without going through deleteNote", () => {
+      // Simulates an external delete (rm on disk) caught by the mtime
+      // catch-up sweep at a point where the links row itself hasn't been
+      // touched yet — i.e. the JOIN-based defense in outlinksFor, not the
+      // deleteNote cleanup, is what's under test here.
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(note({ path: "alpha.md", title: "Alpha" }));
+      // Note: no upsertNote for "beta.md" — resolved_path points at a path
+      // that was never (or is no longer) a real note row.
+      repo.replaceLinksForSource("alpha.md", [{ target: "Beta", resolvedPath: "beta.md" }]);
+
+      expect(repo.outlinksFor("alpha.md")).toEqual([{ target: "Beta", path: null, title: null }]);
+      expect(repo.relatedFor("alpha.md").some((r) => r.path === "beta.md")).toBe(false);
+    });
+  });
+
+  describe("search — prefix/partial-word fallback", () => {
+    test("a stemmed prefix query on a partial word alone returns nothing from FTS (documents the actual FTS5+porter limitation)", () => {
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(note({ path: "auth.md", title: "Auth", body: "We rolled out two-factor authentication for all admin accounts." }));
+
+      // This is the private FTS-only path's behavior in isolation — asserted
+      // indirectly: a complete-but-different word with the same prefix
+      // wouldn't help porter here, so we just document that the *only*
+      // reason "authenticat" still finds something below is the substring
+      // fallback, not FTS prefix matching itself.
+      const results = repo.search("authenticat");
+      expect(results.length).toBe(1);
+      expect(results[0].path).toBe("auth.md");
+      // Fallback hits are deliberately capped at/below 0.5 — below the
+      // range a real FTS/bm25 match can reach (bm25ToScore approaches but
+      // never hits 1).
+      expect(results[0].score).toBeLessThanOrEqual(0.5);
+    });
+
+    test("falls back to a substring scan when the FTS prefix-of-stem query returns zero hits", () => {
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(note({ path: "a.md", title: "A", body: "Unrelated content about turbines." }));
+      repo.upsertNote(note({ path: "b.md", title: "Configuration Guide", body: "See the configuration reference for details." }));
+
+      const results = repo.search("configurat");
+      expect(results.map((r) => r.path)).toEqual(["b.md"]);
+    });
+
+    test("fallback still respects filters (--category)", () => {
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(note({ path: "a.md", title: "A", category: "inbox", body: "authentication flow notes" }));
+      repo.upsertNote(note({ path: "b.md", title: "B", category: "projects", body: "authentication flow notes" }));
+
+      const results = repo.search("authenticat", { category: "projects" });
+      expect(results.map((r) => r.path)).toEqual(["b.md"]);
+    });
+
+    test("does not fall back when the FTS query already found results", () => {
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(note({ path: "a.md", title: "A", body: "compression testing" }));
+      repo.upsertNote(note({ path: "b.md", title: "B", body: "unrelated note about turbines, no relevant words at all" }));
+
+      const results = repo.search("compression");
+      // Only the real FTS match — the fallback must not run (and thus must
+      // not add irrelevant rows) when FTS already succeeded.
+      expect(results.map((r) => r.path)).toEqual(["a.md"]);
+    });
+
+    test("still returns [] when nothing matches even the fallback", () => {
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(note({ path: "a.md", title: "A", body: "widget" }));
+      expect(repo.search("zzznonexistentzzz")).toEqual([]);
+    });
   });
 
   test("wipeAll clears notes, fts mirror, and links", () => {

@@ -22,6 +22,14 @@ export interface InsertWikilinksOptions {
   // inserted bare (old behavior) — callers that care about link hygiene
   // (write-time auto-linking) should pass the vault root.
   vaultRoot?: string;
+  // Vault-relative path of the note currently being written. When multiple
+  // basename matches exist, a match that lives in the same directory as
+  // this note is preferred before falling back to recency — mirrors `mink
+  // wiki doctor`'s canonicalization heuristic (a sibling note in the same
+  // project/area is far more likely to be what the author meant than an
+  // unrelated note elsewhere that merely happens to have been edited more
+  // recently).
+  sourcePath?: string;
 }
 
 // Find every note in the vault whose basename (filename minus .md) matches
@@ -38,6 +46,34 @@ function findBasenameMatches(target: string, root: string): string[] {
     if (base.toLowerCase() === targetLower) matches.push(file.relativePath);
   }
   return matches;
+}
+
+function dirOf(relPath: string): string {
+  const idx = relPath.lastIndexOf("/");
+  return idx === -1 ? "" : relPath.slice(0, idx);
+}
+
+// Pick the most likely intended target among several notes that share a
+// basename: prefer one in the same directory as the note being written
+// (a sibling is far more likely to be "the" overview/README the author
+// meant than a same-named note in an unrelated project/area), then fall
+// back to the most recently modified match when there's no source
+// directory to compare against, or no same-directory match exists.
+function chooseAmbiguousMatch(matches: string[], root: string, sourcePath?: string): string {
+  const withMeta = matches.map((relPath) => ({
+    relPath,
+    mtimeMs: statSync(join(root, relPath)).mtimeMs,
+  }));
+
+  if (sourcePath) {
+    const sourceDir = dirOf(sourcePath);
+    const sameDir = withMeta
+      .filter((m) => dirOf(m.relPath) === sourceDir)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    if (sameDir.length > 0) return sameDir[0].relPath;
+  }
+
+  return withMeta.sort((a, b) => b.mtimeMs - a.mtimeMs)[0].relPath;
 }
 
 export function insertWikilinks(
@@ -59,19 +95,12 @@ export function insertWikilinks(
     // [[target]] link is ambiguous — Obsidian and mink's own wikilink
     // resolver would both have to guess. Emit a path-qualified
     // [[relative/path|displayed text]] link instead so it resolves to a
-    // specific note regardless of how many others share the name. The most
-    // recently modified match is used as the likely intended target.
+    // specific note regardless of how many others share the name.
     let replacement = "[[$1]]";
     if (opts.vaultRoot) {
       const matches = findBasenameMatches(target, opts.vaultRoot);
       if (matches.length > 1) {
-        const withMtime = matches
-          .map((relPath) => ({
-            relPath,
-            mtimeMs: statSync(join(opts.vaultRoot!, relPath)).mtimeMs,
-          }))
-          .sort((a, b) => b.mtimeMs - a.mtimeMs);
-        const chosen = withMtime[0].relPath.replace(/\.md$/i, "");
+        const chosen = chooseAmbiguousMatch(matches, opts.vaultRoot, opts.sourcePath).replace(/\.md$/i, "");
         replacement = `[[${chosen}|$1]]`;
       }
     }

@@ -5,7 +5,7 @@
 // if the user repoints `wiki.path`. The cache checks the resolved path on
 // every open and transparently reconnects when it differs.
 
-import { mkdirSync } from "fs";
+import { mkdirSync, rmSync } from "fs";
 import { dirname, join } from "path";
 import { resolveVaultPath } from "../core/vault";
 import { openDriver, type DbDriver } from "./driver";
@@ -79,5 +79,31 @@ export function _resetWikiSearchDbForTests(): void {
       // ignore
     }
     cached = null;
+  }
+}
+
+// Last-resort recovery for a corrupted/unreadable search index: close the
+// current connection (if any) and delete the database file plus its WAL/SHM/
+// journal sidecars, so the next openWikiSearchDb() call creates a clean file
+// from the schema. Used by core/wiki-search.ts's corruption-recovery wrapper
+// when a query throws — the index is fully derived from the vault's own
+// markdown (mink wiki reindex rebuilds it), so deleting it is always safe;
+// it is never the source of truth for anything.
+export function resetCorruptWikiSearchDb(): void {
+  const path = wikiSearchDbPath();
+  if (cached && cached.path === path) {
+    try {
+      cached.driver.close();
+    } catch {
+      // best effort — the file may already be the thing that's broken
+    }
+    cached = null;
+  }
+  for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+    try {
+      rmSync(`${path}${suffix}`, { force: true });
+    } catch {
+      // best effort
+    }
   }
 }

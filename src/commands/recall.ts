@@ -68,13 +68,23 @@ export async function recall(_cwd: string, args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const results = recallQuery(parsed.query, {
-    limit: parsed.limit,
-    project: parsed.project,
-    tag: parsed.tag,
-    category: parsed.category,
-    since: parsed.since,
-  });
+  // core/wiki-search.ts's recall() already retries once through a delete
+  // + rebuild on a thrown (e.g. corrupted-index) error. If it still throws
+  // after that, print the clean message it constructed instead of letting
+  // an uncaught exception dump a raw stack trace.
+  let results: ReturnType<typeof recallQuery>;
+  try {
+    results = recallQuery(parsed.query, {
+      limit: parsed.limit,
+      project: parsed.project,
+      tag: parsed.tag,
+      category: parsed.category,
+      since: parsed.since,
+    });
+  } catch (err) {
+    console.error(`[mink] ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
 
   if (parsed.json) {
     console.log(JSON.stringify({ query: parsed.query, results }, null, 2));

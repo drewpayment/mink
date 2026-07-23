@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { rmSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync } from "fs";
+import { rmSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, utimesSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -158,6 +158,52 @@ TypeScript is great.`;
         const result = insertWikilinks(content, ["overview"]);
 
         expect(result).toContain("[[overview]]");
+      });
+
+      test("prefers a same-directory match over a more-recently-modified match elsewhere", () => {
+        const alphaPath = join(vaultPath, "projects", "alpha", "overview.md");
+        const betaPath = join(vaultPath, "projects", "beta", "overview.md");
+        writeFileSync(alphaPath, "# Alpha overview\n");
+        writeFileSync(betaPath, "# Beta overview\n");
+
+        // Beta is modified LATER (more recent mtime) than alpha, so a
+        // recency-only heuristic would pick beta. sourcePath below says
+        // we're writing from within projects/alpha/ — that sibling must
+        // win regardless of which file was touched more recently.
+        const past = new Date(Date.now() - 60_000);
+        const future = new Date(Date.now() + 60_000);
+        utimesSync(alphaPath, past, past);
+        utimesSync(betaPath, future, future);
+
+        const content = "See the overview for details.";
+        const result = insertWikilinks(content, ["overview"], {
+          vaultRoot: vaultPath,
+          sourcePath: "projects/alpha/notes.md",
+        });
+
+        expect(result).toContain("[[projects/alpha/overview|overview]]");
+      });
+
+      test("falls back to recency when no match shares the source note's directory", () => {
+        const alphaPath = join(vaultPath, "projects", "alpha", "overview.md");
+        const betaPath = join(vaultPath, "projects", "beta", "overview.md");
+        writeFileSync(alphaPath, "# Alpha overview\n");
+        writeFileSync(betaPath, "# Beta overview\n");
+
+        const past = new Date(Date.now() - 60_000);
+        const future = new Date(Date.now() + 60_000);
+        utimesSync(alphaPath, past, past);
+        utimesSync(betaPath, future, future);
+
+        const content = "See the overview for details.";
+        // Writing from a third, unrelated directory — neither match is a
+        // sibling, so recency decides.
+        const result = insertWikilinks(content, ["overview"], {
+          vaultRoot: vaultPath,
+          sourcePath: "areas/daily/2026-01-01.md",
+        });
+
+        expect(result).toContain("[[projects/beta/overview|overview]]");
       });
     });
   });

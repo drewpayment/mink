@@ -15,7 +15,7 @@ import {
   resetWikiSearchRuntimeForTests,
 } from "../../../src/core/wiki-search";
 import { ensureVaultStructure } from "../../../src/core/vault";
-import { _resetWikiSearchDbForTests } from "../../../src/storage/wiki-search-db";
+import { _resetWikiSearchDbForTests, wikiSearchDbPath } from "../../../src/storage/wiki-search-db";
 
 let tempDir: string;
 let originalEnv: string | undefined;
@@ -213,5 +213,123 @@ describe("wiki-search — resolveNoteArg / graph queries", () => {
     reindexVault();
     const related = relatedForNote("a.md");
     expect(related.some((r) => r.path === "b.md")).toBe(true);
+  });
+
+  test("relatedForNote no longer cites a note removed out-of-band without an explicit reindex (rm + catch-up)", () => {
+    writeNote("alpha.md", "---\ntags: []\ncategory: inbox\n---\n\n# Alpha\n\nSee [[Beta]] for context.\n");
+    const betaAbs = writeNote("beta.md", "---\ntags: []\ncategory: inbox\n---\n\n# Beta\n\nbody\n");
+    reindexVault();
+    expect(relatedForNote("alpha.md").some((r) => r.path === "beta.md")).toBe(true);
+
+    // External delete (rm), never routed through removeNoteFromIndex —
+    // only the mtime catch-up sweep (which relatedForNote/backlinksForNote
+    // run automatically) will ever see this.
+    rmSync(betaAbs);
+    resetWikiSearchRuntimeForTests(); // clear the throttle so the sweep actually runs
+
+    const related = relatedForNote("alpha.md");
+    expect(related.some((r) => r.path === "beta.md")).toBe(false);
+  });
+});
+
+describe("wiki-search — templates/ excluded, patterns/ kept (indexing scope)", () => {
+  test("templates/ content is never indexed (proven repro: 'compression' matched templates/note.md)", () => {
+    writeNote(
+      "templates/note.md",
+      "---\ntags: []\ncategory: resources\n---\n\n# {{title}}\n\nUse this template to write up compression benchmarks.\n"
+    );
+    writeNote("inbox/real.md", "---\ntags: []\ncategory: inbox\n---\n\n# Real Note\n\nUnrelated content.\n");
+
+    reindexVault();
+    const results = recall("compression");
+    expect(results.some((r) => r.path.startsWith("templates/"))).toBe(false);
+    expect(results.length).toBe(0);
+  });
+
+  test("templates/ is also excluded from the incremental write-time hook and the catch-up sweep", () => {
+    const abs = writeNote(
+      "templates/note.md",
+      "---\ntags: []\ncategory: resources\n---\n\n# {{title}}\n\nMentions compression in boilerplate prose.\n"
+    );
+    indexNoteFile(abs);
+    expect(recall("compression").length).toBe(0);
+
+    resetWikiSearchRuntimeForTests();
+    catchUpIndex({ force: true });
+    expect(recall("compression").length).toBe(0);
+  });
+
+  test("patterns/ IS indexed — it holds real cross-project knowledge (spec 15), not boilerplate", () => {
+    writeNote(
+      "patterns/retry-with-backoff.md",
+      "---\ntags: []\ncategory: resources\n---\n\n# Retry With Backoff\n\nA reusable pattern for exponential backoff across services.\n"
+    );
+    reindexVault();
+    const results = recall("exponential backoff");
+    expect(results.some((r) => r.path === "patterns/retry-with-backoff.md")).toBe(true);
+  });
+});
+
+describe("wiki-search — --since normalization of non-ISO updated: values", () => {
+  test("a hand-edited non-ISO updated: field is normalized to ISO at index time so --since still filters correctly", () => {
+    // US-format date, deliberately NOT ISO-8601 — a naive lexicographic
+    // string compare against an ISO --since value would misbehave (e.g.
+    // "01/15/2026" sorts before any ISO date starting with "19"-"29"
+    // regardless of which is actually more recent).
+    writeNote(
+      "inbox/obsidian-edited.md",
+      '---\ntags: []\ncategory: inbox\nupdated: "01/15/2026"\n---\n\n# Obsidian Edited\n\nrecent fact about widgets\n'
+    );
+    reindexVault();
+
+    // The note's real date (Jan 2026) is after this --since bound.
+    const included = recall("widgets", { since: "2025-01-01T00:00:00.000Z" });
+    expect(included.length).toBe(1);
+
+    // ...and before this one.
+    const excluded = recall("widgets", { since: "2027-01-01T00:00:00.000Z" });
+    expect(excluded.length).toBe(0);
+  });
+
+  test("an unparseable updated: value falls back to the file's mtime instead of corrupting the sort", () => {
+    const abs = writeNote(
+      "inbox/garbage-date.md",
+      '---\ntags: []\ncategory: inbox\nupdated: "not a date at all"\n---\n\n# Garbage Date\n\nfact about gadgets\n'
+    );
+    indexNoteFile(abs);
+    // Doesn't throw, and is still findable/filterable using a real bound
+    // derived from "now" (mtime falls back to the write time, which is now).
+    const results = recall("gadgets", { since: new Date(Date.now() - 60_000).toISOString() });
+    expect(results.length).toBe(1);
+  });
+});
+
+describe("wiki-search — corruption recovery", () => {
+  test("recall() recovers from a corrupted .mink-search.db by rebuilding once and retrying", () => {
+    writeNote("inbox/a.md", "---\ntags: []\ncategory: inbox\n---\n\n# A\n\na fact about flywheels\n");
+    reindexVault();
+    expect(recall("flywheels").length).toBe(1);
+
+    // Corrupt the on-disk database out from under the running process.
+    _resetWikiSearchDbForTests();
+    writeFileSync(wikiSearchDbPath(), "this is not a valid sqlite file");
+
+    // Must not throw, and must recover (rebuild from the vault's markdown,
+    // which is still intact on disk) rather than surface a raw SQLite error.
+    const results = recall("flywheels");
+    expect(results.length).toBe(1);
+    expect(results[0].path).toBe("inbox/a.md");
+  });
+
+  test("reindexVault() itself recovers from a corrupted database", () => {
+    writeNote("inbox/a.md", "---\ntags: []\ncategory: inbox\n---\n\n# A\n\na fact about gyroscopes\n");
+    reindexVault();
+
+    _resetWikiSearchDbForTests();
+    writeFileSync(wikiSearchDbPath(), "not a database");
+
+    const { indexed } = reindexVault();
+    expect(indexed).toBe(1);
+    expect(recall("gyroscopes").length).toBe(1);
   });
 });

@@ -27,6 +27,7 @@ import {
   type RelatedResult,
   type WikiSearchNoteInput,
 } from "../repositories/wiki-search-repo";
+import { resetCorruptWikiSearchDb } from "../storage/wiki-search-db";
 
 // ── Parsing ──────────────────────────────────────────────────────────────
 
@@ -36,6 +37,22 @@ function deriveProjectSlug(relPath: string, frontmatter: Record<string, unknown>
   }
   const m = relPath.match(/^projects\/([^/]+)\//);
   return m ? m[1] : null;
+}
+
+// `--since` filters with a plain lexicographic string comparison on
+// updated_at (wiki-search-repo.ts's buildFilters), which only sorts
+// correctly for canonical ISO-8601 strings. frontmatter.updated is
+// normally exactly that (note-writer.ts always writes ISO), but a vault is
+// user-owned markdown — an Obsidian user can hand-edit `updated:` into
+// `2026-01-15`, `01/15/2026`, or anything else. Parse it and re-emit as
+// ISO; only trust it when it actually parses as a date, otherwise fall
+// back to the file's mtime (which is always a real timestamp).
+function normalizeUpdatedAt(raw: unknown, mtimeMs: number): string {
+  if (typeof raw === "string" && raw.trim()) {
+    const parsed = new Date(raw.trim());
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+  return new Date(mtimeMs).toISOString();
 }
 
 function parseNoteForIndex(
@@ -49,9 +66,7 @@ function parseNoteForIndex(
   const aliases = extractNoteAliases(content);
   const { frontmatter, body } = parseFrontmatter(content);
   const projectSlug = deriveProjectSlug(relPath, frontmatter);
-  const updatedAt =
-    (typeof frontmatter.updated === "string" && frontmatter.updated.trim()) ||
-    new Date(mtimeMs).toISOString();
+  const updatedAt = normalizeUpdatedAt(frontmatter.updated, mtimeMs);
 
   return {
     path: relPath,
@@ -136,15 +151,32 @@ function resolveOutlinks(content: string, maps: ResolutionMaps): Array<{ target:
   return extractWikilinks(content).map((target) => ({ target, resolvedPath: resolveTarget(target, maps) }));
 }
 
-// Underscore-prefixed files (currently just the auto-generated `_index.md`
-// master index — see note-linker.ts's updateMasterIndex) are navigation/meta
-// pages, not content: `_index.md` links every note title in the vault, so it
-// would trivially full-text-match almost any query and drown out real
-// results. note-linker.ts already treats "starts with _" as "not a real
-// note" when building that same index — mirror the convention here.
+// Two kinds of vault markdown are structurally not "content" and must not
+// be indexed for recall/graph queries:
+//
+// 1. Underscore-prefixed files (currently just the auto-generated
+//    `_index.md` master index — see note-linker.ts's updateMasterIndex) are
+//    navigation/meta pages: `_index.md` links every note title in the
+//    vault, so it would trivially full-text-match almost any query and
+//    drown out real results. note-linker.ts already treats "starts with _"
+//    as "not a real note" when building that same index — mirror the
+//    convention here.
+// 2. The top-level `templates/` directory (vaultTemplates() in vault.ts) —
+//    boilerplate seeded by `mink wiki init` (vault-templates.ts), not
+//    knowledge. Proven: a query for "compression" surfaced
+//    templates/note.md as the #1 hit purely because the template's own
+//    placeholder prose happened to contain the word.
+//
+// `patterns/` is deliberately NOT excluded — per spec 15 it's meant to hold
+// real cross-project knowledge, not boilerplate.
+const EXCLUDED_TOP_LEVEL_DIRS = new Set(["templates"]);
+
 function isIndexableNote(relPath: string): boolean {
-  const base = relPath.split("/").pop() ?? relPath;
-  return !base.startsWith("_");
+  const segments = relPath.split("/");
+  const base = segments[segments.length - 1] ?? relPath;
+  if (base.startsWith("_")) return false;
+  if (segments.length > 1 && EXCLUDED_TOP_LEVEL_DIRS.has(segments[0])) return false;
+  return true;
 }
 
 // ── Path helpers ─────────────────────────────────────────────────────────
@@ -200,8 +232,18 @@ export function removeNoteFromIndex(pathOrAbs: string): void {
 // being indexed). Idempotent — safe to run repeatedly.
 export function reindexVault(): { indexed: number } {
   const root = resolveVaultPath();
-  const repo = WikiSearchRepo.forVault();
-  repo.wipeAll();
+  let repo: WikiSearchRepo;
+  try {
+    repo = WikiSearchRepo.forVault();
+    repo.wipeAll();
+  } catch {
+    // The database itself is unreadable (corrupted file, disk error, schema
+    // from an incompatible future version...). Since rebuilding from
+    // scratch is this command's entire job, recover by starting over on a
+    // fresh file rather than failing outright.
+    resetCorruptWikiSearchDb();
+    repo = WikiSearchRepo.forVault();
+  }
 
   const files = collectAllMarkdown(root).filter((f) => isIndexableNote(f.relativePath));
   const parsed: Array<{ file: ScannedMarkdown; content: string }> = [];
@@ -289,29 +331,63 @@ export function catchUpIndex(opts: { force?: boolean } = {}): { updated: number;
   return { updated: changedWithContent.length, removed };
 }
 
+// ── Corruption recovery ──────────────────────────────────────────────────
+// The search index is pure derived state — every row is reconstructible
+// from the vault's own markdown — so a corrupted .mink-search.db (bad disk
+// state, a truncated write, a schema from an incompatible future version…)
+// should never be a hard failure for the reader. If a query throws, attempt
+// exactly one recovery: blow away the database and rebuild it, then retry.
+// If the retry also throws, surface one clean, actionable Error rather than
+// letting a raw SQLite stack trace reach the CLI/dashboard — callers at the
+// command layer catch this and print/exit cleanly instead of crashing.
+function withCorruptionRecovery<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch {
+    try {
+      resetCorruptWikiSearchDb();
+      reindexVault();
+      return fn();
+    } catch (retryErr) {
+      const detail = retryErr instanceof Error ? retryErr.message : String(retryErr);
+      throw new Error(
+        `wiki search index is corrupted and could not be rebuilt automatically (${detail}). Try 'mink wiki reindex' manually.`
+      );
+    }
+  }
+}
+
 // ── Query API ────────────────────────────────────────────────────────────
 
 export function recall(query: string, opts: RecallOptions = {}): RecallResult[] {
-  catchUpIndex();
-  return WikiSearchRepo.forVault().search(query, opts);
+  return withCorruptionRecovery(() => {
+    catchUpIndex();
+    return WikiSearchRepo.forVault().search(query, opts);
+  });
 }
 
 // Resolve a CLI-supplied note reference (path or title) to a vault-relative
 // path, running a catch-up sweep first so recently-created notes (including
 // ones from the same command invocation) are resolvable.
 export function resolveNoteArg(arg: string): string | null {
-  catchUpIndex();
-  return WikiSearchRepo.forVault().resolveNoteArg(arg);
+  return withCorruptionRecovery(() => {
+    catchUpIndex();
+    return WikiSearchRepo.forVault().resolveNoteArg(arg);
+  });
 }
 
 export function backlinksForNote(path: string): NoteRef[] {
-  catchUpIndex();
-  return WikiSearchRepo.forVault().backlinksFor(path);
+  return withCorruptionRecovery(() => {
+    catchUpIndex();
+    return WikiSearchRepo.forVault().backlinksFor(path);
+  });
 }
 
 export function relatedForNote(path: string, limit = 20): RelatedResult[] {
-  catchUpIndex();
-  return WikiSearchRepo.forVault().relatedFor(path, limit);
+  return withCorruptionRecovery(() => {
+    catchUpIndex();
+    return WikiSearchRepo.forVault().relatedFor(path, limit);
+  });
 }
 
 export function wikiSearchNoteCount(): number {

@@ -266,6 +266,21 @@ function wikiRebuildIndex(): void {
   console.log(`  indexed ${index.totalNotes} notes`);
 }
 
+// The search index is fully derived from the vault's own markdown, so
+// core/wiki-search.ts's query functions already attempt a delete + rebuild
+// on a thrown (e.g. corrupted-index) error before giving up. This is the
+// CLI-layer half of that: if they still throw after that recovery attempt,
+// print the clean message they constructed and exit — never an uncaught
+// stack trace for a corrupted index.
+function runOrExitOnCorruption<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (err) {
+    console.error(`[mink] ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
 function wikiReindex(): void {
   if (!isVaultInitialized()) {
     console.log("[mink] no vault initialized");
@@ -273,7 +288,7 @@ function wikiReindex(): void {
   }
 
   console.log("[mink] rebuilding search index...");
-  const { indexed } = reindexVault();
+  const { indexed } = runOrExitOnCorruption(() => reindexVault());
   console.log(`  indexed ${indexed} notes into the FTS5 search index (used by 'mink recall')`);
 }
 
@@ -288,7 +303,7 @@ function resolveNoteArgOrExit(args: string[]): string {
     console.error("  <note> may be a vault-relative path or an exact note title.");
     process.exit(1);
   }
-  const resolved = resolveNoteArg(positional);
+  const resolved = runOrExitOnCorruption(() => resolveNoteArg(positional));
   if (!resolved) {
     console.error(`[mink] no note found matching "${positional}"`);
     process.exit(1);
@@ -303,7 +318,7 @@ function wikiBacklinks(args: string[]): void {
   }
 
   const path = resolveNoteArgOrExit(args);
-  const backlinks = backlinksForNote(path);
+  const backlinks = runOrExitOnCorruption(() => backlinksForNote(path));
 
   if (hasJsonFlag(args)) {
     console.log(JSON.stringify({ note: path, backlinks }, null, 2));
@@ -330,7 +345,7 @@ function wikiRelated(args: string[]): void {
   }
 
   const path = resolveNoteArgOrExit(args);
-  const related = relatedForNote(path);
+  const related = runOrExitOnCorruption(() => relatedForNote(path));
 
   if (hasJsonFlag(args)) {
     console.log(JSON.stringify({ note: path, related }, null, 2));
