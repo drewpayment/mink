@@ -154,15 +154,27 @@ export function upsertFrontmatterAliases(
   content: string,
   aliases: string[]
 ): string {
-  if (!content.startsWith("---")) return content; // no frontmatter to touch
   const firstLineEnd = content.indexOf("\n");
   if (firstLineEnd === -1) return content;
+  // Require the first line to be *exactly* "---" (mind a trailing \r on
+  // CRLF files) — content.startsWith("---") alone also matches a "----"
+  // rule or a "---foo" line, and more importantly would treat a markdown
+  // thematic break at the top of a body as frontmatter, splicing aliases
+  // into prose. Trimmed comparison rejects both.
+  if (content.slice(0, firstLineEnd).trim() !== "---") return content;
   const closeIdx = content.indexOf("\n---", firstLineEnd);
   if (closeIdx === -1) return content;
 
   const fmBody = content.slice(firstLineEnd + 1, closeIdx);
   const rest = content.slice(closeIdx); // "\n---\n\n# Title..."
-  const lines = fmBody.split("\n");
+  // Strip a trailing \r per line so CRLF input normalizes to LF in the
+  // frontmatter block we rebuild (the untouched body after `rest` keeps
+  // whatever line endings it already had).
+  const lines = fmBody.split("\n").map((l) => l.replace(/\r$/, ""));
+
+  // A "---" thematic break followed by ordinary prose (no `key:` lines)
+  // isn't frontmatter either — bail rather than guess.
+  if (!lines.some((l) => /^\S+:/.test(l))) return content;
 
   const aliasLineIdx = lines.findIndex((l) => /^aliases:\s*\[/.test(l));
 
@@ -191,12 +203,21 @@ export function upsertFrontmatterAliases(
   return `---\n${lines.join("\n")}${rest}`;
 }
 
-// Bare unless the value would break the `[a, b, c]` inline-array syntax
-// (comma/bracket/quote) — matches the unquoted style generateFrontmatter()
-// already uses for tags in the common case.
+// YAML flow-sequence values need quoting whenever they contain a character
+// that's structurally significant inside `[a, b, c]` — not just the comma/
+// bracket/quote set tags happen to avoid in practice. In particular a bare
+// ": " (or a trailing ":") inside a flow scalar reopens it as a nested
+// mapping (`aliases: [Chapter 1: Intro]` parses as `Chapter 1` mapping to
+// `Intro`, not a single string) — proven with exactly that title. Quote
+// whenever the value contains any YAML flow/indicator character, starts
+// with a flow-significant prefix, or has leading/trailing whitespace.
 function formatAliasValue(value: string): string {
-  if (/[,\[\]"]/.test(value)) return JSON.stringify(value);
-  return value;
+  const needsQuoting =
+    value === "" ||
+    value !== value.trim() ||
+    /[,\[\]{}:#&*!|>'"%@`]/.test(value) ||
+    /^[-?]\s|^[-?]$/.test(value);
+  return needsQuoting ? JSON.stringify(value) : value;
 }
 
 export function appendToDaily(date: string, content: string): string {

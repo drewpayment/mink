@@ -28,12 +28,35 @@ import {
 
 const TEST_ROOT_DIRS = [import.meta.dir, join(import.meta.dir, "..", "integration")];
 
-// Entry points responsible for every pollution pattern seen in the real
-// vault audit (mink-init-test-*, mink-refresh-cwd-*, mink-targets-cwd-*
-// via init(); mink-dash-integ-* via startDashboardServer()/projectDir()).
-const RISKY_CALL_PATTERNS: RegExp[] = [/\binit\s*\(/, /\bstartDashboardServer\s*\(/];
+// Entry points that can write into the real mink root or wiki when isolation
+// is missing: init()/startDashboardServer() are responsible for every
+// pollution pattern seen in the real vault audit (mink-init-test-*,
+// mink-refresh-cwd-*, mink-targets-cwd-*, mink-dash-integ-*); auditVault()/
+// applyDoctorFixes() are `mink wiki doctor`'s own entry points (a doctor
+// test without isolation would audit or, worse, *repair* the real vault);
+// createNote()/appendToDaily()/ingestFile() are note-writer's direct
+// vault-writing primitives.
+const RISKY_CALL_PATTERNS: RegExp[] = [
+  /\binit\s*\(/,
+  /\bstartDashboardServer\s*\(/,
+  /\bauditVault\s*\(/,
+  /\bapplyDoctorFixes\s*\(/,
+  /\bcreateNote\s*\(/,
+  /\bappendToDaily\s*\(/,
+  /\bingestFile\s*\(/,
+];
 
-const ISOLATION_MARKERS = ["MINK_ROOT_OVERRIDE", "useMinkFixture", "createMinkFixture"];
+// MINK_WIKI_PATH alone is sufficient isolation for code paths that only
+// ever touch the wiki (never mink-root project state) — e.g. note-writer's
+// primitives and wiki-doctor's audit/fix both resolve exclusively through
+// resolveVaultPath(). See tests/unit/note-writer.test.ts and
+// tests/unit/note-index.test.ts for the established pattern.
+const ISOLATION_MARKERS = [
+  "MINK_ROOT_OVERRIDE",
+  "MINK_WIKI_PATH",
+  "useMinkFixture",
+  "createMinkFixture",
+];
 
 function listTestFiles(dir: string): string[] {
   const files: string[] = [];

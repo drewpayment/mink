@@ -36,7 +36,7 @@ import {
   rebuildVaultIndex,
 } from "./note-index";
 import { updateMasterIndex } from "./note-linker";
-import { upsertFrontmatterAliases } from "./note-writer";
+import { slugifyTitle, upsertFrontmatterAliases } from "./note-writer";
 
 // ── Pollution patterns (pinned — see task contract) ─────────────────────
 
@@ -46,9 +46,21 @@ const POLLUTION_WIKI_DIR_PATTERNS: RegExp[] = [
   /^mink-targets-cwd-/,
 ];
 
-const POLLUTION_WIKI_NOTE_PATTERNS: RegExp[] = [
-  /^hello-world-/,
-  /^sync-/,
+// hello-world-/sync- are anchored to a generated-suffix tail — the
+// device-id/timestamp suffix resolveUniqueNotePath appends (a short hex
+// device id, optionally with a "-N" retry counter, or a Date.now()
+// millisecond timestamp) — never a hand-written word. This keeps real note
+// titles like "hello-world-in-rust" or "sync-architecture" from colliding
+// with "hello-world-<devicesuffix>" / "sync-<devicesuffix>" junk. (A title
+// that happens to end in exactly 4-8 hex-alphabet characters, e.g.
+// "hello-world-cafe", is a known false-positive risk we accept.)
+//
+// Scoped to inbox/ only (see findWikiPollution) — these stems are generic
+// enough that a legitimate note anywhere else in the vault could share the
+// prefix; the pinned contract only ever produced them as inbox captures.
+const POLLUTION_INBOX_NOTE_PATTERNS: RegExp[] = [
+  /^hello-world-(?:[0-9a-f]{4,8}(?:-\d+)?|\d+)$/,
+  /^sync-(?:[0-9a-f]{4,8}(?:-\d+)?|\d+)$/,
   /^note-\d+$/,
   /^test-note-/,
 ];
@@ -72,8 +84,21 @@ export interface NoteRecord {
   absolutePath: string;
   stem: string; // filename without ".md"
   title: string;
+  // Whether `title` came from a real H1 or frontmatter `title:` field, as
+  // opposed to extractNoteTitle's fallbacks (first body line, or
+  // "Untitled"). Alias backfill must never promote a fallback title into a
+  // persisted alias — see needsAlias().
+  hasRealTitle: boolean;
   aliases: string[];
   content: string;
+}
+
+// Mirrors extractNoteTitle's first two branches (H1 / frontmatter `title:`)
+// so we can tell a "real" title apart from its fallback branches (first
+// body line, or the literal "Untitled") without duplicating or forking
+// extractNoteTitle itself.
+function hasRealTitle(content: string): boolean {
+  return /^#\s+(.+)$/m.test(content) || /^title:\s*["']?(.+?)["']?\s*$/m.test(content);
 }
 
 function loadAllNotes(root: string): NoteRecord[] {
@@ -93,6 +118,7 @@ function loadAllNotes(root: string): NoteRecord[] {
       absolutePath: f.absolutePath,
       stem: basename(f.relativePath).replace(/\.md$/, ""),
       title: extractNoteTitle(content),
+      hasRealTitle: hasRealTitle(content),
       aliases: extractNoteAliases(content),
       content,
     });
@@ -142,12 +168,24 @@ function buildNameIndex(notes: NoteRecord[]): Map<string, Set<string>> {
   return idx;
 }
 
+// Splits a wikilink target into the note-identifying part and an optional
+// `#Heading` / `^blockid` subpath (Obsidian's within-note addressing) so
+// resolution can match on the note alone while callers that rewrite link
+// text can re-append the subpath verbatim. `#`/`^` can't appear in a note
+// filename, so the first occurrence of either always starts the subpath.
+function splitSubpath(target: string): { base: string; subpath: string } {
+  const idx = target.search(/[#^]/);
+  if (idx === -1) return { base: target, subpath: "" };
+  return { base: target.slice(0, idx), subpath: target.slice(idx) };
+}
+
 function resolveLinkTarget(
   rawTarget: string,
   nameIndex: Map<string, Set<string>>,
   notePathSet: Set<string>
 ): string[] {
-  let target = rawTarget.trim().replace(/^\.\//, "");
+  const trimmed = rawTarget.trim().replace(/^\.\//, "");
+  const target = splitSubpath(trimmed).base;
   if (target.includes("/")) {
     const withExt = target.endsWith(".md") ? target : `${target}.md`;
     return notePathSet.has(withExt) ? [withExt] : [];
@@ -241,13 +279,32 @@ export interface AliasCandidate {
 
 // A wikilink resolves against a note's stem via a case-insensitive *literal*
 // string match (see resolveLinkTarget) — Obsidian doesn't fold spaces to
-// hyphens the way slugifyTitle does. So "needs an alias" has to compare the
-// literal title text to the literal stem, not their slugified forms: a note
-// titled "Global Catalog" living at global-catalog.md needs an alias even
-// though slugifyTitle("Global Catalog") === "global-catalog" — the bare link
-// people actually write, `[[Global Catalog]]`, still won't match the stem.
+// hyphens the way slugifyTitle does. So "does the bare link already
+// resolve" has to compare the literal title text to the literal stem, not
+// their slugified forms: a note titled "Global Catalog" living at
+// global-catalog.md needs an alias even though slugifyTitle("Global
+// Catalog") === "global-catalog" — the bare link people actually write,
+// `[[Global Catalog]]`, still won't match the stem.
+//
+// But that literal-mismatch check alone isn't a safe trigger for *writing*
+// an alias: extractNoteTitle falls back to the first body line (or
+// "Untitled") when there's no real H1/frontmatter title, and that fallback
+// text is often a full sentence or a value shared across many unrelated
+// notes. Backfilling it as an alias manufactures garbage aliases and new
+// ambiguity (e.g. a dozen notes all gaining the alias "Untitled"). So
+// needsAlias is gated on two independent conditions:
+//   1. The title must come from a real H1 or frontmatter `title:` field
+//      (hasRealTitle) — never a fallback.
+//   2. slugifyTitle(title) === stem — the title must plausibly correspond
+//      to *this* file (the "kebab slug vs Title Case display name" pattern
+//      this backfill exists to fix), not just any title that happens to
+//      differ from the filename. This also rejects a real H1 that names an
+//      unrelated concept from a deliberately different filename.
 function needsAlias(note: NoteRecord): boolean {
-  return note.aliases.length === 0 && note.title.toLowerCase() !== note.stem.toLowerCase();
+  if (note.aliases.length > 0) return false;
+  if (!note.hasRealTitle) return false;
+  if (slugifyTitle(note.title) !== note.stem) return false;
+  return note.title.toLowerCase() !== note.stem.toLowerCase();
 }
 
 function findAliasCandidates(notes: NoteRecord[]): AliasCandidate[] {
@@ -266,6 +323,10 @@ export interface DailyIssue {
   relativePath: string;
   stem: string;
   renameTo: string | null; // ISO stem if parseable, else null (report-only)
+  // true when renameTo is set but areas/daily/<renameTo>.md already exists
+  // on disk — renaming would silently overwrite a different note, so the
+  // fixer reports this as a conflict and leaves both files alone.
+  conflict: boolean;
 }
 
 function isPlausibleDate(y: number, mo: number, d: number): boolean {
@@ -280,7 +341,14 @@ export function parseDailyStem(stem: string): string | null {
   const mdy = stem.match(MDY_DAILY_RE);
   if (mdy) {
     const [, mo, d, y] = mdy;
-    if (isPlausibleDate(Number(y), Number(mo), Number(d))) {
+    const moNum = Number(mo);
+    const dNum = Number(d);
+    // The MM-DD-YYYY assumption is only safe when the day component can't
+    // also be read as a month (i.e. it's > 12) — otherwise "03-04-2025"
+    // could mean March 4 or April 3 and guessing MM-DD risks silently
+    // renaming to the wrong date. Report-only in that case.
+    if (moNum <= 12 && dNum <= 12) return null;
+    if (isPlausibleDate(Number(y), moNum, dNum)) {
       return `${y}-${mo}-${d}`;
     }
   }
@@ -295,14 +363,18 @@ export function parseDailyStem(stem: string): string | null {
 }
 
 function findDailyIssues(notes: NoteRecord[]): DailyIssue[] {
+  const paths = new Set(notes.map((n) => n.relativePath));
   const issues: DailyIssue[] = [];
   for (const n of notes) {
     if (!n.relativePath.startsWith("areas/daily/")) continue;
     if (ISO_DAILY_RE.test(n.stem)) continue; // already canonical
+    const renameTo = parseDailyStem(n.stem);
+    const destination = renameTo ? `areas/daily/${renameTo}.md` : null;
     issues.push({
       relativePath: n.relativePath,
       stem: n.stem,
-      renameTo: parseDailyStem(n.stem),
+      renameTo,
+      conflict: destination !== null && paths.has(destination),
     });
   }
   return issues;
@@ -323,8 +395,14 @@ function findBrokenSymlinks(root: string): string[] {
     const full = join(root, entry.name);
     try {
       statSync(full); // follows the link; throws if the target is missing
-    } catch {
-      broken.push(entry.name);
+    } catch (err: unknown) {
+      // Only ENOENT means the target is actually gone. Anything else
+      // (EACCES, ESTALE, ENOTCONN, ...) means we couldn't tell right now —
+      // e.g. a symlink into a temporarily-unmounted network share isn't
+      // "broken", and quarantining it on that basis would be destructive.
+      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+        broken.push(entry.name);
+      }
     }
   }
   return broken;
@@ -363,9 +441,9 @@ function findWikiPollution(root: string): PollutionCandidate[] {
           continue; // don't descend into a dir we're about to quarantine whole
         }
         walk(join(dir, entry.name), relPath);
-      } else if (entry.name.endsWith(".md")) {
+      } else if (entry.name.endsWith(".md") && relPath.startsWith("inbox/")) {
         const stem = entry.name.replace(/\.md$/, "");
-        if (POLLUTION_WIKI_NOTE_PATTERNS.some((re) => re.test(stem))) {
+        if (POLLUTION_INBOX_NOTE_PATTERNS.some((re) => re.test(stem))) {
           found.push({ relativePath: relPath, kind: "wiki-note" });
         }
       }
@@ -455,6 +533,7 @@ export interface DoctorFixResult {
   unresolvableAmbiguousLinks: Array<{ file: string; target: string; candidates: string[] }>;
   dailiesRenamed: Array<{ from: string; to: string }>;
   dailiesUnparsed: string[];
+  dailiesConflicted: Array<{ from: string; wouldBe: string }>;
   brokenSymlinksQuarantined: string[];
   linkHealthBefore: LinkHealth;
   linkHealthAfter: LinkHealth;
@@ -557,7 +636,8 @@ function qualifyAmbiguousLinks(
       const raw = m[0];
       const target = m[1].trim();
       const display = m[2]?.trim();
-      if (target.includes("/")) continue; // already path-qualified
+      const { base, subpath } = splitSubpath(target);
+      if (base.includes("/")) continue; // already path-qualified
       if (seenTargets.has(target)) continue;
 
       const candidates = resolveLinkTarget(target, nameIndex, notePathSet);
@@ -570,7 +650,9 @@ function qualifyAmbiguousLinks(
         : [];
 
       if (sameProjectCandidates.length === 1) {
-        const best = sameProjectCandidates[0].replace(/\.md$/, "");
+        // Subpath (#Heading / ^blockid) belongs on the note reference, ahead
+        // of the display-text pipe — [[path/note#Heading|display]].
+        const best = sameProjectCandidates[0].replace(/\.md$/, "") + subpath;
         const displayText = display ?? target;
         const replacement = `[[${best}|${displayText}]]`;
         replacements.push({ raw, replacement });
@@ -603,17 +685,20 @@ function escapeRegExp(str: string): string {
 function renameWikilinkTargets(content: string, oldStem: string, newStem: string): string {
   // Only rewrite the target portion of a link, and only when it refers to the
   // renamed daily by bare stem or as a path ending in the old stem — leaves
-  // display text (`|...`) untouched.
+  // display text (`|...`) untouched. A #Heading/^blockid subpath (e.g.
+  // [[01-16-2025#morning]]) is stripped before comparison and re-appended
+  // after the rename so it isn't silently dropped.
   const re = /\[\[([^\]|]+)(\|[^\]]+)?\]\]/g;
   return content.replace(re, (raw, target: string, displayPart = "") => {
     const trimmed = target.trim();
-    const bare = trimmed.endsWith(".md") ? trimmed.slice(0, -3) : trimmed;
-    if (bare === oldStem) {
-      return `[[${newStem}${displayPart}]]`;
+    const withoutExt = trimmed.endsWith(".md") ? trimmed.slice(0, -3) : trimmed;
+    const { base, subpath } = splitSubpath(withoutExt);
+    if (base === oldStem) {
+      return `[[${newStem}${subpath}${displayPart}]]`;
     }
-    if (bare.endsWith(`/${oldStem}`)) {
-      const newTarget = bare.slice(0, -oldStem.length) + newStem;
-      return `[[${newTarget}${displayPart}]]`;
+    if (base.endsWith(`/${oldStem}`)) {
+      const newTarget = base.slice(0, -oldStem.length) + newStem;
+      return `[[${newTarget}${subpath}${displayPart}]]`;
     }
     return raw;
   });
@@ -623,9 +708,14 @@ function normalizeDailies(
   notes: NoteRecord[],
   root: string,
   dryRun: boolean
-): { renamed: Array<{ from: string; to: string }>; unparsed: string[] } {
+): {
+  renamed: Array<{ from: string; to: string }>;
+  unparsed: string[];
+  conflicts: Array<{ from: string; wouldBe: string }>;
+} {
   const renamed: Array<{ from: string; to: string }> = [];
   const unparsed: string[] = [];
+  const conflicts: Array<{ from: string; wouldBe: string }> = [];
 
   const dailies = notes.filter((n) => n.relativePath.startsWith("areas/daily/"));
   for (const note of dailies) {
@@ -640,6 +730,18 @@ function normalizeDailies(
     const oldStem = note.stem;
     const newRelativePath = `areas/daily/${isoStem}.md`;
     const newAbsolutePath = join(root, newRelativePath);
+
+    // Never rename over an existing note — a duplicate daily (e.g. a stray
+    // "01-16-2025.md" alongside a real "2025-01-16.md") would silently
+    // destroy whichever file the rename overwrites. Report and skip instead;
+    // a human has to reconcile which one wins.
+    const collidesWithAnotherNote = notes.some(
+      (n) => n !== note && n.relativePath === newRelativePath
+    );
+    if (collidesWithAnotherNote || existsSync(newAbsolutePath)) {
+      conflicts.push({ from: oldRelativePath, wouldBe: newRelativePath });
+      continue;
+    }
 
     // Keep the H1 in sync when it was literally the old date stem (the
     // common case — daily notes are titled after their own date). Written
@@ -671,7 +773,10 @@ function normalizeDailies(
 
     if (!dryRun) {
       mkdirSync(dirname(newAbsolutePath), { recursive: true });
-      cpSync(note.absolutePath, newAbsolutePath);
+      // errorOnExist is a second, defense-in-depth guard against the
+      // existsSync check above racing/missing a case — it must never fall
+      // through to silently overwriting an existing destination.
+      cpSync(note.absolutePath, newAbsolutePath, { errorOnExist: true });
       rmSync(note.absolutePath, { force: true });
     }
 
@@ -681,7 +786,7 @@ function normalizeDailies(
     renamed.push({ from: oldRelativePath, to: newRelativePath });
   }
 
-  return { renamed, unparsed };
+  return { renamed, unparsed, conflicts };
 }
 
 function quarantineBrokenSymlinks(
@@ -737,11 +842,11 @@ export function applyDoctorFixes(
     qualifyAmbiguousLinks(notes, dryRun);
 
   // Step 4 — daily-note normalization.
-  const { renamed: dailiesRenamed, unparsed: dailiesUnparsed } = normalizeDailies(
-    notes,
-    report.vaultRoot,
-    dryRun
-  );
+  const {
+    renamed: dailiesRenamed,
+    unparsed: dailiesUnparsed,
+    conflicts: dailiesConflicted,
+  } = normalizeDailies(notes, report.vaultRoot, dryRun);
 
   // Step 5 — broken top-level symlinks.
   const brokenSymlinksQuarantined = quarantineBrokenSymlinks(
@@ -766,6 +871,7 @@ export function applyDoctorFixes(
     unresolvableAmbiguousLinks,
     dailiesRenamed,
     dailiesUnparsed,
+    dailiesConflicted,
     brokenSymlinksQuarantined,
     linkHealthBefore: report.linkHealth,
     linkHealthAfter,
@@ -830,9 +936,13 @@ export function formatDoctorReport(report: DoctorReport): string {
     lines.push("");
     lines.push("  Non-ISO dailies:");
     for (const d of report.dailyIssues.slice(0, 15)) {
-      lines.push(
-        `    ${d.relativePath} -> ${d.renameTo ? `areas/daily/${d.renameTo}.md` : "(unparseable — report only)"}`
-      );
+      const dest = d.renameTo ? `areas/daily/${d.renameTo}.md` : null;
+      const note = !d.renameTo
+        ? "(unparseable or ambiguous — report only)"
+        : d.conflict
+          ? "(CONFLICT — destination already exists, will not overwrite)"
+          : "";
+      lines.push(`    ${d.relativePath} -> ${dest ?? "(no rename)"} ${note}`.trimEnd());
     }
     if (report.dailyIssues.length > 15) {
       lines.push(`    ... and ${report.dailyIssues.length - 15} more`);
@@ -877,7 +987,10 @@ export function formatFixResult(result: DoctorFixResult): string {
     `  unresolvable ambiguous:  ${result.unresolvableAmbiguousLinks.length} (left untouched — no single best match)`
   );
   lines.push(`  dailies renamed:         ${result.dailiesRenamed.length}`);
-  lines.push(`  dailies left as-is:      ${result.dailiesUnparsed.length} (non-ISO, unparseable)`);
+  lines.push(`  dailies left as-is:      ${result.dailiesUnparsed.length} (non-ISO, unparseable, or ambiguous)`);
+  lines.push(
+    `  dailies conflicted:      ${result.dailiesConflicted.length} (destination already exists — not overwritten)`
+  );
   lines.push(`  broken symlinks removed: ${result.brokenSymlinksQuarantined.length}`);
   lines.push("");
   lines.push("  Link health:");
@@ -901,6 +1014,14 @@ export function formatFixResult(result: DoctorFixResult): string {
     lines.push("  Quarantined (mink root):");
     for (const q of result.quarantinedMinkRootDirs.slice(0, 20)) {
       lines.push(`    ${q.from} -> ${q.to}`);
+    }
+  }
+
+  if (result.dailiesConflicted.length > 0) {
+    lines.push("");
+    lines.push("  Daily-rename conflicts (manual fix needed):");
+    for (const c of result.dailiesConflicted.slice(0, 20)) {
+      lines.push(`    ${c.from} -> ${c.wouldBe} (already exists)`);
     }
   }
 

@@ -306,6 +306,10 @@ const VAULT_EXCLUDES = new Set([
   ".mink-vault.json",
   ".mink-index.json",
   "node_modules",
+  // mink wiki doctor's own quarantine subtree (archives/_doctor/<date>/...)
+  // — without this, rebuildVaultIndex() re-indexes the very junk doctor
+  // --fix just purged, making it reappear in `mink note search` etc.
+  "_doctor",
 ]);
 
 // Exported for src/core/wiki-doctor.ts, which needs the same vault-wide

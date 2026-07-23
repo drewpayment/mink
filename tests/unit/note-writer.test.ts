@@ -8,6 +8,7 @@ import {
   generateFrontmatter,
   createNote,
   appendToDaily,
+  upsertFrontmatterAliases,
 } from "../../src/core/note-writer";
 import { ensureVaultStructure } from "../../src/core/vault";
 
@@ -271,6 +272,75 @@ describe("note-writer", () => {
       const content = readFileSync(filePath, "utf-8");
       // The append adds a ## HH:MM header
       expect(content).toMatch(/## \d{2}:\d{2}/);
+    });
+  });
+
+  describe("upsertFrontmatterAliases", () => {
+    function fm(body: string, extra = ""): string {
+      return `---\ncreated: "2026-01-01T00:00:00.000Z"\ntags: []${extra}\n---\n\n${body}\n`;
+    }
+
+    test("quotes an alias value containing a colon (proven repro: 'Chapter 1: Intro')", () => {
+      // Regression for a real bug: an unquoted colon inside a YAML flow
+      // sequence reopens it as a nested mapping, so
+      // `aliases: [Chapter 1: Intro]` does NOT parse as the single string
+      // "Chapter 1: Intro" — it parses as a mapping `Chapter 1` -> `Intro`.
+      const result = upsertFrontmatterAliases(fm("# Chapter 1: Intro"), ["Chapter 1: Intro"]);
+      expect(result).toContain('aliases: ["Chapter 1: Intro"]');
+      // Explicitly assert the malformed unquoted form is NOT produced.
+      expect(result).not.toContain("aliases: [Chapter 1: Intro]");
+    });
+
+    test("quotes values with other YAML flow-indicator characters", () => {
+      const result = upsertFrontmatterAliases(fm("# x"), ["a, b", "100%", "#hashtag", "a & b"]);
+      expect(result).toContain('"a, b"');
+      expect(result).toContain('"100%"');
+      expect(result).toContain('"#hashtag"');
+      expect(result).toContain('"a & b"');
+    });
+
+    test("leaves a plain alphanumeric alias unquoted", () => {
+      const result = upsertFrontmatterAliases(fm("# x"), ["Global Catalog"]);
+      expect(result).toContain("aliases: [Global Catalog]");
+    });
+
+    test("does not touch a body that opens with a '---' thematic break followed by prose", () => {
+      // No `key:` line inside the block — this is markdown prose that
+      // happens to start with a horizontal rule, not frontmatter. Splicing
+      // an aliases: line into it would corrupt the note body.
+      const body = "---\nJust a paragraph that starts with a rule above it.\n\nMore prose.\n";
+      const result = upsertFrontmatterAliases(body, ["Some Title"]);
+      expect(result).toBe(body);
+    });
+
+    test("does not touch content whose first line is not exactly '---'", () => {
+      const body = "----\ncreated: x\n----\n\n# Title\n";
+      const result = upsertFrontmatterAliases(body, ["Title"]);
+      expect(result).toBe(body);
+    });
+
+    test("still recognizes real frontmatter with only one field", () => {
+      const body = "---\ntags: []\n---\n\n# Title\n";
+      const result = upsertFrontmatterAliases(body, ["Title"]);
+      expect(result).toContain("aliases: [Title]");
+    });
+
+    test("normalizes CRLF frontmatter to LF when rebuilding the block", () => {
+      const crlf = '---\r\ncreated: "2026-01-01T00:00:00.000Z"\r\ntags: []\r\n---\r\n\r\n# Title\r\n';
+      const result = upsertFrontmatterAliases(crlf, ["Title"]);
+      // Between the opening and closing "---" delimiters, the rebuilt
+      // frontmatter is LF-only — even though the input was CRLF and the
+      // untouched body after the closing delimiter keeps its original
+      // line endings.
+      const between = result.split("---")[1];
+      expect(between).not.toContain("\r");
+      expect(between).toContain("aliases: [Title]");
+    });
+
+    test("merges into an existing aliases array without duplicating, still quoting new unsafe values", () => {
+      const body = fm("# x", "\naliases: [Existing]");
+      const result = upsertFrontmatterAliases(body, ["Existing", "New: Value"]);
+      expect(result).toContain('aliases: [Existing, "New: Value"]');
     });
   });
 });

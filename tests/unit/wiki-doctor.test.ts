@@ -324,4 +324,299 @@ describe("wiki-doctor", () => {
     expect(report.aliasCandidates.length).toBe(1);
     expect(report.aliasCandidates[0].relativePath).toBe("inbox/real-note.md");
   });
+
+  // ── Adversarial-review regression tests ─────────────────────────────────
+  // Each test below encodes a concrete repro from the Phase 0 review that
+  // proved a real-data-corruption or false-positive path.
+
+  describe("B1: daily rename never overwrites an existing destination", () => {
+    test("a junk duplicate is reported as a conflict and left untouched — the real file is not destroyed", () => {
+      const realContent = note({
+        title: "2025-01-16",
+        category: "areas",
+        body: "Real, hand-written content that must survive.",
+      });
+      writeNote(vaultRoot, "areas/daily/2025-01-16.md", realContent);
+      writeNote(
+        vaultRoot,
+        "areas/daily/01-16-2025.md",
+        note({ title: "01-16-2025", category: "areas", body: "Junk duplicate." })
+      );
+
+      const report = auditVault();
+      const issue = report.dailyIssues.find((d) => d.relativePath === "areas/daily/01-16-2025.md");
+      expect(issue?.renameTo).toBe("2025-01-16");
+      expect(issue?.conflict).toBe(true);
+
+      const result = applyDoctorFixes(report, { dryRun: false });
+
+      expect(result.dailiesRenamed).toEqual([]);
+      expect(result.dailiesConflicted).toEqual([
+        { from: "areas/daily/01-16-2025.md", wouldBe: "areas/daily/2025-01-16.md" },
+      ]);
+
+      // The real file is byte-for-byte untouched.
+      expect(readFileSync(join(vaultRoot, "areas", "daily", "2025-01-16.md"), "utf-8")).toBe(
+        realContent
+      );
+      // The junk duplicate is still there too — neither side was deleted.
+      expect(existsSync(join(vaultRoot, "areas", "daily", "01-16-2025.md"))).toBe(true);
+    });
+  });
+
+  describe("B2: alias values containing YAML flow-indicator characters are quoted", () => {
+    test("a title containing a colon does not corrupt the frontmatter (proven repro: 'Chapter 1: Intro')", () => {
+      writeNote(
+        vaultRoot,
+        "inbox/chapter-1-intro.md",
+        note({ title: "Chapter 1: Intro", category: "inbox" })
+      );
+
+      const report = auditVault();
+      applyDoctorFixes(report, { dryRun: false });
+
+      const content = readFileSync(join(vaultRoot, "inbox", "chapter-1-intro.md"), "utf-8");
+      expect(content).toContain('aliases: ["Chapter 1: Intro"]');
+      // The unquoted form would parse as a nested YAML mapping, not a string.
+      expect(content).not.toContain("aliases: [Chapter 1: Intro]");
+    });
+  });
+
+  describe("B3: alias backfill never promotes a fallback title into an alias", () => {
+    test("a note with no H1/frontmatter title (fallback: first body line) is not flagged or aliased", () => {
+      // No H1, no frontmatter `title:` — extractNoteTitle falls back to the
+      // first non-empty body line, which reads like a sentence, not a name.
+      const raw = [
+        "---",
+        'created: "2026-01-01T00:00:00.000Z"',
+        "tags: []",
+        "category: inbox",
+        "---",
+        "",
+        "This project needs work on some new features soon.",
+        "",
+      ].join("\n");
+      writeNote(vaultRoot, "inbox/no-title.md", raw);
+
+      const report = auditVault();
+      expect(report.aliasCandidates.some((a) => a.relativePath === "inbox/no-title.md")).toBe(false);
+
+      applyDoctorFixes(report, { dryRun: false });
+      const content = readFileSync(join(vaultRoot, "inbox", "no-title.md"), "utf-8");
+      expect(content).not.toContain("aliases:");
+    });
+
+    test("multiple untitled notes don't all get a shared 'Untitled' alias", () => {
+      const raw = ['---', 'created: "2026-01-01T00:00:00.000Z"', "tags: []", "---", "", ""].join(
+        "\n"
+      );
+      writeNote(vaultRoot, "inbox/blank-a.md", raw);
+      writeNote(vaultRoot, "inbox/blank-b.md", raw);
+
+      const report = auditVault();
+      expect(report.aliasCandidates.length).toBe(0);
+
+      const result = applyDoctorFixes(report, { dryRun: false });
+      expect(result.aliasesAdded).toEqual([]);
+    });
+
+    test("a real H1 that doesn't correspond to the filename (slugify mismatch) is not aliased", () => {
+      // Title and filename are two deliberately different, unrelated names
+      // — not the kebab-slug-vs-Title-Case pattern this backfill targets.
+      writeNote(
+        vaultRoot,
+        "projects/foo/notes.md",
+        note({ title: "Completely Unrelated Name", category: "projects" })
+      );
+
+      const report = auditVault();
+      expect(report.aliasCandidates.some((a) => a.relativePath === "projects/foo/notes.md")).toBe(
+        false
+      );
+
+      applyDoctorFixes(report, { dryRun: false });
+      const content = readFileSync(join(vaultRoot, "projects", "foo", "notes.md"), "utf-8");
+      expect(content).not.toContain("aliases:");
+    });
+
+    test("still backfills the target pattern: real H1 that slugifies back to the stem", () => {
+      writeNote(
+        vaultRoot,
+        "resources/global-catalog.md",
+        note({ title: "Global Catalog", category: "resources" })
+      );
+      const report = auditVault();
+      expect(report.aliasCandidates.some((a) => a.relativePath === "resources/global-catalog.md")).toBe(
+        true
+      );
+      applyDoctorFixes(report, { dryRun: false });
+      const content = readFileSync(join(vaultRoot, "resources", "global-catalog.md"), "utf-8");
+      expect(content).toContain("aliases: [Global Catalog]");
+    });
+  });
+
+  describe("S1: pollution note patterns are scoped to inbox/ and anchored to a generated suffix", () => {
+    test("legitimate titles sharing a pollution prefix are never flagged", () => {
+      writeNote(
+        vaultRoot,
+        "resources/sync-architecture.md",
+        note({ title: "Sync Architecture", category: "resources" })
+      );
+      writeNote(
+        vaultRoot,
+        "inbox/hello-world-in-rust.md",
+        note({ title: "Hello World In Rust", category: "inbox" })
+      );
+
+      const report = auditVault();
+      expect(report.testPollution.wiki).toEqual([]);
+    });
+
+    test("a generated-suffix match outside inbox/ is not flagged (scoping)", () => {
+      writeNote(
+        vaultRoot,
+        "projects/foo/sync-a1b2.md",
+        note({ title: "sync-a1b2", category: "projects" })
+      );
+
+      const report = auditVault();
+      expect(report.testPollution.wiki).toEqual([]);
+    });
+
+    test("a real generated-suffix pollution note inside inbox/ is still caught", () => {
+      writeNote(
+        vaultRoot,
+        "inbox/hello-world-a1b2.md",
+        note({ title: "hello-world-a1b2", category: "inbox" })
+      );
+      writeNote(
+        vaultRoot,
+        "inbox/sync-1784821784685.md",
+        note({ title: "sync-1784821784685", category: "inbox" })
+      );
+
+      const report = auditVault();
+      const flagged = report.testPollution.wiki.map((p) => p.relativePath).sort();
+      expect(flagged).toEqual(["inbox/hello-world-a1b2.md", "inbox/sync-1784821784685.md"]);
+    });
+  });
+
+  describe("S3: MM-DD-YYYY vs DD-MM-YYYY ambiguity is never guessed", () => {
+    test("parseDailyStem returns null when both components could be a month (proven repro: '03-04-2025')", () => {
+      expect(parseDailyStem("03-04-2025")).toBeNull();
+    });
+
+    test("an ambiguous daily filename is reported only, never renamed", () => {
+      writeNote(
+        vaultRoot,
+        "areas/daily/03-04-2025.md",
+        note({ title: "03-04-2025", category: "areas" })
+      );
+
+      const report = auditVault();
+      const issue = report.dailyIssues.find((d) => d.relativePath === "areas/daily/03-04-2025.md");
+      expect(issue?.renameTo).toBeNull();
+
+      const result = applyDoctorFixes(report, { dryRun: false });
+      expect(result.dailiesRenamed).toEqual([]);
+      expect(result.dailiesUnparsed).toEqual(["areas/daily/03-04-2025.md"]);
+      expect(existsSync(join(vaultRoot, "areas", "daily", "03-04-2025.md"))).toBe(true);
+    });
+
+    test("the unambiguous case (day > 12) still renames", () => {
+      expect(parseDailyStem("01-16-2025")).toBe("2025-01-16");
+    });
+  });
+
+  describe("S4: rebuilt index excludes the doctor's own quarantine subtree", () => {
+    test("quarantined notes don't reappear in the vault index after a fix run", async () => {
+      writeNote(
+        vaultRoot,
+        "inbox/hello-world-a1b2.md",
+        note({ title: "hello-world-a1b2", category: "inbox" })
+      );
+      const { loadVaultIndex } = await import("../../src/core/note-index");
+
+      const report = auditVault();
+      applyDoctorFixes(report, { dryRun: false });
+
+      const index = loadVaultIndex();
+      const indexed = Object.keys(index.entries);
+      expect(indexed.some((p) => p.includes("hello-world-a1b2"))).toBe(false);
+      expect(indexed.some((p) => p.startsWith("archives/_doctor/"))).toBe(false);
+    });
+  });
+
+  describe("S5: wikilink subpaths (#heading / ^block) survive resolution and rewriting", () => {
+    test("ambiguous-link qualification preserves a #Heading subpath", () => {
+      writeNote(
+        vaultRoot,
+        "projects/alpha/overview.md",
+        note({ title: "Alpha", category: "projects" })
+      );
+      writeNote(vaultRoot, "projects/beta/overview.md", note({ title: "Beta", category: "projects" }));
+      writeNote(
+        vaultRoot,
+        "projects/alpha/notes.md",
+        note({
+          title: "Alpha Notes",
+          category: "projects",
+          body: "See [[overview#Key Decisions]] for context.",
+        })
+      );
+
+      const report = auditVault();
+      const result = applyDoctorFixes(report, { dryRun: false });
+
+      expect(result.linksQualified.length).toBe(1);
+      const content = readFileSync(join(vaultRoot, "projects", "alpha", "notes.md"), "utf-8");
+      expect(content).toContain("[[projects/alpha/overview#Key Decisions|overview#Key Decisions]]");
+    });
+
+    test("daily-note rename preserves a #Heading subpath on inbound links", () => {
+      writeNote(
+        vaultRoot,
+        "areas/daily/01-16-2025.md",
+        note({ title: "01-16-2025", category: "areas" })
+      );
+      writeNote(
+        vaultRoot,
+        "areas/daily/2025-01-17.md",
+        note({
+          title: "2025-01-17",
+          category: "areas",
+          body: "Yesterday: [[01-16-2025#morning]].",
+        })
+      );
+
+      const report = auditVault();
+      applyDoctorFixes(report, { dryRun: false });
+
+      const content = readFileSync(join(vaultRoot, "areas", "daily", "2025-01-17.md"), "utf-8");
+      expect(content).toContain("[[2025-01-16#morning]]");
+    });
+
+    test("a #Heading link to an aliased note resolves (not broken) once the alias exists", () => {
+      writeNote(
+        vaultRoot,
+        "resources/global-catalog.md",
+        note({ title: "Global Catalog", category: "resources" })
+      );
+      writeNote(
+        vaultRoot,
+        "inbox/regular-note.md",
+        note({
+          title: "Regular Note",
+          category: "inbox",
+          body: "See [[Global Catalog#Intro]] for details.",
+        })
+      );
+
+      const report = auditVault();
+      expect(report.brokenLinks.some((l) => l.target === "Global Catalog#Intro")).toBe(true);
+
+      const result = applyDoctorFixes(report, { dryRun: false });
+      expect(result.linkHealthAfter.broken).toBe(0);
+    });
+  });
 });
