@@ -2,6 +2,7 @@ import { join } from "path";
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { atomicWriteText, safeAppendText } from "./fs-utils";
 import { vaultRoot, vaultMasterIndexPath } from "./vault";
+import { collectAllMarkdown } from "./note-index";
 import type { VaultIndex } from "../types/note";
 
 const WIKILINK_RE = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
@@ -16,9 +17,33 @@ export function extractWikilinks(content: string): string[] {
   return [...new Set(links)];
 }
 
+export interface InsertWikilinksOptions {
+  // Vault root to scan for basename collisions. When omitted, links are
+  // inserted bare (old behavior) — callers that care about link hygiene
+  // (write-time auto-linking) should pass the vault root.
+  vaultRoot?: string;
+}
+
+// Find every note in the vault whose basename (filename minus .md) matches
+// `target`, case-insensitively. Used to detect the "65 duplicated
+// basenames" ambiguity documented in the retrieval plan (many
+// projects/*/README.md, overview.md, etc.) before inserting a bare
+// wikilink that would resolve non-deterministically.
+function findBasenameMatches(target: string, root: string): string[] {
+  const targetLower = target.trim().toLowerCase();
+  if (!targetLower) return [];
+  const matches: string[] = [];
+  for (const file of collectAllMarkdown(root)) {
+    const base = file.relativePath.split("/").pop()!.replace(/\.md$/i, "");
+    if (base.toLowerCase() === targetLower) matches.push(file.relativePath);
+  }
+  return matches;
+}
+
 export function insertWikilinks(
   content: string,
-  targets: string[]
+  targets: string[],
+  opts: InsertWikilinksOptions = {}
 ): string {
   let result = content;
   for (const target of targets) {
@@ -29,7 +54,29 @@ export function insertWikilinks(
     const body = result.slice(fmEnd);
     // Replace first occurrence of the target text (case-insensitive, word boundary)
     const re = new RegExp(`\\b(${escapeRegex(target)})\\b`, "i");
-    const replaced = body.replace(re, `[[$1]]`);
+
+    // When multiple notes in the vault share this basename, a bare
+    // [[target]] link is ambiguous — Obsidian and mink's own wikilink
+    // resolver would both have to guess. Emit a path-qualified
+    // [[relative/path|displayed text]] link instead so it resolves to a
+    // specific note regardless of how many others share the name. The most
+    // recently modified match is used as the likely intended target.
+    let replacement = "[[$1]]";
+    if (opts.vaultRoot) {
+      const matches = findBasenameMatches(target, opts.vaultRoot);
+      if (matches.length > 1) {
+        const withMtime = matches
+          .map((relPath) => ({
+            relPath,
+            mtimeMs: statSync(join(opts.vaultRoot!, relPath)).mtimeMs,
+          }))
+          .sort((a, b) => b.mtimeMs - a.mtimeMs);
+        const chosen = withMtime[0].relPath.replace(/\.md$/i, "");
+        replacement = `[[${chosen}|$1]]`;
+      }
+    }
+
+    const replaced = body.replace(re, replacement);
     if (replaced !== body) {
       result = result.slice(0, fmEnd) + replaced;
     }

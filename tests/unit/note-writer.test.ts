@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { rmSync, existsSync, readFileSync, mkdtempSync } from "fs";
+import { rmSync, existsSync, readFileSync, mkdtempSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -10,6 +10,8 @@ import {
   appendToDaily,
 } from "../../src/core/note-writer";
 import { ensureVaultStructure } from "../../src/core/vault";
+import { recall, resetWikiSearchRuntimeForTests } from "../../src/core/wiki-search";
+import { _resetWikiSearchDbForTests } from "../../src/storage/wiki-search-db";
 
 describe("note-writer", () => {
   let tempDir: string;
@@ -20,9 +22,11 @@ describe("note-writer", () => {
     originalEnv = process.env.MINK_WIKI_PATH;
     process.env.MINK_WIKI_PATH = tempDir;
     ensureVaultStructure();
+    resetWikiSearchRuntimeForTests();
   });
 
   afterEach(() => {
+    _resetWikiSearchDbForTests();
     if (originalEnv === undefined) {
       delete process.env.MINK_WIKI_PATH;
     } else {
@@ -231,6 +235,48 @@ describe("note-writer", () => {
       expect(content).toContain("# No Template");
       expect(content).toContain("Just a note.");
     });
+
+    test("write-time hygiene: auto-declares the title as an alias when slug != title", () => {
+      const result = createNote({
+        title: "My Great Note",
+        category: "inbox",
+        tags: [],
+        created: "2024-01-01T00:00:00Z",
+        updated: "2024-01-01T00:00:00Z",
+        body: "Body text.",
+      });
+
+      expect(result.filePath).toContain("my-great-note.md");
+      expect(result.content).toContain("aliases: [My Great Note]");
+    });
+
+    test("write-time hygiene: no alias added when the slug already equals the title", () => {
+      const result = createNote({
+        title: "plain",
+        category: "inbox",
+        tags: [],
+        created: "2024-01-01T00:00:00Z",
+        updated: "2024-01-01T00:00:00Z",
+        body: "Body text.",
+      });
+
+      expect(result.content).not.toContain("aliases:");
+    });
+
+    test("indexes the note into the search DB so it's findable via recall immediately", () => {
+      createNote({
+        title: "Retry Backoff Policy",
+        category: "inbox",
+        tags: [],
+        created: "2024-01-01T00:00:00Z",
+        updated: "2024-01-01T00:00:00Z",
+        body: "The exponential backoff caps at 90 seconds for the sync worker.",
+      });
+
+      const results = recall("exponential backoff caps");
+      expect(results.length).toBe(1);
+      expect(results[0].title).toBe("Retry Backoff Policy");
+    });
   });
 
   describe("appendToDaily", () => {
@@ -271,6 +317,53 @@ describe("note-writer", () => {
       const content = readFileSync(filePath, "utf-8");
       // The append adds a ## HH:MM header
       expect(content).toMatch(/## \d{2}:\d{2}/);
+    });
+
+    test("indexes the full file (including appended content) for recall", () => {
+      // The daily-note template doesn't embed the creating call's body (see
+      // the "creates new daily note when none exists" test above) — only
+      // appends to an *existing* file carry their content in, as a
+      // timestamped section. So the first call just creates the file, and
+      // both searchable facts come from subsequent appends.
+      appendToDaily("2024-01-15", "seed");
+      appendToDaily("2024-01-15", "first entry about widgets");
+      appendToDaily("2024-01-15", "second entry about turbines");
+
+      // Both entries live in the same file — a fact from an earlier append
+      // must still be findable after a later append re-indexes the file.
+      expect(recall("turbines").length).toBe(1);
+      expect(recall("widgets").length).toBe(1);
+    });
+  });
+
+  describe("ingestFile", () => {
+    let sourceDir: string;
+
+    beforeEach(() => {
+      sourceDir = mkdtempSync(join(tmpdir(), "mink-ingest-src-"));
+    });
+
+    afterEach(() => {
+      rmSync(sourceDir, { recursive: true, force: true });
+    });
+
+    test("write-time hygiene: adds an alias when the extracted title differs from its slug", async () => {
+      const { ingestFile } = await import("../../src/core/note-writer");
+      const src = join(sourceDir, "source.md");
+      writeFileSync(src, "# My Ingested Title\n\nSome content about caching.\n");
+
+      const result = ingestFile(src, { category: "inbox" });
+      expect(result.filePath).toContain("my-ingested-title.md");
+      expect(result.content).toContain("aliases: [My Ingested Title]");
+    });
+
+    test("indexes ingested content for recall", async () => {
+      const { ingestFile } = await import("../../src/core/note-writer");
+      const src = join(sourceDir, "source2.md");
+      writeFileSync(src, "# Ingest Search Test\n\nA fact about flux capacitors.\n");
+
+      ingestFile(src, { category: "inbox" });
+      expect(recall("flux capacitors").length).toBe(1);
     });
   });
 });

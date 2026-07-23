@@ -120,6 +120,46 @@ TypeScript is great.`;
       const result = insertWikilinks(content, []);
       expect(result).toBe(content);
     });
+
+    describe("ambiguous basename disambiguation (write-time hygiene)", () => {
+      let vaultPath: string;
+
+      beforeEach(() => {
+        vaultPath = join(tempDir, "vault");
+        mkdirSync(join(vaultPath, "projects", "alpha"), { recursive: true });
+        mkdirSync(join(vaultPath, "projects", "beta"), { recursive: true });
+      });
+
+      test("emits a path-qualified link when multiple notes share the target's basename", () => {
+        writeFileSync(join(vaultPath, "projects", "alpha", "overview.md"), "# Alpha overview\n");
+        writeFileSync(join(vaultPath, "projects", "beta", "overview.md"), "# Beta overview\n");
+
+        const content = "See the overview for details.";
+        const result = insertWikilinks(content, ["overview"], { vaultRoot: vaultPath });
+
+        expect(result).toMatch(/\[\[projects\/(alpha|beta)\/overview\|overview\]\]/);
+      });
+
+      test("emits a bare link when only one note has that basename", () => {
+        writeFileSync(join(vaultPath, "projects", "alpha", "overview.md"), "# Alpha overview\n");
+
+        const content = "See the overview for details.";
+        const result = insertWikilinks(content, ["overview"], { vaultRoot: vaultPath });
+
+        expect(result).toContain("[[overview]]");
+        expect(result).not.toContain("|overview]]");
+      });
+
+      test("without vaultRoot, falls back to the old bare-link behavior even with duplicates on disk", () => {
+        writeFileSync(join(vaultPath, "projects", "alpha", "overview.md"), "# Alpha overview\n");
+        writeFileSync(join(vaultPath, "projects", "beta", "overview.md"), "# Beta overview\n");
+
+        const content = "See the overview for details.";
+        const result = insertWikilinks(content, ["overview"]);
+
+        expect(result).toContain("[[overview]]");
+      });
+    });
   });
 
   describe("addBacklink", () => {
