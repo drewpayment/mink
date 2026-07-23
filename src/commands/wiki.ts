@@ -20,6 +20,12 @@ import {
   vaultIndexStaleness,
 } from "../core/note-index";
 import { updateMasterIndex } from "../core/note-linker";
+import {
+  reindexVault,
+  resolveNoteArg,
+  backlinksForNote,
+  relatedForNote,
+} from "../core/wiki-search";
 import type { VaultManifest, NoteCategory } from "../types/note";
 
 export async function wiki(
@@ -39,6 +45,15 @@ export async function wiki(
     case "scan":
       wikiRebuildIndex();
       break;
+    case "reindex":
+      wikiReindex();
+      break;
+    case "backlinks":
+      wikiBacklinks(args.slice(1));
+      break;
+    case "related":
+      wikiRelated(args.slice(1));
+      break;
     case "organize":
       wikiOrganize();
       break;
@@ -56,8 +71,11 @@ export async function wiki(
       console.log();
       console.log("  init                Initialize the notes/wiki vault");
       console.log("  status              Show vault statistics");
-      console.log("  rebuild-index       Full rescan and reindex of vault (alias: scan)");
+      console.log("  rebuild-index       Full rescan and reindex of the JSON vault index (alias: scan)");
       console.log("  scan                Alias for rebuild-index");
+      console.log("  reindex             Full rebuild of the FTS5 search index used by 'mink recall'");
+      console.log("  backlinks <note> [--json]   Notes that link to <note>");
+      console.log("  related <note> [--json]     Backlinks + outlinks + shared-tag neighbors");
       console.log("  organize            List inbox notes needing categorization");
       console.log("  link <path> [name]  Symlink external notes into the vault");
       console.log("  unlink <name>       Remove a symlinked directory from the vault");
@@ -246,6 +264,90 @@ function wikiRebuildIndex(): void {
   const index = rebuildVaultIndex();
   updateMasterIndex(resolveVaultPath());
   console.log(`  indexed ${index.totalNotes} notes`);
+}
+
+function wikiReindex(): void {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    return;
+  }
+
+  console.log("[mink] rebuilding search index...");
+  const { indexed } = reindexVault();
+  console.log(`  indexed ${indexed} notes into the FTS5 search index (used by 'mink recall')`);
+}
+
+function hasJsonFlag(args: string[]): boolean {
+  return args.includes("--json");
+}
+
+function resolveNoteArgOrExit(args: string[]): string {
+  const positional = args.find((a) => !a.startsWith("--"));
+  if (!positional) {
+    console.error("Usage: mink wiki backlinks|related <note> [--json]");
+    console.error("  <note> may be a vault-relative path or an exact note title.");
+    process.exit(1);
+  }
+  const resolved = resolveNoteArg(positional);
+  if (!resolved) {
+    console.error(`[mink] no note found matching "${positional}"`);
+    process.exit(1);
+  }
+  return resolved;
+}
+
+function wikiBacklinks(args: string[]): void {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    return;
+  }
+
+  const path = resolveNoteArgOrExit(args);
+  const backlinks = backlinksForNote(path);
+
+  if (hasJsonFlag(args)) {
+    console.log(JSON.stringify({ note: path, backlinks }, null, 2));
+    return;
+  }
+
+  if (backlinks.length === 0) {
+    console.log(`[mink] no backlinks to ${path}`);
+    return;
+  }
+
+  console.log(`[mink] ${backlinks.length} backlink${backlinks.length === 1 ? "" : "s"} to ${path}:`);
+  console.log();
+  for (const b of backlinks) {
+    console.log(`  ${b.title}`);
+    console.log(`    ${b.path}`);
+  }
+}
+
+function wikiRelated(args: string[]): void {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    return;
+  }
+
+  const path = resolveNoteArgOrExit(args);
+  const related = relatedForNote(path);
+
+  if (hasJsonFlag(args)) {
+    console.log(JSON.stringify({ note: path, related }, null, 2));
+    return;
+  }
+
+  if (related.length === 0) {
+    console.log(`[mink] no related notes for ${path}`);
+    return;
+  }
+
+  console.log(`[mink] ${related.length} note${related.length === 1 ? "" : "s"} related to ${path}:`);
+  console.log();
+  for (const r of related) {
+    console.log(`  ${r.title}  (${r.reason}, overlap ${r.overlap})`);
+    console.log(`    ${r.path}`);
+  }
 }
 
 function wikiOrganize(): void {
