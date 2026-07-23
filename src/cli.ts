@@ -183,6 +183,12 @@ switch (command) {
     break;
   }
 
+  case "recall": {
+    const { recall } = await import("./commands/recall");
+    await recall(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "skill": {
     const { skill } = await import("./commands/skill");
     await skill(process.argv.slice(3));
@@ -269,11 +275,12 @@ switch (command) {
     console.log("  config [key] [value]    Manage global user settings");
     console.log();
     console.log("Notes & Wiki:");
-    console.log("  wiki <cmd>              Manage the notes/wiki vault (init|status|link|unlink|links|rebuild-index|scan|organize|doctor)");
+    console.log("  wiki <cmd>              Manage the notes/wiki vault (init|status|link|unlink|links|rebuild-index|reindex|backlinks|related|scan|organize|doctor)");
     console.log("  note \"text\"             Capture a note to the vault");
     console.log("  note --daily [text]     Create or append to today's daily note");
     console.log("  note list [filters]     List notes (--category, --tag, --recent)");
-    console.log("  note search <term>      Full-text search across the vault");
+    console.log("  note search <term>      Deprecated — use 'mink recall'");
+    console.log("  recall \"<query>\" [opts] BM25 full-text search over note bodies/titles/tags (--json, --limit, --project, --tag, --category, --since)");
     console.log("  skill install           Install /mink:note skill for Claude Code");
     console.log("  agent                   Open a Claude Code session with the mink-agent persona");
     console.log();

@@ -92,9 +92,11 @@ export function extractNoteTags(content: string): string[] {
 }
 
 export function extractNoteAliases(content: string): string[] {
-  // Parse aliases from frontmatter — mirrors extractNoteTags' inline-array
-  // and multiline-list handling since note-writer generates aliases the
-  // same way it generates tags.
+  // Mirrors extractNoteTags — same single-line `[a, b]` and multiline `- x`
+  // frontmatter shapes, just for the `aliases:` key. note-writer.ts writes
+  // the single-line form; Obsidian users may hand-edit the multiline form.
+  // Quote-stripping removes only a leading/trailing pair so interior
+  // apostrophes/quotes in an alias survive.
   const fmMatch = content.match(/^aliases:\s*\[(.+)\]/m);
   if (fmMatch) {
     return fmMatch[1]
@@ -130,7 +132,7 @@ export function extractNoteCategory(content: string): NoteCategory {
   return "inbox";
 }
 
-function estimateTokens(content: string): number {
+export function estimateTokens(content: string): number {
   return Math.ceil(content.length / 3.75);
 }
 
@@ -305,6 +307,10 @@ const VAULT_EXCLUDES = new Set([
   ".git",
   ".mink-vault.json",
   ".mink-index.json",
+  ".mink-search.db",
+  ".mink-search.db-wal",
+  ".mink-search.db-shm",
+  ".mink-search.db-journal",
   "node_modules",
   // mink wiki doctor's own quarantine subtree (archives/_doctor/<date>/...)
   // — without this, rebuildVaultIndex() re-indexes the very junk doctor
@@ -312,9 +318,11 @@ const VAULT_EXCLUDES = new Set([
   "_doctor",
 ]);
 
-// Exported for src/core/wiki-doctor.ts, which needs the same vault-wide
-// markdown listing (paths + mtimes) to audit link health, aliasing, and
-// pollution without re-implementing the walk/exclude rules.
+// Walk the vault and collect every markdown note, skipping the excludes
+// above. Exported for reuse by the search indexer (wiki-search.ts),
+// note-linker.ts's ambiguous-link detection, and wiki-doctor.ts's audit —
+// all of which need the same "every real note in the vault" scan the JSON
+// index uses.
 export function collectAllMarkdown(rootPath: string): ScannedMarkdown[] {
   const files: ScannedMarkdown[] = [];
   function walk(dir: string) {
