@@ -1,0 +1,143 @@
+{
+  "description": "Q/A cases for the mink-agent retrieval eval, graded against the fixture vault in evals/fixtures/vault.",
+  "cases": [
+    {
+      "id": "title-hit-deploy-runbook",
+      "category": "title-hit",
+      "question": "Do we have a runbook for deploying Orion API?",
+      "expected_paths": ["projects/orion-api/deploy-runbook.md"],
+      "expected_substrings": ["runbook", "canary"]
+    },
+    {
+      "id": "title-hit-design-system",
+      "category": "title-hit",
+      "question": "Is there a design system doc for Atlas Web?",
+      "expected_paths": ["projects/atlas-web/design-system.md"],
+      "expected_substrings": ["design system"]
+    },
+    {
+      "id": "title-hit-style-guide",
+      "category": "title-hit",
+      "question": "What's our writing style guide called, and where do I find it?",
+      "expected_paths": ["resources/writing-style-guide.md"],
+      "expected_substrings": ["Writing Style Guide"]
+    },
+    {
+      "id": "title-hit-security-checklist-alias",
+      "category": "title-hit",
+      "question": "Where can I find the security checklist for reviewing PRs?",
+      "expected_paths": ["areas/sec-checklist.md"],
+      "expected_substrings": ["Security Checklist"]
+    },
+    {
+      "id": "body-hit-rate-limiter-algorithm",
+      "category": "body-hit",
+      "question": "What algorithm does the Orion API rate limiter use?",
+      "expected_paths": ["projects/orion-api/architecture.md"],
+      "expected_substrings": ["sliding-window", "sliding window"]
+    },
+    {
+      "id": "body-hit-cache-outage-root-cause",
+      "category": "body-hit",
+      "question": "What was the root cause of the Orion API cache outage in March 2026?",
+      "expected_paths": ["projects/orion-api/incident-2026-03-cache-outage.md"],
+      "expected_substrings": ["DNS TTL", "stale"]
+    },
+    {
+      "id": "body-hit-atlas-state-library",
+      "category": "body-hit",
+      "question": "What state management library did Atlas Web 0.9 migrate to?",
+      "expected_paths": ["projects/atlas-web/release-notes-0.9.md"],
+      "expected_substrings": ["Zustand"]
+    },
+    {
+      "id": "body-hit-postgres-pool-formula",
+      "category": "body-hit",
+      "question": "What's the recommended starting connection pool size formula for Postgres?",
+      "expected_paths": ["resources/postgres-connection-pooling.md"],
+      "expected_substrings": ["core_count", "effective_spindle_count"]
+    },
+    {
+      "id": "body-hit-redesign-postponed-reason",
+      "category": "body-hit",
+      "question": "Why was the Atlas Web redesign launch postponed?",
+      "expected_paths": ["areas/meeting-2026-06-18-roadmap-sync.md"],
+      "expected_substrings": ["accessibility audit", "a11y"]
+    },
+    {
+      "id": "body-hit-flaky-checkout-cause",
+      "category": "body-hit",
+      "question": "What caused the flaky checkout test in Atlas Web?",
+      "expected_paths": ["projects/atlas-web/bug-flaky-checkout-test.md"],
+      "expected_substrings": ["race condition", "webhook"]
+    },
+    {
+      "id": "graph-hop-oncall-escalation",
+      "category": "graph-hop",
+      "question": "If the on-call engineer doesn't respond, what's the escalation policy and how long before it kicks in?",
+      "expected_paths": ["resources/oncall-escalation-matrix.md"],
+      "expected_substrings": ["45 minutes", "VP"]
+    },
+    {
+      "id": "graph-hop-monolith-successors",
+      "category": "graph-hop",
+      "question": "The old monolith was decommissioned — what services replaced it?",
+      "expected_paths": [
+        "archives/legacy-monolith-notes.md",
+        "projects/orion-api/overview.md",
+        "projects/atlas-web/overview.md"
+      ],
+      "expected_substrings": ["Orion API", "Atlas Web"]
+    },
+    {
+      "id": "graph-hop-architecture-caching-reference",
+      "category": "graph-hop",
+      "question": "What caching pattern does the Orion API architecture doc point to for the general caching approach?",
+      "expected_paths": ["resources/redis-caching-patterns.md"],
+      "expected_substrings": ["cache-aside"]
+    },
+    {
+      "id": "negative-atlas-mobile-language",
+      "category": "negative",
+      "question": "What programming language is the Atlas Web mobile app written in?",
+      "expected_paths": [],
+      "expected_substrings": [
+        "not found",
+        "couldn't find",
+        "could not find",
+        "don't have",
+        "do not have",
+        "no note",
+        "no mention",
+        "not in the vault",
+        "not in the wiki",
+        "unable to find",
+        "no mobile app",
+        "haven't found",
+        "isn't mentioned",
+        "no information"
+      ]
+    },
+    {
+      "id": "negative-ceo-identity",
+      "category": "negative",
+      "question": "Who is the company's CEO?",
+      "expected_paths": [],
+      "expected_substrings": [
+        "not found",
+        "couldn't find",
+        "could not find",
+        "don't have",
+        "do not have",
+        "no note",
+        "no mention",
+        "not in the vault",
+        "not in the wiki",
+        "unable to find",
+        "haven't found",
+        "isn't mentioned",
+        "no information"
+      ]
+    }
+  ]
+}

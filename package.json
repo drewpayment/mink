@@ -15,6 +15,7 @@
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test",
     "test:watch": "bun test --watch",
+    "eval:agent": "bun run evals/runner.ts",
     "dashboard:dev": "cd dashboard && bun run dev",
     "dashboard:build": "cd dashboard && bun run build"
   },
