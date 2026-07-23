@@ -5,6 +5,7 @@ import { tmpdir } from "os";
 import { safeReadJson } from "../../src/core/fs-utils";
 import { buildHooksConfig, mergeHooksIntoSettings, writeMinkRule, init, resolveCliPathFrom } from "../../src/commands/init";
 import { learningMemoryPath } from "../../src/core/paths";
+import { useMinkFixture } from "../helpers/mink-fixture";
 
 describe("resolveCliPathFrom", () => {
   // Every form `bun build` and the Node shim can produce must map to the
@@ -302,21 +303,13 @@ describe("writeMinkRule", () => {
 });
 
 describe("init", () => {
+  const fx = useMinkFixture("mink-init-test");
   let projectDir: string;
   let memPath: string;
 
   beforeEach(() => {
-    projectDir = mkdtempSync(join(tmpdir(), "mink-init-test-"));
+    projectDir = fx.current.cwd;
     memPath = learningMemoryPath(projectDir);
-  });
-
-  afterEach(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-    // Clean up the mink project dir created by init
-    if (existsSync(memPath)) {
-      const minkProjDir = join(memPath, "..");
-      rmSync(minkProjDir, { recursive: true, force: true });
-    }
   });
 
   test("seeds learning-memory.md on init", async () => {

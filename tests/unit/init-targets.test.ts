@@ -1,29 +1,19 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from "fs";
+import { describe, expect, test, beforeEach } from "bun:test";
+import { existsSync, writeFileSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
 import { init } from "../../src/commands/init";
 import { safeReadJson } from "../../src/core/fs-utils";
 import { projectMetaPath } from "../../src/core/paths";
+import { useMinkFixture } from "../helpers/mink-fixture";
 
 describe("init with explicit targets", () => {
+  const fx = useMinkFixture("mink-targets");
   let cwd: string;
-  let minkRoot: string;
-  const prevRoot = process.env.MINK_ROOT_OVERRIDE;
 
   beforeEach(() => {
-    cwd = mkdtempSync(join(tmpdir(), "mink-targets-cwd-"));
-    minkRoot = mkdtempSync(join(tmpdir(), "mink-targets-root-"));
-    process.env.MINK_ROOT_OVERRIDE = minkRoot;
+    cwd = fx.current.cwd;
     // A package.json lets seed/scan run without surprises.
     writeFileSync(join(cwd, "package.json"), JSON.stringify({ name: "t" }));
-  });
-
-  afterEach(() => {
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(minkRoot, { recursive: true, force: true });
-    if (prevRoot === undefined) delete process.env.MINK_ROOT_OVERRIDE;
-    else process.env.MINK_ROOT_OVERRIDE = prevRoot;
   });
 
   const meta = () =>
