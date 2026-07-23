@@ -51,6 +51,9 @@ export async function wiki(
     case "links":
       wikiLinks();
       break;
+    case "doctor":
+      await wikiDoctor(args.slice(1));
+      break;
     default:
       console.log("Usage: mink wiki <command>");
       console.log();
@@ -62,6 +65,9 @@ export async function wiki(
       console.log("  link <path> [name]  Symlink external notes into the vault");
       console.log("  unlink <name>       Remove a symlinked directory from the vault");
       console.log("  links               List all linked directories");
+      console.log("  doctor [--fix] [--dry-run]");
+      console.log("                      Audit link hygiene and test pollution.");
+      console.log("                      --fix quarantines/repairs; --fix --dry-run previews.");
       break;
   }
 }
@@ -360,6 +366,33 @@ function wikiLinks(): void {
   for (const link of links) {
     console.log(`  ${link.name} -> ${link.target}`);
     console.log(`    linked: ${link.linkedAt}`);
+  }
+}
+
+async function wikiDoctor(args: string[]): Promise<void> {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    console.log("  Run 'mink wiki init' first.");
+    return;
+  }
+
+  const fix = args.includes("--fix");
+  const dryRun = args.includes("--dry-run");
+  if (dryRun && !fix) {
+    console.log("[mink] note: --dry-run only has an effect together with --fix; running audit only.");
+  }
+
+  const { auditVault, applyDoctorFixes, formatDoctorReport, formatFixResult } = await import(
+    "../core/wiki-doctor"
+  );
+
+  const report = auditVault();
+  console.log(formatDoctorReport(report));
+
+  if (fix) {
+    const result = applyDoctorFixes(report, { dryRun });
+    console.log();
+    console.log(formatFixResult(result));
   }
 }
 

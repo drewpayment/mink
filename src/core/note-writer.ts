@@ -144,6 +144,61 @@ ${meta.body}
 `;
 }
 
+// Inserts (or extends) an `aliases:` line in an existing note's frontmatter
+// without rewriting anything else — used by `mink wiki doctor --fix` to
+// backfill aliases on notes whose title/H1 differs from their filename slug.
+// Preserves every other frontmatter line verbatim (key order, quoting style,
+// unknown custom fields) so re-running the doctor is a byte-for-byte no-op
+// once aliases exist.
+export function upsertFrontmatterAliases(
+  content: string,
+  aliases: string[]
+): string {
+  if (!content.startsWith("---")) return content; // no frontmatter to touch
+  const firstLineEnd = content.indexOf("\n");
+  if (firstLineEnd === -1) return content;
+  const closeIdx = content.indexOf("\n---", firstLineEnd);
+  if (closeIdx === -1) return content;
+
+  const fmBody = content.slice(firstLineEnd + 1, closeIdx);
+  const rest = content.slice(closeIdx); // "\n---\n\n# Title..."
+  const lines = fmBody.split("\n");
+
+  const aliasLineIdx = lines.findIndex((l) => /^aliases:\s*\[/.test(l));
+
+  if (aliasLineIdx !== -1) {
+    // Merge with the existing inline array, de-duping case-insensitively.
+    const match = lines[aliasLineIdx].match(/^aliases:\s*\[(.*)\]\s*$/);
+    const existing = match
+      ? match[1]
+          .split(",")
+          .map((a) => a.trim().replace(/^["']|["']$/g, ""))
+          .filter(Boolean)
+      : [];
+    const merged = [...existing];
+    const seen = new Set(existing.map((a) => a.toLowerCase()));
+    for (const alias of aliases) {
+      if (!seen.has(alias.toLowerCase())) {
+        seen.add(alias.toLowerCase());
+        merged.push(alias);
+      }
+    }
+    lines[aliasLineIdx] = `aliases: [${merged.map(formatAliasValue).join(", ")}]`;
+  } else {
+    lines.push(`aliases: [${aliases.map(formatAliasValue).join(", ")}]`);
+  }
+
+  return `---\n${lines.join("\n")}${rest}`;
+}
+
+// Bare unless the value would break the `[a, b, c]` inline-array syntax
+// (comma/bracket/quote) — matches the unquoted style generateFrontmatter()
+// already uses for tags in the common case.
+function formatAliasValue(value: string): string {
+  if (/[,\[\]"]/.test(value)) return JSON.stringify(value);
+  return value;
+}
+
 export function appendToDaily(date: string, content: string): string {
   const dir = vaultDailyDir();
   const filePath = join(dir, `${date}.md`);
