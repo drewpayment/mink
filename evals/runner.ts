@@ -23,13 +23,22 @@ import {
   readFileSync,
   rmSync,
   writeFileSync,
-  unlinkSync,
 } from "fs";
 import { tmpdir, homedir } from "os";
 import { join, dirname, resolve } from "path";
 import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { ENGINES, isClaudeOnPath, type EngineContext } from "./engines";
+import {
+  sha256,
+  grade,
+  applyBackupMarker,
+  writeBackupMarkerAt,
+  readBackupMarkerAt,
+  type BackupMarker,
+  type CaseCategory,
+  type EvalCase,
+} from "./lib";
 
 // ---------------------------------------------------------------------------
 // Paths / repo discovery
@@ -67,16 +76,8 @@ const BACKUP_PATH = `${INSTALLED_AGENT_PATH}.eval-backup`;
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-type CaseCategory = "title-hit" | "body-hit" | "graph-hop" | "negative";
-
-interface EvalCase {
-  id: string;
-  category: CaseCategory;
-  question: string;
-  expected_paths: string[];
-  expected_substrings: string[];
-}
+// CaseCategory, EvalCase, BackupMarker live in ./lib (side-effect-free, so
+// tests/unit/eval-runner-lib.test.ts can import them without running main()).
 
 interface CasesFile {
   description?: string;
@@ -225,26 +226,16 @@ function getMinkVersion(): string {
   }
 }
 
-interface BackupMarker {
-  existed: boolean;
-  content: string | null;
-}
+// writeBackupMarkerAt/readBackupMarkerAt/applyBackupMarker come from ./lib,
+// parameterized by path so they're unit-testable without touching the real
+// ~/.claude/agents. These are thin, path-bound wrappers around them.
 
 function writeBackupMarker(marker: BackupMarker): void {
-  writeFileSync(BACKUP_PATH, JSON.stringify(marker), "utf-8");
+  writeBackupMarkerAt(BACKUP_PATH, marker);
 }
 
 function readBackupMarker(): BackupMarker | null {
-  if (!existsSync(BACKUP_PATH)) return null;
-  return JSON.parse(readFileSync(BACKUP_PATH, "utf-8")) as BackupMarker;
-}
-
-function clearBackupMarker(): void {
-  try {
-    if (existsSync(BACKUP_PATH)) unlinkSync(BACKUP_PATH);
-  } catch {
-    // best-effort
-  }
+  return readBackupMarkerAt(BACKUP_PATH);
 }
 
 /**
@@ -253,7 +244,8 @@ function clearBackupMarker(): void {
  * BACKUP_PATH is left on disk holding whatever was really installed before
  * that run. Restore it before doing anything else so a crashed run never
  * permanently strands the fixture-rendered definition over the user's real
- * one.
+ * one — unless the user has since reinstalled something else, in which case
+ * applyBackupMarker() (see ./lib for why) leaves it alone.
  */
 function recoverLeftoverBackupIfAny(): void {
   const marker = (() => {
@@ -273,19 +265,23 @@ function recoverLeftoverBackupIfAny(): void {
   if (marker === null) return; // no leftover backup
 
   console.error(
-    `[mink eval] found a leftover backup at ${BACKUP_PATH} from a previous interrupted run — restoring it before continuing.`
+    `[mink eval] found a leftover backup at ${BACKUP_PATH} from a previous interrupted run — checking it before continuing.`
   );
   try {
-    if (marker.existed && marker.content !== null) {
-      writeFileSync(INSTALLED_AGENT_PATH, marker.content);
+    const outcome = applyBackupMarker(INSTALLED_AGENT_PATH, BACKUP_PATH, marker, {
+      saveStaleAside: true,
+    });
+    if (outcome === "restored") {
       console.error(`[mink eval] restored ${INSTALLED_AGENT_PATH} from leftover backup.`);
-    } else if (existsSync(INSTALLED_AGENT_PATH)) {
-      unlinkSync(INSTALLED_AGENT_PATH);
+    } else if (outcome === "removed") {
       console.error(
         `[mink eval] removed ${INSTALLED_AGENT_PATH} (no definition existed before the interrupted run).`
       );
+    } else {
+      console.error(
+        `[mink eval] ${INSTALLED_AGENT_PATH} no longer matches what this backup expected to find there — something else (most likely a fresh \`mink agent\` reinstall) replaced it since. Left it alone; saved the stale backup at ${BACKUP_PATH}.stale for inspection.`
+      );
     }
-    clearBackupMarker();
   } catch (err) {
     console.error(
       `[mink eval] warning: failed to apply leftover backup — leaving ${BACKUP_PATH} in place for manual recovery: ${
@@ -325,7 +321,8 @@ function installFixtureAgent(fixture: FixtureInstance): AgentInstall {
 
   const existed = existsSync(INSTALLED_AGENT_PATH);
   const content = existed ? readFileSync(INSTALLED_AGENT_PATH, "utf-8") : null;
-  writeBackupMarker({ existed, content });
+  const installedHash = sha256(rendered);
+  writeBackupMarker({ existed, content, installedHash });
 
   writeFileSync(INSTALLED_AGENT_PATH, rendered);
 
@@ -340,12 +337,14 @@ function installFixtureAgent(fixture: FixtureInstance): AgentInstall {
       })();
       if (marker === null) return; // already restored (or never installed)
       try {
-        if (marker.existed && marker.content !== null) {
-          writeFileSync(INSTALLED_AGENT_PATH, marker.content);
-        } else if (existsSync(INSTALLED_AGENT_PATH)) {
-          unlinkSync(INSTALLED_AGENT_PATH);
+        const outcome = applyBackupMarker(INSTALLED_AGENT_PATH, BACKUP_PATH, marker, {
+          saveStaleAside: true,
+        });
+        if (outcome === "skipped-mismatch") {
+          console.error(
+            `[mink eval] the installed mink-agent definition changed during this run (not by us) — left it as-is instead of restoring over it. Saved the stale backup at ${BACKUP_PATH}.stale for inspection.`
+          );
         }
-        clearBackupMarker();
       } catch (err) {
         console.error(
           `[mink eval] warning: failed to restore ${INSTALLED_AGENT_PATH}: ${
@@ -406,65 +405,8 @@ function handleTerminationSignal(signal: string): void {
 process.on("SIGINT", () => handleTerminationSignal("SIGINT"));
 process.on("SIGTERM", () => handleTerminationSignal("SIGTERM"));
 
-// ---------------------------------------------------------------------------
-// Grading
-//
-// Non-negative cases require a PATH match to pass — an expected substring
-// alone is not sufficient. `claude -p` responses routinely echo nouns from
-// the question itself (e.g. asking about a "design system doc" gets back a
-// response containing the words "design system" whether or not it actually
-// found and cited projects/atlas-web/design-system.md), so substring-only
-// matching on a case whose expected_substrings overlap the question text is
-// not discriminative. Substrings are still checked and reported for
-// context, but only a cited path proves the note was actually retrieved.
-//
-// Negative cases have no expected_paths by construction (there's nothing to
-// cite) — they pass only on a not-found admission substring, which the
-// question text is designed not to contain.
-// ---------------------------------------------------------------------------
-
-function grade(kase: EvalCase, output: string): { pass: boolean; reason: string } {
-  const haystack = output.toLowerCase();
-
-  const pathHits = kase.expected_paths.filter((p) => output.includes(p));
-  const substringHits = kase.expected_substrings.filter((s) =>
-    haystack.includes(s.toLowerCase())
-  );
-
-  if (kase.category === "negative") {
-    const pass = substringHits.length > 0;
-    return {
-      pass,
-      reason: pass
-        ? `not-found admission matched: ${substringHits.join(", ")}`
-        : "no not-found admission phrase found — response may be fabricating an answer",
-    };
-  }
-
-  if (kase.expected_paths.length === 0) {
-    // No path defined for this case — fall back to substring-only.
-    const pass = substringHits.length > 0;
-    return {
-      pass,
-      reason: pass ? `substring match: ${substringHits.join(", ")}` : "no expected substring found in output",
-    };
-  }
-
-  const pass = pathHits.length > 0;
-  const bits: string[] = [];
-  if (pathHits.length) bits.push(`path match: ${pathHits.join(", ")}`);
-  if (substringHits.length) bits.push(`substring match (supplementary): ${substringHits.join(", ")}`);
-  return {
-    pass,
-    reason: pass
-      ? bits.join("; ")
-      : `no expected path cited in output${
-          substringHits.length
-            ? ` (substrings matched but a path citation is required: ${substringHits.join(", ")})`
-            : ""
-        }`,
-  };
-}
+// grade() / pathMatches() live in ./lib — see there for the discriminative-
+// path-match and non-negative-cases-require-a-path-citation rationale.
 
 // ---------------------------------------------------------------------------
 // Main
