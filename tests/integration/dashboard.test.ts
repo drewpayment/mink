@@ -1,33 +1,17 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "fs";
+import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { mkdirSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
-import { tmpdir, homedir } from "os";
 import { startDashboardServer, type DashboardServer } from "../../src/core/dashboard-server";
 import { schedulerPidPath } from "../../src/core/paths";
-
-// We need a real state directory for the server to read from.
-// We'll mock project paths by creating a temp dir with state files.
-
-let projectCwd: string;
-let stateDir: string;
-let server: DashboardServer;
-
-// Create a fake project directory structure
-function setupProject(): string {
-  const cwd = mkdtempSync(join(tmpdir(), "mink-dash-integ-"));
-
-  // We need the state dir to exist at the path projectDir(cwd) resolves to.
-  // Since projectDir uses generateProjectId which hashes the cwd,
-  // we'll write files there by importing the actual path helpers.
-  return cwd;
-}
+import { useMinkFixture } from "../helpers/mink-fixture";
 
 describe("dashboard server", () => {
+  const fx = useMinkFixture("mink-dash-integ");
   let cwd: string;
   let srv: DashboardServer;
 
   beforeEach(async () => {
-    cwd = mkdtempSync(join(tmpdir(), "mink-dash-integ-"));
+    cwd = fx.current.cwd;
 
     // Create state directory for this project
     const { projectDir } = await import("../../src/core/paths");
@@ -73,8 +57,8 @@ describe("dashboard server", () => {
   });
 
   afterEach(() => {
+    // cwd itself is torn down by the fixture's own afterEach.
     if (srv) srv.close();
-    rmSync(cwd, { recursive: true, force: true });
   });
 
   test("serves HTML at root", async () => {

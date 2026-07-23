@@ -144,6 +144,82 @@ ${meta.body}
 `;
 }
 
+// Inserts (or extends) an `aliases:` line in an existing note's frontmatter
+// without rewriting anything else — used by `mink wiki doctor --fix` to
+// backfill aliases on notes whose title/H1 differs from their filename slug.
+// Preserves every other frontmatter line verbatim (key order, quoting style,
+// unknown custom fields) so re-running the doctor is a byte-for-byte no-op
+// once aliases exist.
+export function upsertFrontmatterAliases(
+  content: string,
+  aliases: string[]
+): string {
+  const firstLineEnd = content.indexOf("\n");
+  if (firstLineEnd === -1) return content;
+  // Require the first line to be *exactly* "---" (mind a trailing \r on
+  // CRLF files) — content.startsWith("---") alone also matches a "----"
+  // rule or a "---foo" line, and more importantly would treat a markdown
+  // thematic break at the top of a body as frontmatter, splicing aliases
+  // into prose. Trimmed comparison rejects both.
+  if (content.slice(0, firstLineEnd).trim() !== "---") return content;
+  const closeIdx = content.indexOf("\n---", firstLineEnd);
+  if (closeIdx === -1) return content;
+
+  const fmBody = content.slice(firstLineEnd + 1, closeIdx);
+  const rest = content.slice(closeIdx); // "\n---\n\n# Title..."
+  // Strip a trailing \r per line so CRLF input normalizes to LF in the
+  // frontmatter block we rebuild (the untouched body after `rest` keeps
+  // whatever line endings it already had).
+  const lines = fmBody.split("\n").map((l) => l.replace(/\r$/, ""));
+
+  // A "---" thematic break followed by ordinary prose (no `key:` lines)
+  // isn't frontmatter either — bail rather than guess.
+  if (!lines.some((l) => /^\S+:/.test(l))) return content;
+
+  const aliasLineIdx = lines.findIndex((l) => /^aliases:\s*\[/.test(l));
+
+  if (aliasLineIdx !== -1) {
+    // Merge with the existing inline array, de-duping case-insensitively.
+    const match = lines[aliasLineIdx].match(/^aliases:\s*\[(.*)\]\s*$/);
+    const existing = match
+      ? match[1]
+          .split(",")
+          .map((a) => a.trim().replace(/^["']|["']$/g, ""))
+          .filter(Boolean)
+      : [];
+    const merged = [...existing];
+    const seen = new Set(existing.map((a) => a.toLowerCase()));
+    for (const alias of aliases) {
+      if (!seen.has(alias.toLowerCase())) {
+        seen.add(alias.toLowerCase());
+        merged.push(alias);
+      }
+    }
+    lines[aliasLineIdx] = `aliases: [${merged.map(formatAliasValue).join(", ")}]`;
+  } else {
+    lines.push(`aliases: [${aliases.map(formatAliasValue).join(", ")}]`);
+  }
+
+  return `---\n${lines.join("\n")}${rest}`;
+}
+
+// YAML flow-sequence values need quoting whenever they contain a character
+// that's structurally significant inside `[a, b, c]` — not just the comma/
+// bracket/quote set tags happen to avoid in practice. In particular a bare
+// ": " (or a trailing ":") inside a flow scalar reopens it as a nested
+// mapping (`aliases: [Chapter 1: Intro]` parses as `Chapter 1` mapping to
+// `Intro`, not a single string) — proven with exactly that title. Quote
+// whenever the value contains any YAML flow/indicator character, starts
+// with a flow-significant prefix, or has leading/trailing whitespace.
+function formatAliasValue(value: string): string {
+  const needsQuoting =
+    value === "" ||
+    value !== value.trim() ||
+    /[,\[\]{}:#&*!|>'"%@`]/.test(value) ||
+    /^[-?]\s|^[-?]$/.test(value);
+  return needsQuoting ? JSON.stringify(value) : value;
+}
+
 export function appendToDaily(date: string, content: string): string {
   const dir = vaultDailyDir();
   const filePath = join(dir, `${date}.md`);

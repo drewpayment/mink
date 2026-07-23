@@ -91,6 +91,32 @@ export function extractNoteTags(content: string): string[] {
   return tags;
 }
 
+export function extractNoteAliases(content: string): string[] {
+  // Parse aliases from frontmatter — mirrors extractNoteTags' inline-array
+  // and multiline-list handling since note-writer generates aliases the
+  // same way it generates tags.
+  const fmMatch = content.match(/^aliases:\s*\[(.+)\]/m);
+  if (fmMatch) {
+    return fmMatch[1]
+      .split(",")
+      .map((a) => a.trim().replace(/^["']|["']$/g, ""))
+      .filter(Boolean);
+  }
+  const lines = content.split("\n");
+  const aliasesIdx = lines.findIndex((l) => l.startsWith("aliases:"));
+  if (aliasesIdx === -1) return [];
+  const aliases: string[] = [];
+  for (let i = aliasesIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.match(/^\s+-\s+/)) {
+      aliases.push(line.replace(/^\s+-\s+/, "").trim().replace(/^["']|["']$/g, ""));
+    } else {
+      break;
+    }
+  }
+  return aliases;
+}
+
 export function extractNoteCategory(content: string): NoteCategory {
   const match = content.match(/^category:\s*(.+)$/m);
   if (match) {
@@ -268,7 +294,7 @@ export function vaultIndexStaleness(): VaultStaleness {
   };
 }
 
-interface ScannedMarkdown {
+export interface ScannedMarkdown {
   absolutePath: string;
   relativePath: string;
   mtimeMs: number;
@@ -280,9 +306,16 @@ const VAULT_EXCLUDES = new Set([
   ".mink-vault.json",
   ".mink-index.json",
   "node_modules",
+  // mink wiki doctor's own quarantine subtree (archives/_doctor/<date>/...)
+  // — without this, rebuildVaultIndex() re-indexes the very junk doctor
+  // --fix just purged, making it reappear in `mink note search` etc.
+  "_doctor",
 ]);
 
-function collectAllMarkdown(rootPath: string): ScannedMarkdown[] {
+// Exported for src/core/wiki-doctor.ts, which needs the same vault-wide
+// markdown listing (paths + mtimes) to audit link health, aliasing, and
+// pollution without re-implementing the walk/exclude rules.
+export function collectAllMarkdown(rootPath: string): ScannedMarkdown[] {
   const files: ScannedMarkdown[] = [];
   function walk(dir: string) {
     try {
