@@ -91,6 +91,32 @@ export function extractNoteTags(content: string): string[] {
   return tags;
 }
 
+export function extractNoteAliases(content: string): string[] {
+  // Mirrors extractNoteTags — same single-line `[a, b]` and multiline `- x`
+  // frontmatter shapes, just for the `aliases:` key. note-writer.ts writes
+  // the single-line form; Obsidian users may hand-edit the multiline form.
+  const fmMatch = content.match(/^aliases:\s*\[(.+)\]/m);
+  if (fmMatch) {
+    return fmMatch[1]
+      .split(",")
+      .map((t) => t.trim().replace(/["']/g, ""))
+      .filter(Boolean);
+  }
+  const lines = content.split("\n");
+  const idx = lines.findIndex((l) => l.startsWith("aliases:"));
+  if (idx === -1) return [];
+  const aliases: string[] = [];
+  for (let i = idx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.match(/^\s+-\s+/)) {
+      aliases.push(line.replace(/^\s+-\s+/, "").trim().replace(/["']/g, ""));
+    } else {
+      break;
+    }
+  }
+  return aliases;
+}
+
 export function extractNoteCategory(content: string): NoteCategory {
   const match = content.match(/^category:\s*(.+)$/m);
   if (match) {
@@ -104,7 +130,7 @@ export function extractNoteCategory(content: string): NoteCategory {
   return "inbox";
 }
 
-function estimateTokens(content: string): number {
+export function estimateTokens(content: string): number {
   return Math.ceil(content.length / 3.75);
 }
 
@@ -268,7 +294,7 @@ export function vaultIndexStaleness(): VaultStaleness {
   };
 }
 
-interface ScannedMarkdown {
+export interface ScannedMarkdown {
   absolutePath: string;
   relativePath: string;
   mtimeMs: number;
@@ -279,10 +305,20 @@ const VAULT_EXCLUDES = new Set([
   ".git",
   ".mink-vault.json",
   ".mink-index.json",
+  ".mink-search.db",
+  ".mink-search.db-wal",
+  ".mink-search.db-shm",
+  ".mink-search.db-journal",
   "node_modules",
 ]);
 
-function collectAllMarkdown(rootPath: string): ScannedMarkdown[] {
+// Walk the vault and collect every markdown note, skipping the excludes
+// above (dotfiles are already skipped separately below, so most of that set
+// is belt-and-suspenders documentation of what's not a note). Exported for
+// reuse by the search indexer (wiki-search.ts) and note-linker.ts's
+// ambiguous-link detection, both of which need the same "every real note in
+// the vault" scan the JSON index uses.
+export function collectAllMarkdown(rootPath: string): ScannedMarkdown[] {
   const files: ScannedMarkdown[] = [];
   function walk(dir: string) {
     try {
