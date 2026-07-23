@@ -20,7 +20,10 @@ implements.
     `projects/atlas-web/overview.md` both exist, so a bare `[[overview]]`
     link is not deterministic — the fixture's own wikilinks use
     path-qualified links (`[[projects/orion-api/overview|...]]`) as the
-    agent prompt now instructs.
+    agent prompt now instructs. `graph-hop-overview-basename-disambiguation`
+    exercises this directly: `archives/legacy-monolith-notes.md` links to
+    both, and the question only gives enough context to pick one, so citing
+    the wrong project's overview is a real failure, not a near-miss.
   - An **aliased note**: `areas/sec-checklist.md` has H1 `# Security
     Checklist` and `aliases: [Security Checklist, Sec Checklist]` in its
     frontmatter — title differs from the filename slug.
@@ -30,13 +33,22 @@ implements.
     `resources/oncall-escalation-matrix.md`).
   - One intentionally orphaned inbox note (`inbox/quick-thought-graphql-gateway.md`)
     — realistic vault noise, not referenced by any case.
-- `cases.json` — 15 question/answer cases: 4 `title-hit`, 6 `body-hit`, 3
-  `graph-hop`, 2 `negative`. Each case has `expected_paths` (any-of) and
-  `expected_substrings` (any-of); a case passes if the transcript contains
-  **any** expected path or **any** expected substring. Negative cases'
-  `expected_substrings` are "I didn't find this" admission phrases — a
-  negative case should only pass if the agent admits it couldn't find an
-  answer, not because it happened to mention an unrelated word.
+- `cases.json` — 16 question/answer cases: 4 `title-hit`, 6 `body-hit`, 4
+  `graph-hop`, 2 `negative`. Grading is **not** simple any-of-substring-or-path:
+  - **Non-negative cases require a path match to pass.** `expected_paths` is
+    any-of (a case can accept multiple valid targets, e.g. the monolith
+    successors case accepts either the archive note or either replacement
+    project's overview); `expected_substrings` is checked and shown in the
+    scorecard but is supplementary, never sufficient on its own. This is
+    deliberate: `claude -p` responses routinely echo nouns from the question
+    itself, so a case whose expected substring is also in the question text
+    (e.g. asking about a "design system doc" and checking for the words
+    "design system" in the response) doesn't actually prove the note was
+    retrieved and cited — only a path citation does.
+  - **Negative cases have no `expected_paths`** (there's nothing correct to
+    cite) and pass only on an admission substring — an "I didn't find this"
+    phrase. A negative case should only pass if the agent admits it couldn't
+    find an answer, not because it happened to mention an unrelated word.
 - `engines.ts` — engine adapters. Each adapter is one function:
   `(question, ctx) => { ok, output, error? }`. Only `claude` is implemented
   (`claude -p --agent mink-agent "<question>"`), matching how `mink agent` /
@@ -48,7 +60,12 @@ implements.
   (rendered against that fixture, not your real vault) to
   `~/.claude/agents/mink-agent.md`, runs each case through the chosen
   engine, grades it, prints a scorecard, then restores whatever was
-  installed there before the run (or removes the file if nothing was).
+  installed there before the run (or removes the file if nothing was). See
+  "Ctrl-C and crash safety" below for exactly how that restore is made
+  durable.
+- `tsconfig.json` — a standalone strict config so `evals/*.ts` is covered by
+  `npm run typecheck` (the main `tsconfig.json` excludes `evals/`, same as
+  `tests/`).
 
 ## Running it
 
@@ -77,14 +94,41 @@ accident.
   tool resolve against the fixture, not your real install.
 - The one piece of real, shared state this touches is
   `~/.claude/agents/mink-agent.md` — that's simply where Claude Code loads
-  agent definitions from; there's no per-invocation override. The runner
-  backs up whatever's installed there before overwriting it and restores it
-  (or removes the file if nothing existed) in a `finally` block, so a normal
-  run — including one that crashes or is Ctrl-C'd mid-flight from a shell
-  that still delivers signals to the finally block — leaves your real
-  installed agent definition untouched. Pass `--no-install` to skip this
-  entirely if you've already installed the definition you want tested via
-  `mink agent`.
+  agent definitions from; there's no per-invocation override. Pass
+  `--no-install` to skip touching it entirely if you've already installed
+  the definition you want tested via `mink agent`.
+
+### Ctrl-C and crash safety
+
+A full run is 15+ sequential `claude -p` calls, so interrupting a run
+partway through is the *expected* case, not an edge case — and a hard kill
+(closing the terminal, `kill -9`, the machine sleeping) is a real
+possibility, not just Ctrl-C. The runner is built assuming interruption can
+happen at any point:
+
+1. **Before** the fixture-rendered definition is written over
+   `~/.claude/agents/mink-agent.md`, whatever was there (or the fact that
+   nothing was) is written to an **on-disk** sibling file,
+   `~/.claude/agents/mink-agent.md.eval-backup` — not just held in memory.
+   A backup that only exists in the runner process's memory cannot survive
+   a hard kill of that process.
+2. `SIGINT` and `SIGTERM` handlers restore from that backup, clean up the
+   temp fixture directory, and exit(130) — so a normal Ctrl-C mid-run
+   leaves your real installed agent definition untouched.
+3. If the process is killed hard enough to skip even the signal handlers
+   (`SIGKILL`, terminal closed without delivering the signal, machine
+   sleep), the backup file survives on disk. **The next time you run the
+   harness at all** (including `--dry-run`), it checks for a leftover
+   `.eval-backup` file first, before anything else, and restores it —
+   printing what it did. You are never more than one more invocation of
+   `npm run eval:agent` away from recovering a definition stranded by a
+   truly hard kill; if you need it back immediately without re-running the
+   harness, the backup file is plain text (a JSON marker with the original
+   content inline) and can be applied by hand.
+4. Restore is idempotent — normal completion, a signal handler, and the
+   next-run recovery check can never double-apply or corrupt state, because
+   the backup file is deleted as the last step of a successful restore and
+   every restore path is a no-op once it's gone.
 
 ## Why it can't fully pass yet
 
@@ -105,7 +149,7 @@ commands exist in a plain `mink` install, so:
 
 Once the Phase 1 branch merges and a build with `mink recall` etc. is on
 `PATH`, re-run `npm run eval:agent` — the scorecard should show close to
-15/15 passing. Track that as the acceptance signal for "Phase 2 is done".
+16/16 passing. Track that as the acceptance signal for "Phase 2 is done".
 
 ## Adding cases
 

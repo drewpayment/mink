@@ -1,9 +1,9 @@
 // Engine adapters for the mink-agent retrieval eval.
 //
-// Each adapter is a single async function: given a question and a run
-// context (cwd + env pointed at the isolated fixture vault), it drives a
-// headless agent CLI and returns whatever text it printed. The runner
-// grades that text against the case's expected paths/substrings.
+// Each adapter is a single function: given a question and a run context
+// (cwd + env pointed at the isolated fixture vault), it drives a headless
+// agent CLI synchronously (spawnSync) and returns whatever text it printed.
+// The runner grades that text against the case's expected paths/substrings.
 //
 // Only `claude` is implemented today, matching how `mink agent` / `mink
 // chat` currently ride Claude Code's own auth. `copilot` and `pi` are

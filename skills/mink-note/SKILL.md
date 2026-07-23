@@ -42,7 +42,7 @@ Check for an existing note on this subject before creating a new one — search 
 mink recall --json "<subject of the note>"
 ```
 
-If `mink recall` isn't available yet (older mink version), fall back to `mink note list --recent 10`, but prefer `mink recall` whenever present — it searches full note bodies with ranking, so it catches near-duplicates that a recent-list skim would miss.
+If `mink recall` isn't available yet (older mink version), fall back to `mink note search "<subject>"`, but prefer `mink recall` whenever present — it ranks matches and searches full note bodies, so it catches near-duplicates that a title/tag/description-only search would miss.
 
 Also check overall vault state and tag vocabulary:
 
@@ -64,7 +64,7 @@ Based on the note content and vault context, determine:
   - `inbox` — Only if genuinely unclear
 - **Tags**: 1-5 relevant tags from the existing tag vocabulary when possible, new tags when necessary. Use lowercase, hyphenated format.
 - **Wikilinks**: If the note mentions people, projects, or concepts that exist as notes in the vault, include `[[wikilinks]]` in the body text. Include **at least one** link to an existing note when one is plausibly related — use `mink recall "<concept>"` to find a target rather than leaving the note an orphan. If the bare note name is ambiguous (multiple notes share a basename, e.g. two `overview.md` files across projects), use a path-qualified link instead: `[[projects/<slug>/overview|overview]]`.
-- **Aliases**: if the title you choose differs from the slug mink will derive from it (different casing, punctuation, or a shorter/longer display form), pass an alias so other notes can link to it by either name. `mink note` / note-writer auto-adds `aliases: [<Title>]` when slug ≠ title, but call it out explicitly if the user is likely to refer to the note by a third name too.
+- **Aliases**: if the title you choose differs from the slug mink will derive from it (different casing, punctuation, or a shorter/longer display form), **don't assume `mink note` adds `aliases:` for you** — it has no `--aliases` flag today. After running `mink note`, check the created file's frontmatter and, if `aliases:` is missing or incomplete, edit the file directly to add `aliases: [<Title>, ...]` so other notes can link to it by either name. (Some `mink` versions may auto-add this at write time — re-adding it is a harmless no-op then, and required on versions that don't.) Add further aliases if the user is likely to refer to the note by a third name too.
 
 ### Step 4: Create the Note
 
@@ -119,6 +119,7 @@ mink note --daily                                       # Create today's daily
 mink note --template meeting --title "Sprint Planning"  # From template
 mink note --file ./scratch.md                           # Ingest external file
 mink note list [--category X] [--tag X] [--recent N]   # List notes
+mink note search <term>                                  # Title/tags/description search (pre-recall fallback)
 mink recall "<query>" [--json] [--tag X] [--category X] [--project X] [--since ISO]
                                                           # Ranked full-text search over titles/aliases/tags/bodies
 mink wiki backlinks <note> [--json]                      # Notes that link to <note>

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Retrieval eval runner for the mink-agent definition.
 //
-// Runs the ~15 Q/A cases in evals/cases.json against the fixture vault in
+// Runs the Q/A cases in evals/cases.json against the fixture vault in
 // evals/fixtures/vault, via a real headless agent CLI (`claude -p --agent
 // mink-agent`), and grades the transcript by substring/path match.
 //
@@ -57,6 +57,12 @@ const FIXTURE_VAULT_SRC = join(REPO_ROOT, "evals", "fixtures", "vault");
 const CASES_PATH = join(REPO_ROOT, "evals", "cases.json");
 const TEMPLATE_PATH = join(REPO_ROOT, "agents", "mink-agent.md.tmpl");
 const INSTALLED_AGENT_PATH = join(homedir(), ".claude", "agents", "mink-agent.md");
+// On-disk sibling of the installed agent definition. Written *before* the
+// fixture-rendered definition overwrites the real one, so a hard kill
+// (SIGKILL, terminal closed, machine sleep) that skips our signal handlers
+// still leaves a recovery copy on disk — the in-memory-only backup this
+// used to rely on could not survive that. Cleared once a restore succeeds.
+const BACKUP_PATH = `${INSTALLED_AGENT_PATH}.eval-backup`;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -219,6 +225,76 @@ function getMinkVersion(): string {
   }
 }
 
+interface BackupMarker {
+  existed: boolean;
+  content: string | null;
+}
+
+function writeBackupMarker(marker: BackupMarker): void {
+  writeFileSync(BACKUP_PATH, JSON.stringify(marker), "utf-8");
+}
+
+function readBackupMarker(): BackupMarker | null {
+  if (!existsSync(BACKUP_PATH)) return null;
+  return JSON.parse(readFileSync(BACKUP_PATH, "utf-8")) as BackupMarker;
+}
+
+function clearBackupMarker(): void {
+  try {
+    if (existsSync(BACKUP_PATH)) unlinkSync(BACKUP_PATH);
+  } catch {
+    // best-effort
+  }
+}
+
+/**
+ * If a previous run was killed hard enough to skip both the try/finally and
+ * the SIGINT/SIGTERM handlers (SIGKILL, terminal closed, machine slept),
+ * BACKUP_PATH is left on disk holding whatever was really installed before
+ * that run. Restore it before doing anything else so a crashed run never
+ * permanently strands the fixture-rendered definition over the user's real
+ * one.
+ */
+function recoverLeftoverBackupIfAny(): void {
+  const marker = (() => {
+    try {
+      return readBackupMarker();
+    } catch (err) {
+      console.error(
+        `[mink eval] warning: found ${BACKUP_PATH} but couldn't parse it (${
+          err instanceof Error ? err.message : String(err)
+        }) — leaving it in place for manual recovery.`
+      );
+      return undefined;
+    }
+  })();
+
+  if (marker === undefined) return; // parse failed — already warned, don't touch it
+  if (marker === null) return; // no leftover backup
+
+  console.error(
+    `[mink eval] found a leftover backup at ${BACKUP_PATH} from a previous interrupted run — restoring it before continuing.`
+  );
+  try {
+    if (marker.existed && marker.content !== null) {
+      writeFileSync(INSTALLED_AGENT_PATH, marker.content);
+      console.error(`[mink eval] restored ${INSTALLED_AGENT_PATH} from leftover backup.`);
+    } else if (existsSync(INSTALLED_AGENT_PATH)) {
+      unlinkSync(INSTALLED_AGENT_PATH);
+      console.error(
+        `[mink eval] removed ${INSTALLED_AGENT_PATH} (no definition existed before the interrupted run).`
+      );
+    }
+    clearBackupMarker();
+  } catch (err) {
+    console.error(
+      `[mink eval] warning: failed to apply leftover backup — leaving ${BACKUP_PATH} in place for manual recovery: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
+
 interface AgentInstall {
   restore(): void;
 }
@@ -228,9 +304,13 @@ interface AgentInstall {
  * the *fixture* vault/root — to the real ~/.claude/agents/mink-agent.md, so
  * `claude -p --agent mink-agent` picks up exactly the prompt under test.
  *
- * Any pre-existing installed definition is backed up in memory and restored
- * when the run finishes (success, failure, or Ctrl-C), so this never leaves
- * the user's real installed agent definition clobbered.
+ * Whatever was installed there before (or the fact that nothing was) is
+ * written to BACKUP_PATH *on disk* before the overwrite, not just held in
+ * memory — see recoverLeftoverBackupIfAny() for why. restore() re-applies
+ * that backup and deletes the marker; it's called from the run's finally
+ * block on normal completion and from the SIGINT/SIGTERM handlers below on
+ * interruption, and is idempotent (a second call is a no-op once the marker
+ * is gone).
  */
 function installFixtureAgent(fixture: FixtureInstance): AgentInstall {
   const template = readFileSync(TEMPLATE_PATH, "utf-8");
@@ -244,18 +324,28 @@ function installFixtureAgent(fixture: FixtureInstance): AgentInstall {
   mkdirSync(dir, { recursive: true });
 
   const existed = existsSync(INSTALLED_AGENT_PATH);
-  const backup = existed ? readFileSync(INSTALLED_AGENT_PATH, "utf-8") : null;
+  const content = existed ? readFileSync(INSTALLED_AGENT_PATH, "utf-8") : null;
+  writeBackupMarker({ existed, content });
 
   writeFileSync(INSTALLED_AGENT_PATH, rendered);
 
   return {
     restore() {
+      const marker = (() => {
+        try {
+          return readBackupMarker();
+        } catch {
+          return null;
+        }
+      })();
+      if (marker === null) return; // already restored (or never installed)
       try {
-        if (backup !== null) {
-          writeFileSync(INSTALLED_AGENT_PATH, backup);
+        if (marker.existed && marker.content !== null) {
+          writeFileSync(INSTALLED_AGENT_PATH, marker.content);
         } else if (existsSync(INSTALLED_AGENT_PATH)) {
           unlinkSync(INSTALLED_AGENT_PATH);
         }
+        clearBackupMarker();
       } catch (err) {
         console.error(
           `[mink eval] warning: failed to restore ${INSTALLED_AGENT_PATH}: ${
@@ -285,7 +375,52 @@ function tryRebuildIndex(env: NodeJS.ProcessEnv, cwd: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Signal handling — Ctrl-C mid-run is the *expected* case (a full run is 15
+// sequential `claude -p` calls), so it must not strand the fixture-rendered
+// agent definition over the user's real one. These reach into whatever the
+// current run has active via module-level refs, since main() creates the
+// fixture/install after the handlers are registered.
+// ---------------------------------------------------------------------------
+
+let activeInstall: AgentInstall | null = null;
+let activeFixture: FixtureInstance | null = null;
+let handlingSignal = false;
+
+function handleTerminationSignal(signal: string): void {
+  if (handlingSignal) return; // a second Ctrl-C while we're already cleaning up
+  handlingSignal = true;
+  console.error(`\n[mink eval] received ${signal} — restoring state before exit...`);
+  try {
+    activeInstall?.restore();
+  } catch (err) {
+    console.error(`[mink eval] warning: restore on ${signal} failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    activeFixture?.cleanup();
+  } catch {
+    // best-effort
+  }
+  process.exit(130);
+}
+
+process.on("SIGINT", () => handleTerminationSignal("SIGINT"));
+process.on("SIGTERM", () => handleTerminationSignal("SIGTERM"));
+
+// ---------------------------------------------------------------------------
 // Grading
+//
+// Non-negative cases require a PATH match to pass — an expected substring
+// alone is not sufficient. `claude -p` responses routinely echo nouns from
+// the question itself (e.g. asking about a "design system doc" gets back a
+// response containing the words "design system" whether or not it actually
+// found and cited projects/atlas-web/design-system.md), so substring-only
+// matching on a case whose expected_substrings overlap the question text is
+// not discriminative. Substrings are still checked and reported for
+// context, but only a cited path proves the note was actually retrieved.
+//
+// Negative cases have no expected_paths by construction (there's nothing to
+// cite) — they pass only on a not-found admission substring, which the
+// question text is designed not to contain.
 // ---------------------------------------------------------------------------
 
 function grade(kase: EvalCase, output: string): { pass: boolean; reason: string } {
@@ -296,20 +431,38 @@ function grade(kase: EvalCase, output: string): { pass: boolean; reason: string 
     haystack.includes(s.toLowerCase())
   );
 
-  const pass = pathHits.length > 0 || substringHits.length > 0;
-
-  if (pass) {
-    const bits: string[] = [];
-    if (pathHits.length) bits.push(`path match: ${pathHits.join(", ")}`);
-    if (substringHits.length) bits.push(`substring match: ${substringHits.join(", ")}`);
-    return { pass: true, reason: bits.join("; ") };
+  if (kase.category === "negative") {
+    const pass = substringHits.length > 0;
+    return {
+      pass,
+      reason: pass
+        ? `not-found admission matched: ${substringHits.join(", ")}`
+        : "no not-found admission phrase found — response may be fabricating an answer",
+    };
   }
+
+  if (kase.expected_paths.length === 0) {
+    // No path defined for this case — fall back to substring-only.
+    const pass = substringHits.length > 0;
+    return {
+      pass,
+      reason: pass ? `substring match: ${substringHits.join(", ")}` : "no expected substring found in output",
+    };
+  }
+
+  const pass = pathHits.length > 0;
+  const bits: string[] = [];
+  if (pathHits.length) bits.push(`path match: ${pathHits.join(", ")}`);
+  if (substringHits.length) bits.push(`substring match (supplementary): ${substringHits.join(", ")}`);
   return {
-    pass: false,
-    reason:
-      kase.category === "negative"
-        ? "no not-found admission phrase found — response may be fabricating an answer"
-        : "no expected path or substring found in output",
+    pass,
+    reason: pass
+      ? bits.join("; ")
+      : `no expected path cited in output${
+          substringHits.length
+            ? ` (substrings matched but a path citation is required: ${substringHits.join(", ")})`
+            : ""
+        }`,
   };
 }
 
@@ -368,6 +521,11 @@ function printScorecard(outcomes: CaseOutcome[]): boolean {
 }
 
 async function main(): Promise<void> {
+  // Cheap and unconditional: if a previous run was killed hard enough to
+  // skip its finally block and our signal handlers, this restores the
+  // user's real installed agent definition before we do anything else.
+  recoverLeftoverBackupIfAny();
+
   const opts = parseArgs(process.argv.slice(2));
 
   if (!(opts.engine in ENGINES)) {
@@ -389,6 +547,7 @@ async function main(): Promise<void> {
   console.log(`[mink eval] cases: ${cases.length}/${allCases.length}`);
 
   const fixture = prepareFixtureInstance(opts.keepTmp);
+  activeFixture = fixture;
   console.log(`[mink eval] fixture mink root: ${fixture.minkRoot}`);
   console.log(`[mink eval] fixture vault: ${fixture.vaultPath}`);
 
@@ -405,6 +564,7 @@ async function main(): Promise<void> {
     if (unresolved) {
       console.error(`[mink eval] dry-run FAILED: unresolved template vars: ${unresolved.join(", ")}`);
       fixture.cleanup();
+      activeFixture = null;
       process.exit(1);
     }
     console.log(`[mink eval] dry-run OK: template renders cleanly (${rendered.length} chars).`);
@@ -412,6 +572,7 @@ async function main(): Promise<void> {
       console.log(`  - [${c.category}] ${c.id}: ${c.question}`);
     }
     fixture.cleanup();
+    activeFixture = null;
     console.log("[mink eval] dry-run complete — no CLI calls made, no tokens spent.");
     return;
   }
@@ -420,6 +581,7 @@ async function main(): Promise<void> {
     console.error("[mink eval] `claude` CLI not found on PATH — required for the claude engine.");
     console.error("  Install Claude Code: https://claude.com/claude-code");
     fixture.cleanup();
+    activeFixture = null;
     process.exit(1);
   }
 
@@ -432,8 +594,10 @@ async function main(): Promise<void> {
   tryRebuildIndex(env, fixture.minkRoot);
 
   const install = opts.noInstall ? null : installFixtureAgent(fixture);
+  activeInstall = install;
   if (install) {
     console.log(`[mink eval] installed fixture-rendered mink-agent -> ${INSTALLED_AGENT_PATH}`);
+    console.log(`[mink eval] backup of any prior definition: ${BACKUP_PATH}`);
   } else {
     console.log("[mink eval] --no-install: assuming mink-agent is already installed and current");
   }
@@ -464,7 +628,9 @@ async function main(): Promise<void> {
     }
   } finally {
     if (install) install.restore();
+    activeInstall = null;
     fixture.cleanup();
+    activeFixture = null;
   }
 
   const allPassed = printScorecard(outcomes);

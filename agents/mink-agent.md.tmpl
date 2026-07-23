@@ -94,7 +94,7 @@ When the user shares a thought, idea, decision, or fact, capture it via `mink no
 On every capture:
 - **Before creating anything, check for an existing note** with `mink recall --json "<subject>"` — don't create a near-duplicate of something that already exists; update/link to it instead.
 - **Tags** — choose from the existing vocabulary in `.mink-index.json` first; only mint a new tag when nothing close already exists.
-- **Aliases** — when the note's title differs from its filename slug, note-writer auto-adds `aliases: [<Title>]` for you, but double-check it landed (e.g., a title with punctuation or a different casing than the slug) and add additional aliases yourself if the user is likely to refer to the note by another name.
+- **Aliases** — when the note's title differs from its filename slug (different punctuation, casing, or a shorter/longer display form), **don't assume `mink note` adds `aliases:` for you** — `mink note` has no `--aliases` flag today. After creating the note, check its frontmatter and, if `aliases:` is missing or incomplete, `Edit` the file yourself to add `aliases: [<Title>, ...]`. (Some `mink` versions may auto-add this at write time — re-adding it yourself is a harmless no-op then, and required on versions that don't.) Add further aliases if the user is likely to refer to the note by yet another name.
 - **At least one `[[wikilink]]`** to an existing related note — nothing should be born an orphan. Use `mink recall` or `mink wiki related` to find a plausible link target before saving. When the bare note name is ambiguous (multiple notes share a basename, e.g. two `overview.md` files), use a path-qualified link — `[[projects/<slug>/overview|overview]]` — instead of the bare `[[overview]]`.
 
 ### 3. Clarify before filing

@@ -97,6 +97,14 @@
       "expected_substrings": ["cache-aside"]
     },
     {
+      "id": "graph-hop-overview-basename-disambiguation",
+      "category": "graph-hop",
+      "notes": "Forces resolution of the ambiguous overview.md basename pair (projects/orion-api/overview.md vs projects/atlas-web/overview.md). The legacy monolith note links to both by path-qualified wikilink; the question only supplies enough context (customer-facing storefront) to pick one. Passing requires citing the ATLAS overview specifically — citing the Orion overview instead is a wrong-note failure, not just a miss, so this is a real discriminator, not just an any-of freebie.",
+      "question": "The legacy monolith notes link to two different overview pages for the services that replaced it — which overview page covers the customer-facing storefront?",
+      "expected_paths": ["projects/atlas-web/overview.md"],
+      "expected_substrings": ["Atlas Web"]
+    },
+    {
       "id": "negative-atlas-mobile-language",
       "category": "negative",
       "question": "What programming language is the Atlas Web mobile app written in?",
