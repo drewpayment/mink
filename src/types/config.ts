@@ -27,6 +27,8 @@ export interface GlobalConfig {
   "embeddings.model"?: string;
   "embeddings.cross-project"?: string;
   "context.budget-tokens"?: string;
+  "report.model"?: string;
+  "report.input-price"?: string;
 }
 
 export type ConfigKey = keyof GlobalConfig & string;
@@ -250,6 +252,20 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     default: "2000",
     envVar: "MINK_CONTEXT_BUDGET_TOKENS",
     description: "Token budget for the `mink context` pack",
+    scope: "shared",
+  },
+  {
+    key: "report.model",
+    default: "claude-sonnet",
+    envVar: "MINK_REPORT_MODEL",
+    description: "Model whose input pricing dollarizes `mink report` (claude-sonnet|claude-opus|claude-haiku)",
+    scope: "shared",
+  },
+  {
+    key: "report.input-price",
+    default: "",
+    envVar: "MINK_REPORT_INPUT_PRICE",
+    description: "Override input price (USD per 1M tokens) for `mink report`",
     scope: "shared",
   },
 ];
