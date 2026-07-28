@@ -1,0 +1,31 @@
+{
+  "name": "mink-vscode",
+  "displayName": "Mink",
+  "description": "Surface Mink (context pack, bug memory, similar tasks, note capture) in VS Code — a thin client over the mink CLI.",
+  "version": "0.1.0",
+  "publisher": "spacepiratezero",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "mink.contextPack", "title": "Mink: Context Pack" },
+      { "command": "mink.searchBugs", "title": "Mink: Search Bug Memory" },
+      { "command": "mink.similarTasks", "title": "Mink: Similar Tasks (current file)" },
+      { "command": "mink.captureNote", "title": "Mink: Capture Note" }
+    ]
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.0"
+  }
+}
