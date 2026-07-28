@@ -12,7 +12,7 @@
 // - `meta(key, value)` holds versioning + migration markers. Keep it small;
 //   per-store counters live in `counters` and `ledger_lifetime`.
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export const INITIAL_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -225,6 +225,25 @@ CREATE TABLE IF NOT EXISTS compression_cache (
   device_id    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_compression_cache_expires ON compression_cache(expires_at);
+
+-- Vector store for semantic retrieval (spec 25). One row per (kind, ref, model)
+-- holding an L2-normalized embedding as a little-endian Float32 BLOB. content_hash
+-- lets a backfill skip rows that are already current and re-embed changed ones.
+-- Keyed by model too, so switching models does not corrupt recall — the reader
+-- filters to the active model. Local, derived state: it can always be rebuilt
+-- from the source rows, so it carries device_id for audit only.
+CREATE TABLE IF NOT EXISTS embeddings (
+  kind         TEXT NOT NULL,
+  ref_id       TEXT NOT NULL,
+  model        TEXT NOT NULL,
+  dim          INTEGER NOT NULL,
+  vector       BLOB NOT NULL,
+  content_hash TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  device_id    TEXT NOT NULL,
+  PRIMARY KEY (kind, ref_id, model)
+);
+CREATE INDEX IF NOT EXISTS idx_embeddings_kind_model ON embeddings(kind, model);
 `;
 
 export interface DriverForSchema {

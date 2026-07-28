@@ -105,6 +105,30 @@ switch (command) {
     break;
   }
 
+  case "mcp": {
+    const { mcp } = await import("./commands/mcp");
+    await mcp(cwd, process.argv.slice(3));
+    break;
+  }
+
+  case "embeddings": {
+    const { embeddings } = await import("./commands/embeddings");
+    await embeddings(cwd, process.argv.slice(3));
+    break;
+  }
+
+  case "context": {
+    const { context } = await import("./commands/context");
+    context(cwd, process.argv.slice(3));
+    break;
+  }
+
+  case "report": {
+    const { report } = await import("./commands/report");
+    report(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "cron": {
     const { cron } = await import("./commands/cron");
     await cron(cwd, process.argv.slice(3));
@@ -276,6 +300,12 @@ switch (command) {
     console.log("  note search <term>      Full-text search across the vault");
     console.log("  skill install           Install /mink:note skill for Claude Code");
     console.log("  agent                   Open a Claude Code session with the mink-agent persona");
+    console.log();
+    console.log("Integrations:");
+    console.log("  mcp                     Run Mink as a Model Context Protocol server over stdio (spec 24)");
+    console.log("  embeddings <cmd>        Manage semantic retrieval (status|enable|disable|backfill, spec 25)");
+    console.log("  context [--budget=N]    Print the cache-friendly project context pack (spec 26)");
+    console.log("  report [--json]         Dollarized ROI from measured (holdout-verified) savings (spec 27)");
     console.log();
     console.log("Devices & Sync:");
     console.log("  device                  Show current device info");
