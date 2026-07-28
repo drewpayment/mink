@@ -4,7 +4,16 @@
 
 // What kind of tool output we detected, which selects the compressor and is
 // recorded on the ledger event for later analysis.
-export type ContentKind = "search" | "log" | "file" | "json" | "text";
+export type ContentKind =
+  | "search"
+  | "log"
+  | "file"
+  | "json"
+  | "text"
+  | "stacktrace"
+  | "diff"
+  | "test"
+  | "package";
 
 // One stored original, retrievable byte-exact via `mink retrieve <token>` until
 // it expires.

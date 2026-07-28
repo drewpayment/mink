@@ -207,6 +207,119 @@ function compressText(content: string): { compressed: string; omittedNote: strin
 
 // ── Routing ─────────────────────────────────────────────────────────────────
 
+// ── Stack traces ───────────────────────────────────────────────────────────
+// Keep the error head and application frames; collapse runs of framework/vendor
+// frames (node_modules, node internals, Python site-packages). Handles JS/TS
+// single-line `at` frames and Python two-line `File …` + code frames.
+function compressStackTrace(content: string): { compressed: string; omittedNote: string } | null {
+  const lines = content.split("\n");
+  const out: string[] = [];
+  let omitted = 0;
+  let run = 0;
+  const flush = (): void => {
+    if (run > 0) {
+      out.push(`  … ${run} framework frame(s) omitted — mink retrieve …`);
+      omitted += run;
+      run = 0;
+    }
+  };
+  const isJsVendor = (l: string): boolean =>
+    /^\s*at\s.+(node_modules|node:internal|node:)/.test(l);
+  const isPyVendorFile = (l: string): boolean =>
+    /^\s*File\s+".*(site-packages|dist-packages|[/\\]lib[/\\]python)/i.test(l);
+
+  for (let i = 0; i < lines.length; i++) {
+    if (isJsVendor(lines[i])) {
+      run++;
+      continue;
+    }
+    if (isPyVendorFile(lines[i])) {
+      run++;
+      // Fold the following indented code line (if any) into this vendor frame.
+      const next = lines[i + 1];
+      if (next !== undefined && /^\s+\S/.test(next) && !/^\s*File\s/.test(next) && !/^\s*at\s/.test(next)) {
+        i++;
+      }
+      continue;
+    }
+    flush();
+    out.push(lines[i]);
+  }
+  flush();
+  if (omitted < 2) return null;
+  const compressed = out.join("\n");
+  if (compressed.length >= content.length) return null;
+  return { compressed, omittedNote: `${omitted} framework frame(s) omitted` };
+}
+
+// ── Unified diffs ──────────────────────────────────────────────────────────
+// Keep file/hunk headers and changed (+/-) lines; elide long runs of unchanged
+// context, keeping a small window at each end.
+function compressDiff(content: string): { compressed: string; omittedNote: string } | null {
+  const CTX = 3;
+  const lines = content.split("\n");
+  const out: string[] = [];
+  let omitted = 0;
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i].startsWith(" ")) {
+      let j = i;
+      while (j < lines.length && lines[j].startsWith(" ")) j++;
+      const run = lines.slice(i, j);
+      if (run.length > 2 * CTX + 1) {
+        const drop = run.length - 2 * CTX;
+        out.push(...run.slice(0, CTX));
+        out.push(`  … ${drop} unchanged line(s) omitted — mink retrieve …`);
+        out.push(...run.slice(run.length - CTX));
+        omitted += drop;
+      } else {
+        out.push(...run);
+      }
+      i = j;
+    } else {
+      out.push(lines[i]);
+      i++;
+    }
+  }
+  if (omitted < 3) return null;
+  const compressed = out.join("\n");
+  if (compressed.length >= content.length) return null;
+  return { compressed, omittedNote: `${omitted} unchanged context line(s) omitted` };
+}
+
+// ── Test-runner output ─────────────────────────────────────────────────────
+// Drop passing-test noise; keep failures, errors, and the summary.
+function compressTestOutput(content: string): { compressed: string; omittedNote: string } | null {
+  const lines = content.split("\n");
+  const isPass = (l: string): boolean =>
+    /^\s*(?:✓|√|✔)\s/.test(l) || // jest/vitest passing case
+    /^\s*ok\s+\d+/.test(l) || // TAP
+    /^PASS\s+/.test(l) || // jest passing file
+    /\bPASSED\b/.test(l); // pytest -v passing
+  const kept = lines.filter((l) => !isPass(l));
+  const omitted = lines.length - kept.length;
+  if (omitted < 3) return null;
+  const compressed = kept.join("\n");
+  if (compressed.length >= content.length) return null;
+  return { compressed, omittedNote: `${omitted} passing-test line(s) omitted` };
+}
+
+// ── Package-manager output ─────────────────────────────────────────────────
+// Drop resolve/download/progress spam; keep results, warnings, and errors.
+function compressPackageManager(content: string): { compressed: string; omittedNote: string } | null {
+  const lines = content.split("\n");
+  const isNoise = (l: string): boolean =>
+    /^\s*(Collecting|Downloading|Using cached|Requirement already satisfied|Resolving|Fetching|Preparing|Extracting|Saved|Progress)\b/.test(l) ||
+    /^\s*[▪▫■□●○⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(l) || // spinners / progress glyphs
+    /\|\s*[█▓▒░]+\s*\|/.test(l); // ascii progress bars
+  const kept = lines.filter((l) => !isNoise(l));
+  const omitted = lines.length - kept.length;
+  if (omitted < 3) return null;
+  const compressed = kept.join("\n");
+  if (compressed.length >= content.length) return null;
+  return { compressed, omittedNote: `${omitted} progress line(s) omitted` };
+}
+
 export function detectContentKind(
   toolName: string,
   content: string,
@@ -215,8 +328,8 @@ export function detectContentKind(
   const t = toolName.toLowerCase();
   if (t === "read") return "file";
   if (t === "grep" || t === "glob") return "search";
-  if (t === "bash") return "log";
-  // Generic / MCP output — sniff for JSON.
+
+  // Generic / MCP output — sniff for JSON first.
   const head = content.trimStart()[0];
   if (head === "{" || head === "[") {
     try {
@@ -226,9 +339,47 @@ export function detectContentKind(
       // not JSON — fall through
     }
   }
+
+  // Shape-sniff the highest-volume Bash outputs before the generic log/text
+  // fallbacks. Order is specificity-first.
+  const specific = sniffSpecificKind(content);
+  if (specific) return specific;
+
+  if (t === "bash") return "log";
   // A file path with no tool hint still implies a file read.
   if (filePath) return "file";
   return "text";
+}
+
+/** Detect diff / stacktrace / test / package shapes in free text; else null. */
+function sniffSpecificKind(content: string): ContentKind | null {
+  if (/^diff --git /m.test(content) || (/^@@ .* @@/m.test(content) && /^[+-]/m.test(content))) {
+    return "diff";
+  }
+  if (
+    /^Traceback \(most recent call last\):/m.test(content) ||
+    (content.match(/^\s*at\s.+:\d+:\d+\)?$/gm) ?? []).length >= 2
+  ) {
+    return "stacktrace";
+  }
+  if (
+    /^(PASS|FAIL)\s/m.test(content) ||
+    /Tests:\s+\d+\s+(passed|failed)/.test(content) ||
+    /Test Suites:/.test(content) ||
+    /^=+.*\b\d+\s+(passed|failed|error)/m.test(content) || // pytest summary
+    /^\s*(✓|✗|×|√|✔)\s/m.test(content)
+  ) {
+    return "test";
+  }
+  if (
+    /^(Collecting|Requirement already satisfied|Successfully installed)\b/m.test(content) ||
+    /\bnpm (WARN|notice|error)\b/.test(content) ||
+    /\badded \d+ packages?\b/.test(content) ||
+    /^(Resolving|Downloading|Fetching)\b/m.test(content)
+  ) {
+    return "package";
+  }
+  return null;
 }
 
 // Compress an output by its detected kind. Returns null when there is nothing
@@ -241,11 +392,18 @@ export function compressOutput(
   const kind = detectContentKind(toolName, content, filePath);
   let result: { compressed: string; omittedNote: string } | null;
   switch (kind) {
-    case "search": result = compressSearch(content); break;
-    case "log":    result = compressLog(content); break;
-    case "file":   result = compressFile(filePath ?? "file", content); break;
-    case "json":   result = compressJson(content); break;
-    case "text":   result = compressText(content); break;
+    case "search":     result = compressSearch(content); break;
+    case "log":        result = compressLog(content); break;
+    case "file":       result = compressFile(filePath ?? "file", content); break;
+    case "json":       result = compressJson(content); break;
+    case "text":       result = compressText(content); break;
+    // Specific strategies fall back to generic text trimming when they find
+    // nothing structural to collapse, so a stacktrace/diff/test/package output
+    // is never left uncompressed just because its specific shape was sparse.
+    case "stacktrace": result = compressStackTrace(content) ?? compressText(content); break;
+    case "diff":       result = compressDiff(content) ?? compressText(content); break;
+    case "test":       result = compressTestOutput(content) ?? compressText(content); break;
+    case "package":    result = compressPackageManager(content) ?? compressText(content); break;
   }
   if (!result) return null;
   return { kind, compressed: result.compressed, omittedNote: result.omittedNote };
