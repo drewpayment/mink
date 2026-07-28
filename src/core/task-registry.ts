@@ -56,6 +56,16 @@ const BUILT_IN_TASKS: TaskDefinition[] = [
     timeoutMs: 300_000,
   },
   {
+    id: "embedding-backfill",
+    name: "Embedding Backfill",
+    description: "Embed bugs lacking a current vector for semantic recall (no-op when embeddings are disabled)",
+    schedule: "0 5 * * *",
+    actionType: "function",
+    enabled: true,
+    retryPolicy: { maxAttempts: 3, baseDelayMs: 60_000 },
+    timeoutMs: 5 * 60_000,
+  },
+  {
     id: "cli-self-update",
     name: "CLI Self-Update",
     description: "Check npm for a newer mink release and install it (gated by cli.auto-update)",
@@ -222,6 +232,28 @@ export async function executeTask(
       console.log(
         "[mink] project-suggestions: not yet implemented — skipping"
       );
+      break;
+    }
+
+    case "embedding-backfill": {
+      const { resolveEmbeddingProvider } = await import("./embeddings/provider");
+      const provider = resolveEmbeddingProvider();
+      if (!provider) {
+        // Feature disabled — nothing to do (this is the normal steady state).
+        break;
+      }
+      const { embedBugs } = await import("./embeddings/recall");
+      try {
+        const n = await embedBugs(projectCwd, provider);
+        if (n > 0) console.log(`[mink] embedding-backfill: embedded ${n} bug(s)`);
+      } catch (err) {
+        // Model/library unavailable — recall still works via FTS5, and status
+        // surfaces the misconfiguration. Treat as a quiet no-op rather than
+        // dead-lettering the task on every run.
+        console.warn(
+          `[mink] embedding-backfill skipped (embeddings unavailable): ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
       break;
     }
 

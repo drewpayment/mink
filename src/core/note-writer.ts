@@ -5,6 +5,7 @@ import { atomicWriteText, safeAppendText } from "./fs-utils";
 import { categoryToDir, vaultDailyDir, vaultTemplates } from "./vault";
 import { loadTemplate } from "./vault-templates";
 import { getOrCreateDeviceId } from "./device";
+import { redactForStorage } from "./redact";
 import type { NoteMetadata, NoteFrontmatter, NoteCategory } from "../types/note";
 
 const MAX_COLLISION_ATTEMPTS = 4;
@@ -103,6 +104,13 @@ export function createNote(meta: NoteMetadata): {
   filePath: string;
   content: string;
 } {
+  // Redact secrets/PII at the persistence boundary (spec 28) before the title
+  // is slugified into a filename or the body is written. Idempotent.
+  meta = {
+    ...meta,
+    title: redactForStorage(meta.title).text,
+    body: redactForStorage(meta.body).text,
+  };
   const now = meta.created || new Date().toISOString();
   const slug = slugifyTitle(meta.title);
   const dir = categoryToDir(meta.category, meta.projectSlug);

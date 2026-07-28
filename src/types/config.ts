@@ -23,6 +23,14 @@ export interface GlobalConfig {
   "compression.min-savings-ratio"?: string;
   "compression.holdout-fraction"?: string;
   "compression.retention-hours"?: string;
+  "embeddings.enabled"?: string;
+  "embeddings.model"?: string;
+  "embeddings.cross-project"?: string;
+  "context.budget-tokens"?: string;
+  "report.model"?: string;
+  "report.input-price"?: string;
+  "redaction.enabled"?: string;
+  "redaction.allowlist"?: string;
 }
 
 export type ConfigKey = keyof GlobalConfig & string;
@@ -218,6 +226,62 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     default: "168",
     envVar: "MINK_COMPRESSION_RETENTION_HOURS",
     description: "How long compressed originals stay retrievable before eviction",
+    scope: "shared",
+  },
+  {
+    key: "embeddings.enabled",
+    default: "false",
+    envVar: "MINK_EMBEDDINGS_ENABLED",
+    description: "Enable semantic retrieval (local neural embeddings; off by default)",
+    scope: "shared",
+  },
+  {
+    key: "embeddings.model",
+    default: "Xenova/all-MiniLM-L6-v2",
+    envVar: "MINK_EMBEDDINGS_MODEL",
+    description: "Sentence-embedding model id used for semantic retrieval",
+    scope: "shared",
+  },
+  {
+    key: "embeddings.cross-project",
+    default: "false",
+    envVar: "MINK_EMBEDDINGS_CROSS_PROJECT",
+    description: "Include other registered projects in semantic recall",
+    scope: "shared",
+  },
+  {
+    key: "context.budget-tokens",
+    default: "2000",
+    envVar: "MINK_CONTEXT_BUDGET_TOKENS",
+    description: "Token budget for the `mink context` pack",
+    scope: "shared",
+  },
+  {
+    key: "report.model",
+    default: "claude-sonnet",
+    envVar: "MINK_REPORT_MODEL",
+    description: "Model whose input pricing dollarizes `mink report` (claude-sonnet|claude-opus|claude-haiku)",
+    scope: "shared",
+  },
+  {
+    key: "report.input-price",
+    default: "",
+    envVar: "MINK_REPORT_INPUT_PRICE",
+    description: "Override input price (USD per 1M tokens) for `mink report`",
+    scope: "shared",
+  },
+  {
+    key: "redaction.enabled",
+    default: "true",
+    envVar: "MINK_REDACTION_ENABLED",
+    description: "Mask secrets/PII before persisting content to disk or sync",
+    scope: "shared",
+  },
+  {
+    key: "redaction.allowlist",
+    default: "",
+    envVar: "MINK_REDACTION_ALLOWLIST",
+    description: "Comma-separated exact values the redactor must never mask",
     scope: "shared",
   },
 ];
