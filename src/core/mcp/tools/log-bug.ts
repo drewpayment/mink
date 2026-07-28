@@ -5,6 +5,8 @@
 
 import { BugMemoryRepo } from "../../../repositories/bug-memory-repo";
 import { redactSecrets } from "../../redact";
+import { embedBugs } from "../../embeddings/recall";
+import { resolveEmbeddingProvider } from "../../embeddings/provider";
 import type { McpTool } from "../tool-types";
 import {
   optionalPositiveInt,
@@ -58,6 +60,17 @@ export const logBugTool: McpTool = {
       tags,
       relatedBugIds: [],
     });
+
+    // Best-effort: index the new bug for semantic recall when embeddings are
+    // enabled. Never let an embedding hiccup fail the write.
+    const provider = resolveEmbeddingProvider();
+    if (provider) {
+      try {
+        await embedBugs(ctx.cwd, provider, [entry.id]);
+      } catch {
+        // embeddings unavailable — the bug is still stored and FTS5-searchable
+      }
+    }
 
     const where = lineNumber ? `${filePath}:${lineNumber}` : filePath;
     const verb = existing ? `updated (occurrence ${entry.occurrenceCount})` : "logged";

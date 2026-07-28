@@ -3,8 +3,8 @@
 // (spec 24). Backed by the FTS5 bug-memory repository; recall becomes semantic
 // once spec 25 lands, with no change to this tool's contract.
 
-import { BugMemoryRepo } from "../../../repositories/bug-memory-repo";
 import type { SimilarityMatch } from "../../../types/bug-memory";
+import { recallBugs } from "../../embeddings/recall";
 import type { McpTool } from "../tool-types";
 import { optionalPositiveInt, optionalString, requireString } from "../tool-types";
 
@@ -46,10 +46,9 @@ export const recallBugsTool: McpTool = {
     const file = optionalString(args, "file");
     const limit = optionalPositiveInt(args, "limit") ?? 10;
 
-    const matches = BugMemoryRepo.for(ctx.cwd).searchBugs(
-      query,
-      file ? { filePath: file } : undefined
-    );
+    // Hybrid recall: FTS5 fused with semantic vectors when embeddings are
+    // enabled and available; otherwise exactly the FTS5 result.
+    const matches = await recallBugs(ctx.cwd, query, { filePath: file, limit });
 
     if (matches.length === 0) {
       return `No past bugs found for "${query}".`;
