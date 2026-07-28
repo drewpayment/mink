@@ -12,6 +12,7 @@ import { projectRulesTool } from "./project-rules";
 import { captureNoteTool } from "./capture-note";
 import { logBugTool } from "./log-bug";
 import { contextPackTool } from "./context-pack";
+import { similarTasksTool } from "./similar-tasks";
 
 /** Assemble the full tool set. Order here is the order clients see in tools/list. */
 export function buildToolRegistry(): McpTool[] {
@@ -28,5 +29,7 @@ export function buildToolRegistry(): McpTool[] {
     logBugTool,
     // Context pack (spec 26)
     contextPackTool,
+    // Similar-task recall (spec 29)
+    similarTasksTool,
   ];
 }

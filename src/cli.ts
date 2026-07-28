@@ -129,6 +129,12 @@ switch (command) {
     break;
   }
 
+  case "similar": {
+    const { similar } = await import("./commands/similar");
+    similar(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "cron": {
     const { cron } = await import("./commands/cron");
     await cron(cwd, process.argv.slice(3));
@@ -306,6 +312,7 @@ switch (command) {
     console.log("  embeddings <cmd>        Manage semantic retrieval (status|enable|disable|backfill, spec 25)");
     console.log("  context [--budget=N]    Print the cache-friendly project context pack (spec 26)");
     console.log("  report [--json]         Dollarized ROI from measured (holdout-verified) savings (spec 27)");
+    console.log("  similar [--files=..] [q] Recall prior sessions similar to the task at hand (spec 29)");
     console.log();
     console.log("Devices & Sync:");
     console.log("  device                  Show current device info");

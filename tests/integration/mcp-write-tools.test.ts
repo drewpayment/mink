@@ -177,7 +177,7 @@ describe("mink_log_bug", () => {
 });
 
 describe("tools/list after phase 3", () => {
-  test("advertises all eight tools", async () => {
+  test("advertises all nine tools", async () => {
     const out = await server().handleLine(
       JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })
     );
@@ -191,6 +191,7 @@ describe("tools/list after phase 3", () => {
       "mink_capture_note",
       "mink_log_bug",
       "mink_context_pack",
+      "mink_similar_tasks",
     ]);
   });
 });
