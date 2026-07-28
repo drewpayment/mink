@@ -5,11 +5,20 @@
 
 import type { McpTool } from "../tool-types";
 import { retrieveTool } from "./retrieve";
+import { recallBugsTool } from "./recall-bugs";
+import { searchWikiTool } from "./search-wiki";
+import { fileSkeletonTool } from "./file-skeleton";
+import { projectRulesTool } from "./project-rules";
 
 /** Assemble the full tool set. Order here is the order clients see in tools/list. */
 export function buildToolRegistry(): McpTool[] {
   return [
     // Phase 1 — reversible-cache retrieval
     retrieveTool,
+    // Phase 2 — read/pull tools
+    recallBugsTool,
+    searchWikiTool,
+    fileSkeletonTool,
+    projectRulesTool,
   ];
 }
