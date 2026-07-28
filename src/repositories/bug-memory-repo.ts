@@ -13,7 +13,7 @@
 import { randomUUID } from "crypto";
 import type { DbDriver } from "../storage/driver";
 import type { BugEntry, BugMemory, SimilarityMatch } from "../types/bug-memory";
-import { openProjectDb } from "../storage/db";
+import { openProjectDb, openProjectDbForDir } from "../storage/db";
 import { getOrCreateDeviceId } from "../core/device";
 
 interface BugRow {
@@ -39,6 +39,12 @@ export class BugMemoryRepo {
 
   static for(cwd: string): BugMemoryRepo {
     return new BugMemoryRepo(openProjectDb(cwd));
+  }
+
+  /** Open another project's bug memory by its on-disk dir; null if no DB. */
+  static forDir(projDir: string): BugMemoryRepo | null {
+    const db = openProjectDbForDir(projDir);
+    return db ? new BugMemoryRepo(db) : null;
   }
 
   // ── Insert / upsert ────────────────────────────────────────────────────
