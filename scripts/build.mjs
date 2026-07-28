@@ -34,6 +34,9 @@ for (const t of TARGETS) {
     "--target", t.target,
     "--format", "esm",
     "--define", `MINK_RUNTIME="${t.runtime}"`,
+    // Optional, heavyweight, dynamically imported at runtime only when semantic
+    // retrieval is enabled (spec 25). Keep it out of the bundle.
+    "--external", "@huggingface/transformers",
   ]);
 
   // `bun build` may emit its own shebang depending on the target. Strip any
