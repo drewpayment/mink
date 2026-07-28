@@ -31,6 +31,10 @@ const normErr = (s: string): string => s.trim().toLowerCase();
 // every bug (including orthogonal, score-0 ones), polluting the fused ranking.
 const MIN_SIMILARITY = 0.25;
 
+// Bound each embed() call so a large first-time backfill can't build one giant
+// batch (memory spike / model batch limits).
+const EMBED_BATCH_SIZE = 32;
+
 /** The text an embedding represents for a bug — error, cause, fix, and tags. */
 export function bugText(b: BugEntry): string {
   return [b.errorMessage, b.rootCause, b.fixDescription, b.tags.join(" ")]
@@ -61,23 +65,34 @@ export async function embedBugs(
     : repo.listAll();
 
   const pending = entries
-    .map((e) => ({ e, text: bugText(e), hash: "" }))
-    .map((p) => ({ ...p, hash: hashContent(p.text) }))
+    .map((e) => {
+      const text = bugText(e);
+      return { e, text, hash: hashContent(text) };
+    })
     .filter((p) => !store.hasFresh("bug", p.e.id, provider.id, p.hash));
 
   if (pending.length === 0) return 0;
 
-  const vectors = await provider.embed(pending.map((p) => p.text));
-  for (let i = 0; i < pending.length; i++) {
-    store.upsert({
-      kind: "bug",
-      refId: pending[i].e.id,
-      model: provider.id,
-      contentHash: pending[i].hash,
-      vector: l2normalize(vectors[i]),
-    });
+  let embedded = 0;
+  // Embed in bounded chunks so a large backlog never builds one giant batch,
+  // and progress is durable if a later chunk fails.
+  for (let start = 0; start < pending.length; start += EMBED_BATCH_SIZE) {
+    const chunk = pending.slice(start, start + EMBED_BATCH_SIZE);
+    const vectors = await provider.embed(chunk.map((p) => p.text));
+    for (let i = 0; i < chunk.length; i++) {
+      const vec = vectors[i];
+      if (!vec) continue; // provider returned fewer vectors than inputs — skip
+      store.upsert({
+        kind: "bug",
+        refId: chunk[i].e.id,
+        model: provider.id,
+        contentHash: chunk[i].hash,
+        vector: l2normalize(vec),
+      });
+      embedded++;
+    }
   }
-  return pending.length;
+  return embedded;
 }
 
 /**
@@ -96,6 +111,14 @@ export async function recallBugs(
 
   const provider = resolveEmbeddingProvider();
   if (!provider) return fts.slice(0, k);
+
+  const crossEnabled = resolveConfigValue("embeddings.cross-project").value === "true";
+
+  // Nothing to match: no local vectors and no cross-project search. Skip the
+  // (expensive) query embedding entirely and return the FTS5 result.
+  if (!crossEnabled && EmbeddingRepo.for(cwd).countForModel("bug", provider.id) === 0) {
+    return fts.slice(0, k);
+  }
 
   let queryVec: Float32Array | undefined;
   try {
@@ -133,7 +156,7 @@ export async function recallBugs(
   const currentTop = current.slice(0, k);
 
   // ── Other projects: vector recall, deduped against the current results ────
-  if (resolveConfigValue("embeddings.cross-project").value !== "true") {
+  if (!crossEnabled) {
     return currentTop;
   }
 

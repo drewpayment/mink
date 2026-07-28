@@ -5,6 +5,7 @@
 
 import { resolveConfigValue, setConfigValue } from "../core/global-config";
 import {
+  EmbeddingsUnavailableError,
   isEmbeddingLibraryInstalled,
   isEmbeddingsEnabled,
   resolveEmbeddingProvider,
@@ -83,10 +84,13 @@ export async function embeddings(cwd: string, args: string[]): Promise<void> {
         const n = await embedBugs(cwd, provider);
         console.log(n > 0 ? `Embedded ${n} bug(s).` : "Nothing to embed — all bugs are current.");
       } catch (err) {
-        console.error(
-          `[mink] embeddings unavailable: ${err instanceof Error ? err.message : String(err)}`
-        );
-        console.error("Install the model runtime: bun add -g @huggingface/transformers");
+        const msg = err instanceof Error ? err.message : String(err);
+        if (err instanceof EmbeddingsUnavailableError) {
+          console.error(`[mink] embeddings unavailable: ${msg}`);
+          console.error("Install the model runtime: bun add -g @huggingface/transformers");
+        } else {
+          console.error(`[mink] backfill failed: ${msg}`);
+        }
         process.exit(1);
       }
       break;

@@ -135,4 +135,64 @@ describe("embedBugs", () => {
     const second = await embedBugs(cwd, mock); // nothing new to embed
     expect(second).toBe(0);
   });
+
+  test("embeds in bounded batches (no single giant batch)", async () => {
+    const repo = BugMemoryRepo.for(cwd);
+    for (let i = 0; i < 40; i++) {
+      repo.add({
+        errorMessage: `error number ${i}`,
+        filePath: `src/f${i}.ts`,
+        rootCause: "rc",
+        fixDescription: "fix",
+        tags: [],
+        relatedBugIds: [],
+      });
+    }
+    const batchSizes: number[] = [];
+    const counting: EmbeddingProvider = {
+      id: "counting",
+      async embed(texts) {
+        batchSizes.push(texts.length);
+        return texts.map(() => Float32Array.from([1, 0, 0]));
+      },
+    };
+    const n = await embedBugs(cwd, counting);
+    expect(n).toBe(40);
+    expect(batchSizes.length).toBeGreaterThan(1); // chunked
+    expect(Math.max(...batchSizes)).toBeLessThanOrEqual(32); // bounded
+    expect(batchSizes.reduce((a, b) => a + b, 0)).toBe(40); // all covered
+  });
+
+  test("skips (does not crash) when the provider returns fewer vectors", async () => {
+    seedTwoBugs(); // 2 bugs
+    const short: EmbeddingProvider = {
+      id: "short",
+      async embed(texts) {
+        return texts.slice(0, texts.length - 1).map(() => Float32Array.from([1, 0, 0]));
+      },
+    };
+    const n = await embedBugs(cwd, short); // must not throw on the missing vector
+    expect(n).toBe(1);
+  });
+});
+
+describe("recallBugs — empty-store short-circuit", () => {
+  test("does not embed the query when there are no vectors and cross-project is off", async () => {
+    seedTwoBugs(); // bugs exist, but are NOT embedded
+    let embedCalls = 0;
+    const counting: EmbeddingProvider = {
+      id: "counting",
+      async embed(texts) {
+        embedCalls++;
+        return texts.map(() => Float32Array.from([1, 0, 0]));
+      },
+    };
+    _setTestEmbeddingProvider(counting);
+
+    const results = await recallBugs(cwd, "cannot read properties of undefined");
+    expect(embedCalls).toBe(0); // short-circuited before the expensive embed
+    // Still returns the FTS5 result.
+    const lexical = BugMemoryRepo.for(cwd).searchBugs("cannot read properties of undefined");
+    expect(results.map((m) => m.entry.id)).toEqual(lexical.map((m) => m.entry.id));
+  });
 });
