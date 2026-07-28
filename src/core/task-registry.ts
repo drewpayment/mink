@@ -247,10 +247,11 @@ export async function executeTask(
         const n = await embedBugs(projectCwd, provider);
         if (n > 0) console.log(`[mink] embedding-backfill: embedded ${n} bug(s)`);
       } catch (err) {
-        // Model/library unavailable — recall still works via FTS5. Don't retry
-        // aggressively on a non-transient missing dependency.
-        throw new Error(
-          `[non-transient] embedding-backfill unavailable: ${err instanceof Error ? err.message : String(err)}`
+        // Model/library unavailable — recall still works via FTS5, and status
+        // surfaces the misconfiguration. Treat as a quiet no-op rather than
+        // dead-lettering the task on every run.
+        console.warn(
+          `[mink] embedding-backfill skipped (embeddings unavailable): ${err instanceof Error ? err.message : String(err)}`
         );
       }
       break;

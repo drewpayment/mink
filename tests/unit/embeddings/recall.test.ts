@@ -96,6 +96,17 @@ describe("recallBugs — hybrid", () => {
     expect(hybrid[0].matchReasons).toContain("semantic");
   });
 
+  test("does not surface an orthogonal (unrelated) bug via the semantic path", async () => {
+    const { nullBug } = seedTwoBugs();
+    _setTestEmbeddingProvider(mock);
+    await embedBugs(cwd, mock);
+
+    // A port query is orthogonal to the null-safety bug (cosine 0 < threshold),
+    // and shares no words with it, so it must not appear at all.
+    const results = await recallBugs(cwd, "socket address already bound to the port");
+    expect(results.some((m) => m.entry.id === nullBug.id)).toBe(false);
+  });
+
   test("falls back to FTS5 when the feature is disabled (no provider)", async () => {
     seedTwoBugs();
     _setTestEmbeddingProvider(null); // explicitly no provider

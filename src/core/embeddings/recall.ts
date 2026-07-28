@@ -27,6 +27,10 @@ export interface BugRecallMatch extends SimilarityMatch {
 
 const normErr = (s: string): string => s.trim().toLowerCase();
 
+// Cosine floor for a vector hit to count. Without it, brute-force search returns
+// every bug (including orthogonal, score-0 ones), polluting the fused ranking.
+const MIN_SIMILARITY = 0.25;
+
 /** The text an embedding represents for a bug — error, cause, fix, and tags. */
 export function bugText(b: BugEntry): string {
   return [b.errorMessage, b.rootCause, b.fixDescription, b.tags.join(" ")]
@@ -104,7 +108,9 @@ export async function recallBugs(
   const qv = l2normalize(queryVec);
 
   // ── Current project: fuse FTS5 + vector via RRF ──────────────────────────
-  const vectorIds = EmbeddingRepo.for(cwd).search("bug", provider.id, qv, k).map((h) => h.refId);
+  const vectorIds = EmbeddingRepo.for(cwd)
+    .search("bug", provider.id, qv, k, MIN_SIMILARITY)
+    .map((h) => h.refId);
   const ftsById = new Map(fts.map((m) => [m.entry.id, m]));
   const fused =
     vectorIds.length === 0
@@ -142,7 +148,7 @@ export async function recallBugs(
     const bugs = BugMemoryRepo.forDir(projDir);
     if (!store || !bugs) continue;
 
-    for (const hit of store.search("bug", provider.id, qv, k)) {
+    for (const hit of store.search("bug", provider.id, qv, k, MIN_SIMILARITY)) {
       const entry = bugs.lookup(hit.refId);
       if (!entry) continue;
       const key = normErr(entry.errorMessage);
