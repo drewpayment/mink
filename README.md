@@ -107,6 +107,7 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 ### Knowledge & Analytics
 - **Bug Memory** — Tracks bugs, fixes, root causes, and tags for searchable history
 - **Action Log** — Human-readable chronological log of all session activity
+- **Similar-Task Recall** — `mink similar` (and the `mink_similar_tasks` MCP tool) rank prior sessions by file overlap with the task at hand, so you can reuse a past approach instead of rediscovering it. See [specs/29-similar-task-recall.md](specs/29-similar-task-recall.md).
 - **Waste Detection** — Identifies patterns of token waste (repeated reads, large file scans, etc.)
 - **ROI Report** — `mink report` dollarizes Mink's measured, holdout-verified compression savings at a configurable model's input price, always citing the holdout basis, with the heuristic (index-hit) estimate shown separately and labeled as such. `--json` for machines. See [specs/27-roi-report.md](specs/27-roi-report.md).
 
