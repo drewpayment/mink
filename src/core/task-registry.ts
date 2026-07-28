@@ -62,7 +62,7 @@ const BUILT_IN_TASKS: TaskDefinition[] = [
     schedule: "0 5 * * *",
     actionType: "function",
     enabled: true,
-    retryPolicy: { maxAttempts: 2, baseDelayMs: 60_000 },
+    retryPolicy: { maxAttempts: 3, baseDelayMs: 60_000 },
     timeoutMs: 5 * 60_000,
   },
   {

@@ -149,6 +149,17 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
   { "mcpServers": { "mink": { "command": "mink", "args": ["mcp"] } } }
   ```
 
+### Semantic Retrieval (optional)
+- **Meaning-based recall** — `mink embeddings` adds a local neural embedding layer that augments the keyword (FTS5) bug search, so a bug is found by *meaning* even when the query shares few words with it. Off by default; when disabled or unavailable it falls back to keyword search with no change in behavior.
+- **Cross-project transfer** — with `embeddings.cross-project` on, recall also surfaces semantically related bugs from your *other* projects, tagged with their origin — "you hit this same class of bug elsewhere; here's the fix."
+- **Local & opt-in** — inference runs locally; nothing leaves the machine. The model runtime is a user-installed opt-in so the base CLI stays lightweight:
+  ```bash
+  bun add -g @huggingface/transformers   # one-time
+  mink embeddings enable
+  mink embeddings backfill                # index existing bugs
+  ```
+  Fused ranking uses Reciprocal Rank Fusion; the model downloads to `~/.mink/models` on first use. See [docs/semantic-retrieval.md](docs/semantic-retrieval.md) and [specs/25-semantic-retrieval.md](specs/25-semantic-retrieval.md).
+
 ### Advanced
 - **Design Evaluation** — Automated multi-viewport screenshot capture with server and route detection (uses Puppeteer)
 - **Framework Advisor** — Decision tree, framework catalog, comparison matrix, and migration prompts for UI framework selection
@@ -168,6 +179,7 @@ Specs 1–15 are fully implemented and tested. The test plan spec (16) is design
 | Advanced | Design Evaluation, Framework Advisor | Implemented |
 | Wiki | Cross-Project Wiki & Notes | Implemented |
 | Integrations | MCP Server | Implemented |
+| Knowledge | Semantic Retrieval (bugs) | Implemented |
 | Quality | Test Plan | Designed |
 
 ## Installation
