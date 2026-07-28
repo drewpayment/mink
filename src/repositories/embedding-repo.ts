@@ -10,7 +10,7 @@
 
 import { createHash } from "crypto";
 import type { DbDriver } from "../storage/driver";
-import { openProjectDb } from "../storage/db";
+import { openProjectDb, openProjectDbForDir } from "../storage/db";
 import { getOrCreateDeviceId } from "../core/device";
 import { cosine, deserializeVector, serializeVector } from "../core/embeddings/vector";
 
@@ -40,6 +40,12 @@ export class EmbeddingRepo {
 
   static for(cwd: string): EmbeddingRepo {
     return new EmbeddingRepo(openProjectDb(cwd));
+  }
+
+  /** Open another project's store by its on-disk dir; null if it has no DB. */
+  static forDir(projDir: string): EmbeddingRepo | null {
+    const db = openProjectDbForDir(projDir);
+    return db ? new EmbeddingRepo(db) : null;
   }
 
   upsert(input: EmbeddingInput, deviceId: string = getOrCreateDeviceId()): void {

@@ -4,9 +4,14 @@
 // embeddings are disabled or unavailable, recall is exactly today's FTS5 result
 // — no regression.
 
+import { join } from "node:path";
 import { BugMemoryRepo } from "../../repositories/bug-memory-repo";
 import { EmbeddingRepo, hashContent } from "../../repositories/embedding-repo";
 import type { BugEntry, SimilarityMatch } from "../../types/bug-memory";
+import { minkRoot } from "../paths";
+import { projectIdFor } from "../project-id";
+import { listRegisteredProjects } from "../project-registry";
+import { resolveConfigValue } from "../global-config";
 import {
   EmbeddingsUnavailableError,
   resolveEmbeddingProvider,
@@ -14,6 +19,13 @@ import {
 } from "./provider";
 import { reciprocalRankFusion } from "./hybrid";
 import { l2normalize } from "./vector";
+
+/** A recalled bug. `project` is set only for matches from another project. */
+export interface BugRecallMatch extends SimilarityMatch {
+  project?: string;
+}
+
+const normErr = (s: string): string => s.trim().toLowerCase();
 
 /** The text an embedding represents for a bug — error, cause, fix, and tags. */
 export function bugText(b: BugEntry): string {
@@ -73,43 +85,73 @@ export async function recallBugs(
   cwd: string,
   query: string,
   opts: RecallOptions = {}
-): Promise<SimilarityMatch[]> {
+): Promise<BugRecallMatch[]> {
   const repo = BugMemoryRepo.for(cwd);
   const fts = repo.searchBugs(query, opts.filePath ? { filePath: opts.filePath } : undefined);
+  const k = opts.limit ?? 20;
 
   const provider = resolveEmbeddingProvider();
-  if (!provider) return fts;
+  if (!provider) return fts.slice(0, k);
 
-  const k = opts.limit ?? 20;
-  let vectorIds: string[];
+  let queryVec: Float32Array | undefined;
   try {
-    const [queryVec] = await provider.embed([query]);
-    if (!queryVec) return fts;
-    const hits = EmbeddingRepo.for(cwd).search("bug", provider.id, l2normalize(queryVec), k);
-    vectorIds = hits.map((h) => h.refId);
+    [queryVec] = await provider.embed([query]);
   } catch (err) {
-    if (err instanceof EmbeddingsUnavailableError) return fts; // graceful degrade
+    if (err instanceof EmbeddingsUnavailableError) return fts.slice(0, k); // graceful degrade
     throw err;
   }
+  if (!queryVec) return fts.slice(0, k);
+  const qv = l2normalize(queryVec);
 
-  if (vectorIds.length === 0) return fts;
-
+  // ── Current project: fuse FTS5 + vector via RRF ──────────────────────────
+  const vectorIds = EmbeddingRepo.for(cwd).search("bug", provider.id, qv, k).map((h) => h.refId);
   const ftsById = new Map(fts.map((m) => [m.entry.id, m]));
-  const fused = reciprocalRankFusion([fts.map((m) => m.entry.id), vectorIds]);
+  const fused =
+    vectorIds.length === 0
+      ? fts.map((m, i) => ({ refId: m.entry.id, score: 1 / (60 + i + 1) }))
+      : reciprocalRankFusion([fts.map((m) => m.entry.id), vectorIds]);
 
-  const results: SimilarityMatch[] = [];
+  const current: BugRecallMatch[] = [];
   for (const { refId, score } of fused) {
-    const inVector = vectorIds.includes(refId);
     const existing = ftsById.get(refId);
     if (existing) {
-      const reasons = inVector
+      const reasons = vectorIds.includes(refId)
         ? Array.from(new Set([...existing.matchReasons, "semantic"]))
         : existing.matchReasons;
-      results.push({ entry: existing.entry, score, matchReasons: reasons });
+      current.push({ entry: existing.entry, score, matchReasons: reasons });
     } else {
       const entry = repo.lookup(refId);
-      if (entry) results.push({ entry, score, matchReasons: ["semantic"] });
+      if (entry) current.push({ entry, score, matchReasons: ["semantic"] });
     }
   }
-  return results;
+  const currentTop = current.slice(0, k);
+
+  // ── Other projects: vector recall, deduped against the current results ────
+  if (resolveConfigValue("embeddings.cross-project").value !== "true") {
+    return currentTop;
+  }
+
+  const seen = new Set(currentTop.map((m) => normErr(m.entry.errorMessage)));
+  const currentId = projectIdFor(cwd);
+  const cross: BugRecallMatch[] = [];
+
+  for (const reg of listRegisteredProjects()) {
+    if (reg.id === currentId) continue;
+    const projDir = join(minkRoot(), "projects", reg.id);
+    const store = EmbeddingRepo.forDir(projDir);
+    const bugs = BugMemoryRepo.forDir(projDir);
+    if (!store || !bugs) continue;
+
+    for (const hit of store.search("bug", provider.id, qv, k)) {
+      const entry = bugs.lookup(hit.refId);
+      if (!entry) continue;
+      const key = normErr(entry.errorMessage);
+      if (seen.has(key)) continue; // dedup across projects
+      seen.add(key);
+      cross.push({ entry, score: hit.score, matchReasons: ["semantic", "cross-project"], project: reg.id });
+    }
+  }
+
+  cross.sort((a, b) => b.score - a.score);
+  return [...currentTop, ...cross.slice(0, k)];
 }

@@ -102,6 +102,17 @@ export function isEmbeddingsEnabled(): boolean {
   return resolveConfigValue("embeddings.enabled").value === "true";
 }
 
+/** Whether the optional model runtime is importable (does not load a model). */
+export async function isEmbeddingLibraryInstalled(): Promise<boolean> {
+  try {
+    const spec = "@huggingface/transformers";
+    await import(/* @vite-ignore */ spec);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolve the active provider, or null when the feature is disabled. A non-null
  * provider is not a guarantee the model will load — embed() may still throw

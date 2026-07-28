@@ -111,6 +111,12 @@ switch (command) {
     break;
   }
 
+  case "embeddings": {
+    const { embeddings } = await import("./commands/embeddings");
+    await embeddings(cwd, process.argv.slice(3));
+    break;
+  }
+
   case "cron": {
     const { cron } = await import("./commands/cron");
     await cron(cwd, process.argv.slice(3));
@@ -285,6 +291,7 @@ switch (command) {
     console.log();
     console.log("Integrations:");
     console.log("  mcp                     Run Mink as a Model Context Protocol server over stdio (spec 24)");
+    console.log("  embeddings <cmd>        Manage semantic retrieval (status|enable|disable|backfill, spec 25)");
     console.log();
     console.log("Devices & Sync:");
     console.log("  device                  Show current device info");
