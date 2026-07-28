@@ -30,7 +30,10 @@ interface Rule {
 // masked. Assignment-style rules mask only the value group so the key stays
 // legible (e.g. `api_key=[REDACTED:assignment]`).
 const RULES: Rule[] = [
-  { kind: "private-key", pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/g },
+  // Match from the BEGIN header to the END footer when present; otherwise (a
+  // truncated/pasted key with no footer) up to the next blank line or EOF, so
+  // the key material is still masked without swallowing following prose.
+  { kind: "private-key", pattern: /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----|(?=\r?\n\r?\n)|$)/g },
   { kind: "aws-access-key", pattern: /\bAKIA[0-9A-Z]{16}\b/g },
   { kind: "gcp-api-key", pattern: /\bAIza[0-9A-Za-z_\-]{35}\b/g },
   { kind: "github-token", pattern: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g },

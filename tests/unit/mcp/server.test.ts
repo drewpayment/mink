@@ -43,10 +43,36 @@ describe("McpServer.handleLine", () => {
     expect(JSON.parse(out!)).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
   });
 
-  test("an array (batch) frame is rejected as INVALID_REQUEST", async () => {
+  test("a batch of invalid items yields an array of INVALID_REQUEST responses", async () => {
     const out = await makeServer().handleLine("[1,2,3]");
     const msg = JSON.parse(out!);
-    expect(msg.error.code).toBe(JsonRpcErrorCode.INVALID_REQUEST);
+    expect(Array.isArray(msg)).toBe(true);
+    expect(msg).toHaveLength(3);
+    expect(msg[0].error.code).toBe(JsonRpcErrorCode.INVALID_REQUEST);
+  });
+
+  test("a batch of requests yields an array of responses, omitting notifications", async () => {
+    const batch = JSON.stringify([
+      { jsonrpc: "2.0", id: 1, method: "ping" },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "ping" },
+    ]);
+    const out = await makeServer().handleLine(batch);
+    const msg = JSON.parse(out!);
+    expect(Array.isArray(msg)).toBe(true);
+    expect(msg.map((m: { id: number }) => m.id)).toEqual([1, 2]);
+  });
+
+  test("an empty batch is INVALID_REQUEST", async () => {
+    const out = await makeServer().handleLine("[]");
+    expect(JSON.parse(out!).error.code).toBe(JsonRpcErrorCode.INVALID_REQUEST);
+  });
+
+  test("a batch of only notifications yields no output", async () => {
+    const out = await makeServer().handleLine(
+      JSON.stringify([{ jsonrpc: "2.0", method: "notifications/initialized" }])
+    );
+    expect(out).toBeNull();
   });
 });
 
