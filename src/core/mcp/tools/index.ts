@@ -9,6 +9,8 @@ import { recallBugsTool } from "./recall-bugs";
 import { searchWikiTool } from "./search-wiki";
 import { fileSkeletonTool } from "./file-skeleton";
 import { projectRulesTool } from "./project-rules";
+import { captureNoteTool } from "./capture-note";
+import { logBugTool } from "./log-bug";
 
 /** Assemble the full tool set. Order here is the order clients see in tools/list. */
 export function buildToolRegistry(): McpTool[] {
@@ -20,5 +22,8 @@ export function buildToolRegistry(): McpTool[] {
     searchWikiTool,
     fileSkeletonTool,
     projectRulesTool,
+    // Phase 3 — write/capture tools (redacted before persistence)
+    captureNoteTool,
+    logBugTool,
   ];
 }

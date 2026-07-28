@@ -199,12 +199,13 @@ describe("mink_project_rules", () => {
 });
 
 describe("tools/list after phase 2", () => {
-  test("advertises all five tools in registration order", async () => {
+  test("advertises the phase-1/2 tools in registration order", async () => {
     const out = await server().handleLine(
       JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })
     );
-    const names = JSON.parse(out!).result.tools.map((t: { name: string }) => t.name);
-    expect(names).toEqual([
+    const names: string[] = JSON.parse(out!).result.tools.map((t: { name: string }) => t.name);
+    // Later phases append more tools; the first five are stable.
+    expect(names.slice(0, 5)).toEqual([
       "mink_retrieve",
       "mink_recall_bugs",
       "mink_search_wiki",
