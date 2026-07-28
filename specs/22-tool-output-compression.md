@@ -43,6 +43,15 @@ The system selects a compression strategy based on the detected shape of the out
   names — together with the slice most relevant to the surrounding work.
 - **Structured data:** factor out repeated keys and sample large uniform collections, preserving the
   shape and the total element count.
+- **Stack traces:** keep the error head and application frames; collapse runs of framework/vendor
+  frames (dependency and language-internal frames), preserving the count.
+- **Diffs:** keep file and hunk headers and changed lines; elide long runs of unchanged context,
+  keeping a small window at each end, with a count of what was omitted.
+- **Test-runner output:** keep failures and the summary; drop passing-test noise.
+- **Package-manager output:** keep the result, warnings, and errors; drop resolve/download progress.
+
+A specific strategy that finds nothing structural to collapse falls back to generic window trimming,
+and any strategy that would not actually shrink the output is discarded (the original is used).
 
 Every compressed result states, compactly, how much was omitted and how to retrieve the original.
 
