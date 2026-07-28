@@ -98,8 +98,8 @@ export function buildContextPack(cwd: string, opts: ContextPackOptions = {}): st
   }
 
   // ── Top relevant bugs ────────────────────────────────────────────────────
-  if (bugs.length > 0) {
-    add(["## Recurring bugs", ""]);
+  // Only render the section if its header fits — otherwise nothing below it can.
+  if (bugs.length > 0 && add(["## Recurring bugs", ""])) {
     for (const b of bugs) {
       const where = b.lineNumber ? `${b.filePath}:${b.lineNumber}` : b.filePath;
       const added = add([
@@ -110,12 +110,10 @@ export function buildContextPack(cwd: string, opts: ContextPackOptions = {}): st
       if (!added) break; // budget exhausted — stop adding lower-ranked bugs
     }
     if (lines[lines.length - 1] !== "") lines.push("");
-    used += 1;
   }
 
   // ── File-index skeleton (largest; truncated to budget) ───────────────────
-  if (files.length > 0) {
-    add(["## Files", ""]);
+  if (files.length > 0 && add(["## Files", ""])) {
     let shown = 0;
     for (const f of files) {
       if (!add([`- \`${f.filePath}\` — ${f.description}`])) break;

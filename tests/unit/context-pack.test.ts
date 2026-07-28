@@ -119,6 +119,16 @@ describe("buildContextPack", () => {
     expect(pack.indexOf("common bug")).toBeLessThan(pack.indexOf("rare bug"));
   });
 
+  test("a budget too small for a section header emits no dangling section", () => {
+    seedFiles(50);
+    const pack = buildContextPack(cwd, { budgetTokens: 5, now: new Date("2026-07-01T00:00:00Z") });
+    // The Files header doesn't fit, so there must be no orphan "budget reached"
+    // line and no bare "## Files" heading.
+    expect(pack).not.toContain("budget reached");
+    expect(pack).not.toContain("## Files");
+    expect(pack).toContain("Mink context pack"); // header is always kept
+  });
+
   test("empty project produces a header and footer without crashing", () => {
     const pack = buildContextPack(cwd, { now: new Date("2026-07-01T00:00:00Z") });
     expect(pack).toContain("Mink context pack");
