@@ -141,6 +141,7 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 - **Secret / PII Redaction** — a high-precision redactor masks secrets and PII (private keys, cloud/provider tokens, JWTs, secret-named assignments, emails) at every persistence boundary — recorded bugs and captured notes — so nothing sensitive lands on disk or in a synced git remote, regardless of caller. On by default, allowlist-aware, and it deliberately never masks commit-hash-like hex. See [specs/28-redaction.md](specs/28-redaction.md).
 
 ### Integrations
+- **VS Code extension** — a thin client (`ide/vscode/`) that surfaces Mink from the command palette (Context Pack, Search Bug Memory, Similar Tasks for the current file, Capture Note), shelling out to the `mink` CLI. See [ide/vscode/README.md](ide/vscode/README.md) and [specs/31-ide-surface.md](specs/31-ide-surface.md).
 - **MCP Server** — `mink mcp` runs Mink as a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, exposing this project's state to any MCP-capable assistant as tools. Where the hooks *push* context, the MCP server lets the assistant *pull* exactly what it needs on demand — and write back:
   - `mink_retrieve` — recover the byte-exact original of a compressed tool output (spec 22)
   - `mink_recall_bugs` — search bug memory for a query or file, with root cause and fix
