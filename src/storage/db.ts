@@ -6,7 +6,7 @@
 // importer runs (see `migrate-json.ts`). The importer is idempotent — once
 // `meta.migrated_from_json_at` is set, it returns immediately.
 
-import { mkdirSync, readdirSync, statSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { minkRoot, projectDbPath } from "../core/paths";
 import { openDriver, type DbDriver } from "./driver";
@@ -94,6 +94,28 @@ export function openProjectDb(cwd: string): DbDriver {
     );
   }
 
+  installExitHook();
+  handles.set(path, { driver, closed: false });
+  return driver;
+}
+
+// Open another project's database directly by its on-disk project directory
+// (…/projects/{id}), for cross-project reads (spec 25 cross-project recall).
+// Returns null when that project has no database yet. Skips JSON migration —
+// the owning project runs that on its own first open. NOTE: this still applies
+// the schema (idempotent DDL via CREATE TABLE IF NOT EXISTS, and opens WAL
+// sidecars), so the caller is not purely read-only; applying the schema is
+// required so a cross-project search never hits a missing embeddings table.
+// Handles are cached by path like openProjectDb, so concurrent access is safe.
+export function openProjectDbForDir(projDir: string): DbDriver | null {
+  const path = join(projDir, "mink.db");
+  const cached = handles.get(path);
+  if (cached && !cached.closed) return cached.driver;
+  if (!existsSync(path)) return null;
+
+  const driver = openDriver(path);
+  applyPragmas(driver);
+  applySchema(driver);
   installExitHook();
   handles.set(path, { driver, closed: false });
   return driver;

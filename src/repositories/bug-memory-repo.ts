@@ -13,7 +13,8 @@
 import { randomUUID } from "crypto";
 import type { DbDriver } from "../storage/driver";
 import type { BugEntry, BugMemory, SimilarityMatch } from "../types/bug-memory";
-import { openProjectDb } from "../storage/db";
+import { openProjectDb, openProjectDbForDir } from "../storage/db";
+import { redactForStorage } from "../core/redact";
 import { getOrCreateDeviceId } from "../core/device";
 
 interface BugRow {
@@ -41,6 +42,12 @@ export class BugMemoryRepo {
     return new BugMemoryRepo(openProjectDb(cwd));
   }
 
+  /** Open another project's bug memory by its on-disk dir; null if no DB. */
+  static forDir(projDir: string): BugMemoryRepo | null {
+    const db = openProjectDbForDir(projDir);
+    return db ? new BugMemoryRepo(db) : null;
+  }
+
   // ── Insert / upsert ────────────────────────────────────────────────────
 
   // Detect an exact-text duplicate of (errorMessage, filePath). Mirrors
@@ -59,6 +66,16 @@ export class BugMemoryRepo {
   add(
     fields: Omit<BugEntry, "id" | "createdAt" | "lastSeenAt" | "occurrenceCount">
   ): BugEntry {
+    // Redact secrets/PII at the persistence boundary so every caller (hooks,
+    // CLI, MCP) is covered, not just the MCP write tool (spec 28). Idempotent:
+    // already-redacted text passes through unchanged.
+    fields = {
+      ...fields,
+      errorMessage: redactForStorage(fields.errorMessage).text,
+      rootCause: redactForStorage(fields.rootCause).text,
+      fixDescription: redactForStorage(fields.fixDescription).text,
+    };
+
     const existing = this.findDuplicate(fields.errorMessage, fields.filePath);
     if (existing) {
       this.incrementOccurrence(existing.id);

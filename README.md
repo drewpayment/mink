@@ -102,11 +102,14 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 ### Intelligent Hooks
 - **Read Intelligence** — Tracks file reads, warns on redundant re-reads, estimates token cost
 - **Write Enforcement** — Enforces learned rules on writes, surfaces past bugs for relevant files
+- **Context Pack** — `mink context` prints a deterministic, cache-friendly project prefix (learned rules + recurring bugs + file skeleton) an assistant can load once and reuse across turns; token-budgeted, with volatile fields below a footer marker so the prefix stays cache-stable. Also an MCP tool (`mink_context_pack`). See [specs/26-context-pack.md](specs/26-context-pack.md).
 
 ### Knowledge & Analytics
 - **Bug Memory** — Tracks bugs, fixes, root causes, and tags for searchable history
 - **Action Log** — Human-readable chronological log of all session activity
+- **Similar-Task Recall** — `mink similar` (and the `mink_similar_tasks` MCP tool) rank prior sessions by file overlap with the task at hand, so you can reuse a past approach instead of rediscovering it. See [specs/29-similar-task-recall.md](specs/29-similar-task-recall.md).
 - **Waste Detection** — Identifies patterns of token waste (repeated reads, large file scans, etc.)
+- **ROI Report** — `mink report` dollarizes Mink's measured, holdout-verified compression savings at a configurable model's input price, always citing the holdout basis, with the heuristic (index-hit) estimate shown separately and labeled as such. `--json` for machines. See [specs/27-roi-report.md](specs/27-roi-report.md).
 
 ### Automation
 - **Background Scheduler** — Daemon process with cron-based task scheduling, retry logic with exponential backoff, and a dead letter queue for failed tasks
@@ -134,6 +137,35 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 - **CLAUDE.md-driven persona** — the bot's behavior is configured by a markdown file in the vault, not code
 - **Unattended mode** — optional `--dangerously-skip-permissions` bypasses terminal prompts so the bot works entirely from Discord
 
+### Safety
+- **Secret / PII Redaction** — a high-precision redactor masks secrets and PII (private keys, cloud/provider tokens, JWTs, secret-named assignments, emails) at every persistence boundary — recorded bugs and captured notes — so nothing sensitive lands on disk or in a synced git remote, regardless of caller. On by default, allowlist-aware, and it deliberately never masks commit-hash-like hex. See [specs/28-redaction.md](specs/28-redaction.md).
+
+### Integrations
+- **MCP Server** — `mink mcp` runs Mink as a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, exposing this project's state to any MCP-capable assistant as tools. Where the hooks *push* context, the MCP server lets the assistant *pull* exactly what it needs on demand — and write back:
+  - `mink_retrieve` — recover the byte-exact original of a compressed tool output (spec 22)
+  - `mink_recall_bugs` — search bug memory for a query or file, with root cause and fix
+  - `mink_search_wiki` — keyword search across the cross-project vault
+  - `mink_file_skeleton` — a file's signatures/headings with bodies elided, instead of the whole file
+  - `mink_project_rules` — the project's learned preferences, learnings, do-not-repeat, and decisions
+  - `mink_capture_note` / `mink_log_bug` — capture notes and log bugs (secrets redacted before write)
+
+  Hand-rolled JSON-RPC 2.0, zero new dependencies, dual Node/Bun. Point any MCP client at `mink mcp` with the working directory set to your project root. See [docs/mcp-server.md](docs/mcp-server.md) for the full architecture and [specs/24-mcp-server.md](specs/24-mcp-server.md) for the capability contract.
+
+  ```json
+  { "mcpServers": { "mink": { "command": "mink", "args": ["mcp"] } } }
+  ```
+
+### Semantic Retrieval (optional)
+- **Meaning-based recall** — `mink embeddings` adds a local neural embedding layer that augments the keyword (FTS5) bug search, so a bug is found by *meaning* even when the query shares few words with it. Off by default; when disabled or unavailable it falls back to keyword search with no change in behavior.
+- **Cross-project transfer** — with `embeddings.cross-project` on, recall also surfaces semantically related bugs from your *other* projects, tagged with their origin — "you hit this same class of bug elsewhere; here's the fix."
+- **Local & opt-in** — inference runs locally; nothing leaves the machine. The model runtime is a user-installed opt-in so the base CLI stays lightweight:
+  ```bash
+  bun add -g @huggingface/transformers   # one-time
+  mink embeddings enable
+  mink embeddings backfill                # index existing bugs
+  ```
+  Fused ranking uses Reciprocal Rank Fusion; the model downloads to `~/.mink/models` on first use. See [docs/semantic-retrieval.md](docs/semantic-retrieval.md) and [specs/25-semantic-retrieval.md](specs/25-semantic-retrieval.md).
+
 ### Advanced
 - **Design Evaluation** — Automated multi-viewport screenshot capture with server and route detection (uses Puppeteer)
 - **Framework Advisor** — Decision tree, framework catalog, comparison matrix, and migration prompts for UI framework selection
@@ -152,6 +184,8 @@ Specs 1–15 are fully implemented and tested. The test plan spec (16) is design
 | Interfaces | CLI Commands, Dashboard | Implemented |
 | Advanced | Design Evaluation, Framework Advisor | Implemented |
 | Wiki | Cross-Project Wiki & Notes | Implemented |
+| Integrations | MCP Server | Implemented |
+| Knowledge | Semantic Retrieval (bugs) | Implemented |
 | Quality | Test Plan | Designed |
 
 ## Installation
