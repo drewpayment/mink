@@ -53,6 +53,15 @@ describe("redactSecrets — masks high-confidence secrets", () => {
     expect(r.text).not.toContain("MIIabc123");
   });
 
+  test("private key without an END footer is still masked (bounded by a blank line)", () => {
+    const truncated =
+      "-----BEGIN RSA PRIVATE KEY-----\n" + "MIIabc123\nmorelines\n" + "\ntrailing prose";
+    const r = redactSecrets(truncated);
+    expect(r.text).toContain("[REDACTED:private-key]");
+    expect(r.text).not.toContain("MIIabc123");
+    expect(r.text).toContain("trailing prose");
+  });
+
   test("bearer token keeps the word Bearer, masks the value", () => {
     const r = redactSecrets(`Authorization: Bearer ${BEARER_VALUE}`);
     expect(r.text).toContain("Bearer");

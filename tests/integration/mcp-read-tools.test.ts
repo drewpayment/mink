@@ -151,6 +151,33 @@ describe("mink_file_skeleton", () => {
     expect(isError).toBe(false);
     expect(text).toContain("File not found");
   });
+
+  test("refuses to read a path outside the project root", async () => {
+    // A traversal path and an absolute path outside cwd are both confined.
+    const traversal = await call("mink_file_skeleton", { path: "../../../../etc/hosts" });
+    expect(traversal.isError).toBe(false);
+    expect(traversal.text).toContain("outside the project root");
+
+    const absolute = await call("mink_file_skeleton", { path: "/etc/hosts" });
+    expect(absolute.text).toContain("outside the project root");
+  });
+
+  test("refuses to skeletonize a file over the size cap", async () => {
+    const big = join(cwd, "big.txt");
+    writeFileSync(big, "a".repeat(2 * 1024 * 1024 + 1)); // > 2 MiB
+    const { text, isError } = await call("mink_file_skeleton", { path: "big.txt" });
+    expect(isError).toBe(false);
+    expect(text).toContain("too large");
+  });
+
+  test("redacts secrets in the returned skeleton/description", async () => {
+    const key = "AKIA" + "IOSFODNN7EXAMPLE";
+    writeFileSync(join(cwd, "leak.txt"), `deploy key ${key} lives here`);
+    const { text, isError } = await call("mink_file_skeleton", { path: "leak.txt" });
+    expect(isError).toBe(false);
+    expect(text).not.toContain(key);
+    expect(text).toContain("[REDACTED:aws-access-key]");
+  });
 });
 
 describe("mink_project_rules", () => {

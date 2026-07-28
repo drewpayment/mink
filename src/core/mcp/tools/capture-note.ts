@@ -92,10 +92,10 @@ export const captureNoteTool: McpTool = {
       updated: now,
       body: safeBody.text,
     });
-    updateVaultIndexForFile(result.filePath, result.content);
-    updateMasterIndex(resolveVaultPath());
-
     const root = resolveVaultPath();
+    updateVaultIndexForFile(result.filePath, result.content);
+    updateMasterIndex(root);
+
     const rel = result.filePath.startsWith(root + "/")
       ? result.filePath.slice(root.length + 1)
       : result.filePath;

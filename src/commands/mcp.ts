@@ -57,6 +57,12 @@ export async function mcp(cwd: string, args: string[]): Promise<void> {
 
   try {
     await server.serve();
+  } catch (err) {
+    // A stdin transport error (e.g. a broken pipe) should end the server
+    // cleanly, not surface as an unhandled rejection out of the CLI dispatcher.
+    process.stderr.write(
+      `[mink mcp] transport error: ${err instanceof Error ? err.message : String(err)}\n`
+    );
   } finally {
     if (!shuttingDown) {
       try {

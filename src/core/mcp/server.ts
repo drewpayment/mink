@@ -65,6 +65,23 @@ export class McpServer {
       );
     }
 
+    // JSON-RPC batch (permitted by the 2024-11-05 revision we advertise): an
+    // array of messages yields an array of responses, omitting notifications.
+    // An empty batch is itself an invalid request.
+    if (Array.isArray(parsed.value)) {
+      if (parsed.value.length === 0) {
+        return serialize(
+          makeError(null, JsonRpcErrorCode.INVALID_REQUEST, "Invalid Request: empty batch")
+        );
+      }
+      const responses = [];
+      for (const item of parsed.value) {
+        const r = await this.protocol.dispatch(item);
+        if (r) responses.push(r);
+      }
+      return responses.length > 0 ? JSON.stringify(responses) : null;
+    }
+
     const response = await this.protocol.dispatch(parsed.value);
     return response ? serialize(response) : null;
   }
@@ -111,6 +128,17 @@ export class McpServer {
       input.on("data", (chunk: string | Buffer) => {
         buffer += typeof chunk === "string" ? chunk : chunk.toString("utf8");
 
+        // Drain complete frames first, so a large chunk carrying many valid
+        // frames is never discarded.
+        let idx: number;
+        while ((idx = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 1);
+          enqueue(line);
+        }
+
+        // Only an unterminated partial remains; trip the guard only when that
+        // single partial frame exceeds the cap.
         if (buffer.length > MAX_FRAME_BYTES) {
           buffer = "";
           write(
@@ -118,14 +146,6 @@ export class McpServer {
               makeError(null, JsonRpcErrorCode.PARSE_ERROR, "Frame exceeds maximum size")
             )
           );
-          return;
-        }
-
-        let idx: number;
-        while ((idx = buffer.indexOf("\n")) !== -1) {
-          const line = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 1);
-          enqueue(line);
         }
       });
 
