@@ -134,6 +134,21 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 - **CLAUDE.md-driven persona** — the bot's behavior is configured by a markdown file in the vault, not code
 - **Unattended mode** — optional `--dangerously-skip-permissions` bypasses terminal prompts so the bot works entirely from Discord
 
+### Integrations
+- **MCP Server** — `mink mcp` runs Mink as a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, exposing this project's state to any MCP-capable assistant as tools. Where the hooks *push* context, the MCP server lets the assistant *pull* exactly what it needs on demand — and write back:
+  - `mink_retrieve` — recover the byte-exact original of a compressed tool output (spec 22)
+  - `mink_recall_bugs` — search bug memory for a query or file, with root cause and fix
+  - `mink_search_wiki` — keyword search across the cross-project vault
+  - `mink_file_skeleton` — a file's signatures/headings with bodies elided, instead of the whole file
+  - `mink_project_rules` — the project's learned preferences, learnings, do-not-repeat, and decisions
+  - `mink_capture_note` / `mink_log_bug` — capture notes and log bugs (secrets redacted before write)
+
+  Hand-rolled JSON-RPC 2.0, zero new dependencies, dual Node/Bun. Point any MCP client at `mink mcp` with the working directory set to your project root. See [docs/mcp-server.md](docs/mcp-server.md) for the full architecture and [specs/24-mcp-server.md](specs/24-mcp-server.md) for the capability contract.
+
+  ```json
+  { "mcpServers": { "mink": { "command": "mink", "args": ["mcp"] } } }
+  ```
+
 ### Advanced
 - **Design Evaluation** — Automated multi-viewport screenshot capture with server and route detection (uses Puppeteer)
 - **Framework Advisor** — Decision tree, framework catalog, comparison matrix, and migration prompts for UI framework selection
@@ -152,6 +167,7 @@ Specs 1–15 are fully implemented and tested. The test plan spec (16) is design
 | Interfaces | CLI Commands, Dashboard | Implemented |
 | Advanced | Design Evaluation, Framework Advisor | Implemented |
 | Wiki | Cross-Project Wiki & Notes | Implemented |
+| Integrations | MCP Server | Implemented |
 | Quality | Test Plan | Designed |
 
 ## Installation
