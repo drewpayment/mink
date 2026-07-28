@@ -11,6 +11,7 @@ import { fileSkeletonTool } from "./file-skeleton";
 import { projectRulesTool } from "./project-rules";
 import { captureNoteTool } from "./capture-note";
 import { logBugTool } from "./log-bug";
+import { contextPackTool } from "./context-pack";
 
 /** Assemble the full tool set. Order here is the order clients see in tools/list. */
 export function buildToolRegistry(): McpTool[] {
@@ -25,5 +26,7 @@ export function buildToolRegistry(): McpTool[] {
     // Phase 3 — write/capture tools (redacted before persistence)
     captureNoteTool,
     logBugTool,
+    // Context pack (spec 26)
+    contextPackTool,
   ];
 }

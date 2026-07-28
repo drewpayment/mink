@@ -26,6 +26,7 @@ export interface GlobalConfig {
   "embeddings.enabled"?: string;
   "embeddings.model"?: string;
   "embeddings.cross-project"?: string;
+  "context.budget-tokens"?: string;
 }
 
 export type ConfigKey = keyof GlobalConfig & string;
@@ -242,6 +243,13 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     default: "false",
     envVar: "MINK_EMBEDDINGS_CROSS_PROJECT",
     description: "Include other registered projects in semantic recall",
+    scope: "shared",
+  },
+  {
+    key: "context.budget-tokens",
+    default: "2000",
+    envVar: "MINK_CONTEXT_BUDGET_TOKENS",
+    description: "Token budget for the `mink context` pack",
     scope: "shared",
   },
 ];
