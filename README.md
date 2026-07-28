@@ -108,6 +108,7 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 - **Bug Memory** — Tracks bugs, fixes, root causes, and tags for searchable history
 - **Action Log** — Human-readable chronological log of all session activity
 - **Waste Detection** — Identifies patterns of token waste (repeated reads, large file scans, etc.)
+- **ROI Report** — `mink report` dollarizes Mink's measured, holdout-verified compression savings at a configurable model's input price, always citing the holdout basis, with the heuristic (index-hit) estimate shown separately and labeled as such. `--json` for machines. See [specs/27-roi-report.md](specs/27-roi-report.md).
 
 ### Automation
 - **Background Scheduler** — Daemon process with cron-based task scheduling, retry logic with exponential backoff, and a dead letter queue for failed tasks
