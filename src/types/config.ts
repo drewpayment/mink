@@ -29,6 +29,8 @@ export interface GlobalConfig {
   "context.budget-tokens"?: string;
   "report.model"?: string;
   "report.input-price"?: string;
+  "redaction.enabled"?: string;
+  "redaction.allowlist"?: string;
 }
 
 export type ConfigKey = keyof GlobalConfig & string;
@@ -266,6 +268,20 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     default: "",
     envVar: "MINK_REPORT_INPUT_PRICE",
     description: "Override input price (USD per 1M tokens) for `mink report`",
+    scope: "shared",
+  },
+  {
+    key: "redaction.enabled",
+    default: "true",
+    envVar: "MINK_REDACTION_ENABLED",
+    description: "Mask secrets/PII before persisting content to disk or sync",
+    scope: "shared",
+  },
+  {
+    key: "redaction.allowlist",
+    default: "",
+    envVar: "MINK_REDACTION_ALLOWLIST",
+    description: "Comma-separated exact values the redactor must never mask",
     scope: "shared",
   },
 ];

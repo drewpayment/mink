@@ -7,7 +7,7 @@ import { createNote } from "../../note-writer";
 import { updateVaultIndexForFile } from "../../note-index";
 import { updateMasterIndex } from "../../note-linker";
 import { isVaultInitialized, isWikiEnabled, resolveVaultPath } from "../../vault";
-import { redactSecrets } from "../../redact";
+import { redactForStorage } from "../../redact";
 import type { NoteCategory } from "../../../types/note";
 import type { McpTool } from "../tool-types";
 import {
@@ -79,8 +79,8 @@ export const captureNoteTool: McpTool = {
       category = categoryArg as NoteCategory;
     }
 
-    const safeBody = redactSecrets(body);
-    const safeTitle = redactSecrets(titleArg ?? deriveTitle(body)).text;
+    const safeBody = redactForStorage(body);
+    const safeTitle = redactForStorage(titleArg ?? deriveTitle(body)).text;
     const redactions = safeBody.redactions;
 
     const now = new Date().toISOString();

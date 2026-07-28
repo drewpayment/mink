@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { redactSecrets } from "../../src/core/redact";
+import { describe, expect, test, afterEach } from "bun:test";
+import { redactForStorage, redactSecrets } from "../../src/core/redact";
 
 // Sample "secrets" are assembled from fragments at runtime so that no full
 // secret literal is ever committed to the repository — otherwise platform
@@ -13,7 +13,9 @@ const JWT = "ey" + "JhbGciOiJIUzI1NiIs" + "." + "eyJzdWIiOiIxMjM0NTY3ODkw" + "."
 const PRIVKEY =
   "-----BEGIN RSA PRIVATE KEY-----\n" + "MIIabc123\nlines\n" + "-----END RSA PRIVATE KEY-----";
 const BEARER_VALUE = "abcdefghijklmnopqrstuvwxyz012345";
-const ASSIGN_VALUE = "sk_" + "live_0123456789abcdef";
+// A generic ≥12-char secret value that matches no provider-specific rule, so
+// only the assignment rule catches it.
+const ASSIGN_VALUE = "abcdef0123456789ABCDEF";
 
 describe("redactSecrets — masks high-confidence secrets", () => {
   test("AWS access key id", () => {
@@ -79,6 +81,76 @@ describe("redactSecrets — masks high-confidence secrets", () => {
   test("counts multiple distinct secrets", () => {
     const r = redactSecrets(`${AWS} and ${"AKIA" + "IOSFODNN7EXAMPLB"}`);
     expect(r.redactions).toBe(2);
+  });
+
+  test("email (PII)", () => {
+    const r = redactSecrets("ping alice@example.com about it");
+    expect(r.text).toContain("[REDACTED:email]");
+    expect(r.text).not.toContain("alice@example.com");
+  });
+
+  test("Stripe secret key", () => {
+    const r = redactSecrets("sk_" + "live_" + "a".repeat(24));
+    expect(r.text).toContain("[REDACTED:stripe-key]");
+  });
+
+  test("OpenAI key", () => {
+    const r = redactSecrets("sk-" + "a".repeat(28));
+    expect(r.text).toContain("[REDACTED:openai-key]");
+  });
+
+  test("npm token", () => {
+    const r = redactSecrets("npm_" + "a".repeat(36));
+    expect(r.text).toContain("[REDACTED:npm-token]");
+  });
+
+  test("Google OAuth token", () => {
+    const r = redactSecrets("ya29." + "a".repeat(40));
+    expect(r.text).toContain("[REDACTED:google-oauth]");
+  });
+});
+
+describe("redactSecrets — allowlist + no false positives", () => {
+  test("an allowlisted value is not masked", () => {
+    const email = "release-bot@example.com";
+    const r = redactSecrets(`from ${email}`, { allowlist: new Set([email]) });
+    expect(r.text).toContain(email);
+    expect(r.redactions).toBe(0);
+  });
+
+  test("a 40-char git SHA is NOT masked", () => {
+    const sha = "a".repeat(40); // hex-like commit hash
+    const r = redactSecrets(`see commit ${sha}`);
+    expect(r.text).toContain(sha);
+    expect(r.redactions).toBe(0);
+  });
+});
+
+describe("redactForStorage — config-aware", () => {
+  afterEach(() => {
+    delete process.env.MINK_REDACTION_ENABLED;
+    delete process.env.MINK_REDACTION_ALLOWLIST;
+  });
+
+  test("redacts by default (enabled)", () => {
+    const r = redactForStorage("key " + "AKIA" + "IOSFODNN7EXAMPLE" + " here");
+    expect(r.text).toContain("[REDACTED:aws-access-key]");
+  });
+
+  test("passes through unchanged when disabled", () => {
+    process.env.MINK_REDACTION_ENABLED = "false";
+    const input = "key " + "AKIA" + "IOSFODNN7EXAMPLE" + " here";
+    const r = redactForStorage(input);
+    expect(r.text).toBe(input);
+    expect(r.redactions).toBe(0);
+  });
+
+  test("honors the configured allowlist", () => {
+    process.env.MINK_REDACTION_ALLOWLIST = "keep@example.com";
+    const r = redactForStorage("mail keep@example.com and drop@evil.com");
+    expect(r.text).toContain("keep@example.com");
+    expect(r.text).toContain("[REDACTED:email]"); // drop@ still masked
+    expect(r.text).not.toContain("drop@evil.com");
   });
 });
 

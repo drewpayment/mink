@@ -4,7 +4,7 @@
 // redactor before persistence (spec 28 seed).
 
 import { BugMemoryRepo } from "../../../repositories/bug-memory-repo";
-import { redactSecrets } from "../../redact";
+import { redactForStorage } from "../../redact";
 import { embedBugs } from "../../embeddings/recall";
 import { resolveEmbeddingProvider } from "../../embeddings/provider";
 import type { McpTool } from "../tool-types";
@@ -42,10 +42,10 @@ export const logBugTool: McpTool = {
     idempotentHint: true,
   },
   async handler(args, ctx) {
-    const errorMessage = redactSecrets(requireString(args, "error")).text;
+    const errorMessage = redactForStorage(requireString(args, "error")).text;
     const filePath = requireString(args, "file");
-    const rootCause = redactSecrets(requireString(args, "rootCause")).text;
-    const fixDescription = redactSecrets(requireString(args, "fix")).text;
+    const rootCause = redactForStorage(requireString(args, "rootCause")).text;
+    const fixDescription = redactForStorage(requireString(args, "fix")).text;
     const lineNumber = optionalPositiveInt(args, "line");
     const tags = optionalStringArray(args, "tags") ?? [];
 
