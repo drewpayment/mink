@@ -37,6 +37,7 @@ Mink is a hidden presence that moves alongside the developer. It has two mission
 | 25 | [Semantic Retrieval](./25-semantic-retrieval.md) | Knowledge |
 | 26 | [Context Pack](./26-context-pack.md) | Core |
 | 27 | [ROI Report](./27-roi-report.md) | Analytics |
+| 28 | [Secret / PII Redaction](./28-redaction.md) | Core |
 
 ## Active Delivery Plans
 

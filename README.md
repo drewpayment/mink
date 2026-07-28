@@ -136,6 +136,9 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 - **CLAUDE.md-driven persona** — the bot's behavior is configured by a markdown file in the vault, not code
 - **Unattended mode** — optional `--dangerously-skip-permissions` bypasses terminal prompts so the bot works entirely from Discord
 
+### Safety
+- **Secret / PII Redaction** — a high-precision redactor masks secrets and PII (private keys, cloud/provider tokens, JWTs, secret-named assignments, emails) at every persistence boundary — recorded bugs and captured notes — so nothing sensitive lands on disk or in a synced git remote, regardless of caller. On by default, allowlist-aware, and it deliberately never masks commit-hash-like hex. See [specs/28-redaction.md](specs/28-redaction.md).
+
 ### Integrations
 - **MCP Server** — `mink mcp` runs Mink as a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, exposing this project's state to any MCP-capable assistant as tools. Where the hooks *push* context, the MCP server lets the assistant *pull* exactly what it needs on demand — and write back:
   - `mink_retrieve` — recover the byte-exact original of a compressed tool output (spec 22)
