@@ -102,6 +102,7 @@ All state lives in `~/.mink/` -- nothing is stored in your project repository.
 ### Intelligent Hooks
 - **Read Intelligence** — Tracks file reads, warns on redundant re-reads, estimates token cost
 - **Write Enforcement** — Enforces learned rules on writes, surfaces past bugs for relevant files
+- **Context Pack** — `mink context` prints a deterministic, cache-friendly project prefix (learned rules + recurring bugs + file skeleton) an assistant can load once and reuse across turns; token-budgeted, with volatile fields below a footer marker so the prefix stays cache-stable. Also an MCP tool (`mink_context_pack`). See [specs/26-context-pack.md](specs/26-context-pack.md).
 
 ### Knowledge & Analytics
 - **Bug Memory** — Tracks bugs, fixes, root causes, and tags for searchable history
