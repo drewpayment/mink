@@ -33,6 +33,7 @@ Mink is a hidden presence that moves alongside the developer. It has two mission
 | 21 | [Multi-Agent Adapter](./21-multi-agent-adapter.md) | Core |
 | 22 | [Tool-Output Compression](./22-tool-output-compression.md) | Hooks |
 | 23 | [TUI Dashboard](./23-tui-dashboard.md) | Interfaces |
+| 24 | [Operation-Log Sync](./24-operation-log-sync.md) | Core |
 
 ## Active Delivery Plans
 
@@ -40,6 +41,7 @@ Transient, implementation-oriented plans — delete once delivered.
 
 - [PLAN.md](./PLAN.md) — Wiring PR #39's preview panels (wiki, capture, sync, discord, daemon, config) to real backends.
 - [PLAN-tool-output-compression.md](./PLAN-tool-output-compression.md) — Delivering spec 22 (tool-output compression) in three phases: measurement, inline compression + reversible cache, structural compressors.
+- [PLAN-oplog-sync.md](./PLAN-oplog-sync.md) — Delivering spec 24 (operation-log sync) in four phases: local-store extraction, oplog dual-write, ingest + migration v4, compaction + hardening.
 
 ## Conventions
 
