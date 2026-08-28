@@ -102,7 +102,7 @@ export function generateFrontmatter(meta: {
   }
 
   if (meta.aliases && meta.aliases.length > 0) {
-    lines.push(`aliases: [${meta.aliases.join(", ")}]`);
+    lines.push(`aliases: [${meta.aliases.map(formatAliasValue).join(", ")}]`);
   }
 
   if (meta.extra) {

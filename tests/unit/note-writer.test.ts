@@ -134,6 +134,19 @@ describe("note-writer", () => {
       expect(result).toContain("aliases: [alias1, alias2]");
     });
 
+    test("quotes YAML-significant characters in aliases", () => {
+      const result = generateFrontmatter({
+        created: "2024-01-01T00:00:00Z",
+        updated: "2024-01-01T00:00:00Z",
+        tags: [],
+        category: "inbox",
+        aliases: ["Auth, Sessions and Tokens", "Chapter 1: Intro", "plain"],
+      });
+      expect(result).toContain(
+        'aliases: ["Auth, Sessions and Tokens", "Chapter 1: Intro", plain]'
+      );
+    });
+
     test("includes extra fields when provided", () => {
       const result = generateFrontmatter({
         created: "2024-01-01T00:00:00Z",
@@ -262,6 +275,43 @@ describe("note-writer", () => {
       });
 
       expect(result.content).not.toContain("aliases:");
+    });
+
+    // The capture path used to join aliases raw, so a comma in the title split
+    // the auto-declared alias into two (losing the real one and minting a
+    // spurious short one) and a colon produced YAML that Obsidian rejects
+    // outright. Assert against a real YAML parse, not a substring, so these
+    // stay honest about what a reader actually sees.
+    test("write-time hygiene: a comma in the title stays inside one alias", () => {
+      const result = createNote({
+        title: "Auth, Sessions and Tokens",
+        category: "inbox",
+        tags: [],
+        created: "2024-01-01T00:00:00Z",
+        updated: "2024-01-01T00:00:00Z",
+        body: "Body text.",
+      });
+
+      const parsed = Bun.YAML.parse(
+        result.content.slice(4, result.content.indexOf("\n---", 3))
+      ) as { aliases: string[] };
+      expect(parsed.aliases).toEqual(["Auth, Sessions and Tokens"]);
+    });
+
+    test("write-time hygiene: a colon in the title yields valid YAML and an intact alias", () => {
+      const result = createNote({
+        title: "Chapter 1: Intro",
+        category: "inbox",
+        tags: [],
+        created: "2024-01-01T00:00:00Z",
+        updated: "2024-01-01T00:00:00Z",
+        body: "Body text.",
+      });
+
+      const parsed = Bun.YAML.parse(
+        result.content.slice(4, result.content.indexOf("\n---", 3))
+      ) as { aliases: string[] };
+      expect(parsed.aliases).toEqual(["Chapter 1: Intro"]);
     });
 
     test("indexes the note into the search DB so it's findable via recall immediately", () => {
