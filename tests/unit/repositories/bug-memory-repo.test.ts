@@ -138,6 +138,49 @@ describe("BugMemoryRepo", () => {
     expect(repo.searchBugs("   ")).toEqual([]);
   });
 
+  test("searchBugs ranks the stronger bm25 match first with a higher score", () => {
+    const repo = new BugMemoryRepo(openProjectDb(cwd));
+    // Filler entries WITHOUT the query term so bm25's IDF is non-degenerate
+    // (with nq ≈ N the IDF collapses to ~0 and both formulas agree — the
+    // historical inversion bug was invisible at that corpus size).
+    repo.add(buildEntry({ errorMessage: "ENOENT: no such file", filePath: "a.ts", tags: ["fs"] }));
+    repo.add(buildEntry({ errorMessage: "EACCES: permission denied", filePath: "b.ts", tags: ["fs"] }));
+    repo.add(buildEntry({ errorMessage: "Segfault in native addon", filePath: "c.ts", tags: ["native"] }));
+    const weak = repo.add(buildEntry({
+      errorMessage:
+        "Request pipeline failed after several retries because the upstream redis instance was briefly unreachable during deploy",
+      filePath: "weak.ts",
+      tags: ["network"],
+    }));
+    const strong = repo.add(buildEntry({
+      errorMessage: "redis connection refused: redis pool exhausted",
+      filePath: "strong.ts",
+      tags: ["redis"],
+    }));
+
+    const hits = repo.searchBugs("redis");
+    expect(hits.length).toBe(2);
+    // Higher term density / shorter field must rank first — the inverted
+    // 1/(1+abs(bm25)) normalization sorted it LAST.
+    expect(hits[0].entry.id).toBe(strong.id);
+    expect(hits[1].entry.id).toBe(weak.id);
+    expect(hits[0].score).toBeGreaterThan(hits[1].score);
+  });
+
+  test("searchBugs keeps tag-corroborated matches when bm25 degenerates on a tiny corpus", () => {
+    const repo = new BugMemoryRepo(openProjectDb(cwd));
+    // Single entry: IDF ~ 0, so ftsScore ~ 0. The corroboration guard —
+    // not the absolute score — must decide keep/drop.
+    const a = repo.add(buildEntry({
+      errorMessage: "Network call failed",
+      tags: ["fetch", "timeout"],
+    }));
+    const hits = repo.searchBugs("timeout");
+    expect(hits.length).toBe(1);
+    expect(hits[0].entry.id).toBe(a.id);
+    expect(hits[0].matchReasons).toContain("tags");
+  });
+
   test("searchBugs survives queries with FTS-significant characters", () => {
     const repo = new BugMemoryRepo(openProjectDb(cwd));
     repo.add(buildEntry({ errorMessage: "Cannot find module 'foo'" }));

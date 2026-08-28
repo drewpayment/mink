@@ -1,30 +1,20 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from "fs";
+import { describe, expect, test, beforeEach } from "bun:test";
+import { writeFileSync, rmSync, existsSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
 import { init } from "../../src/commands/init";
 import { refreshHooksIfStale, refreshProjectHooks } from "../../src/core/hook-refresh";
 import { safeReadJson, atomicWriteJson } from "../../src/core/fs-utils";
 import { projectMetaPath } from "../../src/core/paths";
 import { getInstallInfo } from "../../src/core/self-update";
+import { useMinkFixture } from "../helpers/mink-fixture";
 
 describe("hook self-heal (refreshProjectHooks)", () => {
+  const fx = useMinkFixture("mink-refresh");
   let cwd: string;
-  let minkRoot: string;
-  const prevRoot = process.env.MINK_ROOT_OVERRIDE;
 
   beforeEach(() => {
-    cwd = mkdtempSync(join(tmpdir(), "mink-refresh-cwd-"));
-    minkRoot = mkdtempSync(join(tmpdir(), "mink-refresh-root-"));
-    process.env.MINK_ROOT_OVERRIDE = minkRoot;
+    cwd = fx.current.cwd;
     writeFileSync(join(cwd, "package.json"), JSON.stringify({ name: "t" }));
-  });
-
-  afterEach(() => {
-    rmSync(cwd, { recursive: true, force: true });
-    rmSync(minkRoot, { recursive: true, force: true });
-    if (prevRoot === undefined) delete process.env.MINK_ROOT_OVERRIDE;
-    else process.env.MINK_ROOT_OVERRIDE = prevRoot;
   });
 
   const meta = () => safeReadJson(projectMetaPath(cwd)) as Record<string, unknown> | null;

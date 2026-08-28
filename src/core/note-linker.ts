@@ -2,6 +2,7 @@ import { join } from "path";
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { atomicWriteText, safeAppendText } from "./fs-utils";
 import { vaultRoot, vaultMasterIndexPath } from "./vault";
+import { collectAllMarkdown } from "./note-index";
 import type { VaultIndex } from "../types/note";
 
 const WIKILINK_RE = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
@@ -16,9 +17,69 @@ export function extractWikilinks(content: string): string[] {
   return [...new Set(links)];
 }
 
+export interface InsertWikilinksOptions {
+  // Vault root to scan for basename collisions. When omitted, links are
+  // inserted bare (old behavior) — callers that care about link hygiene
+  // (write-time auto-linking) should pass the vault root.
+  vaultRoot?: string;
+  // Vault-relative path of the note currently being written. When multiple
+  // basename matches exist, a match that lives in the same directory as
+  // this note is preferred before falling back to recency — mirrors `mink
+  // wiki doctor`'s canonicalization heuristic (a sibling note in the same
+  // project/area is far more likely to be what the author meant than an
+  // unrelated note elsewhere that merely happens to have been edited more
+  // recently).
+  sourcePath?: string;
+}
+
+// Find every note in the vault whose basename (filename minus .md) matches
+// `target`, case-insensitively. Used to detect the "65 duplicated
+// basenames" ambiguity documented in the retrieval plan (many
+// projects/*/README.md, overview.md, etc.) before inserting a bare
+// wikilink that would resolve non-deterministically.
+function findBasenameMatches(target: string, root: string): string[] {
+  const targetLower = target.trim().toLowerCase();
+  if (!targetLower) return [];
+  const matches: string[] = [];
+  for (const file of collectAllMarkdown(root)) {
+    const base = file.relativePath.split("/").pop()!.replace(/\.md$/i, "");
+    if (base.toLowerCase() === targetLower) matches.push(file.relativePath);
+  }
+  return matches;
+}
+
+function dirOf(relPath: string): string {
+  const idx = relPath.lastIndexOf("/");
+  return idx === -1 ? "" : relPath.slice(0, idx);
+}
+
+// Pick the most likely intended target among several notes that share a
+// basename: prefer one in the same directory as the note being written
+// (a sibling is far more likely to be "the" overview/README the author
+// meant than a same-named note in an unrelated project/area), then fall
+// back to the most recently modified match when there's no source
+// directory to compare against, or no same-directory match exists.
+function chooseAmbiguousMatch(matches: string[], root: string, sourcePath?: string): string {
+  const withMeta = matches.map((relPath) => ({
+    relPath,
+    mtimeMs: statSync(join(root, relPath)).mtimeMs,
+  }));
+
+  if (sourcePath) {
+    const sourceDir = dirOf(sourcePath);
+    const sameDir = withMeta
+      .filter((m) => dirOf(m.relPath) === sourceDir)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    if (sameDir.length > 0) return sameDir[0].relPath;
+  }
+
+  return withMeta.sort((a, b) => b.mtimeMs - a.mtimeMs)[0].relPath;
+}
+
 export function insertWikilinks(
   content: string,
-  targets: string[]
+  targets: string[],
+  opts: InsertWikilinksOptions = {}
 ): string {
   let result = content;
   for (const target of targets) {
@@ -29,7 +90,22 @@ export function insertWikilinks(
     const body = result.slice(fmEnd);
     // Replace first occurrence of the target text (case-insensitive, word boundary)
     const re = new RegExp(`\\b(${escapeRegex(target)})\\b`, "i");
-    const replaced = body.replace(re, `[[$1]]`);
+
+    // When multiple notes in the vault share this basename, a bare
+    // [[target]] link is ambiguous — Obsidian and mink's own wikilink
+    // resolver would both have to guess. Emit a path-qualified
+    // [[relative/path|displayed text]] link instead so it resolves to a
+    // specific note regardless of how many others share the name.
+    let replacement = "[[$1]]";
+    if (opts.vaultRoot) {
+      const matches = findBasenameMatches(target, opts.vaultRoot);
+      if (matches.length > 1) {
+        const chosen = chooseAmbiguousMatch(matches, opts.vaultRoot, opts.sourcePath).replace(/\.md$/i, "");
+        replacement = `[[${chosen}|$1]]`;
+      }
+    }
+
+    const replaced = body.replace(re, replacement);
     if (replaced !== body) {
       result = result.slice(0, fmEnd) + replaced;
     }

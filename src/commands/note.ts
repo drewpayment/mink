@@ -15,11 +15,11 @@ import {
 } from "../core/note-writer";
 import {
   updateVaultIndexForFile,
-  searchVaultIndex,
   getRecentNotes,
   loadVaultIndex,
 } from "../core/note-index";
 import { updateMasterIndex } from "../core/note-linker";
+import { recall as recallQuery } from "../core/wiki-search";
 import type { NoteCategory, NoteMetadata } from "../types/note";
 
 export async function note(
@@ -234,13 +234,22 @@ function noteList(args: string[]): void {
   }
 }
 
+// Deprecated — delegates to the same FTS5 recall engine as `mink recall`
+// (real full-text over note bodies, not just title/tags/description
+// substring matching) so this alias stays useful instead of silently
+// diverging. Kept for muscle memory; prefer `mink recall` directly, which
+// also has --json/--project/--tag/--category/--since.
 function noteSearch(term: string): void {
   if (!term.trim()) {
     console.error("Usage: mink note search <term>");
     process.exit(1);
   }
 
-  const results = searchVaultIndex(term);
+  console.error(
+    "[mink] 'mink note search' is deprecated — use 'mink recall' for full-text search across note bodies."
+  );
+
+  const results = recallQuery(term, { limit: 20 });
 
   if (results.length === 0) {
     console.log(`[mink] no notes matching "${term}"`);
@@ -250,18 +259,12 @@ function noteSearch(term: string): void {
   console.log(`[mink] ${results.length} notes matching "${term}":`);
   console.log();
 
-  for (const entry of results.slice(0, 20)) {
-    const tags =
-      entry.tags.length > 0 ? ` [${entry.tags.join(", ")}]` : "";
-    console.log(`  ${entry.category.padEnd(10)} ${entry.title}${tags}`);
-    if (entry.description) {
-      console.log(`             ${entry.description}`);
+  for (const r of results) {
+    const tags = r.tags.length > 0 ? ` [${r.tags.join(", ")}]` : "";
+    console.log(`  ${r.category.padEnd(10)} ${r.title}${tags}`);
+    if (r.snippet) {
+      console.log(`             ${r.snippet}`);
     }
-    console.log(`             ${entry.filePath}`);
-  }
-
-  if (results.length > 20) {
-    console.log();
-    console.log(`  ... and ${results.length - 20} more results`);
+    console.log(`             ${r.path}`);
   }
 }

@@ -142,12 +142,15 @@ export class BugMemoryRepo {
 
   // ── Search (FTS5) ──────────────────────────────────────────────────────
 
-  // Preserves the v1 contract: scores in (0, 1+) range, 0.3 threshold,
-  // file-path/tag boost. FTS5's bm25 returns negative scores (lower =
-  // better), so we normalize via `1 / (1 + abs(bm25))` to land in (0, 1].
+  // Preserves the v1 contract: scores in [0, 1+) range, higher = better,
+  // file-path/tag boost. FTS5's bm25 returns negative values where MORE
+  // negative = better match, so we negate before squashing into [0, 1) —
+  // `abs()` here would invert the ranking (best match scored lowest).
   // The boost for same-file matches stays at +0.2 and the same false-
-  // positive guards (require file-path or tag overlap when borderline)
-  // apply.
+  // positive guard (require file-path or tag overlap when borderline)
+  // applies. Note: with only a handful of bugs recorded, bm25's IDF
+  // degenerates toward 0 for all matches, so the guard's corroboration
+  // check — not the absolute score — is what keeps/drops a match.
   searchBugs(
     query: string,
     options?: { filePath?: string }
@@ -180,8 +183,11 @@ export class BugMemoryRepo {
       const entry = this.lookup(row.bug_id);
       if (!entry) continue;
 
-      // bm25 is negative; smaller magnitude == better match.
-      const ftsScore = 1 / (1 + Math.abs(row.bm25));
+      // bm25 is negative; MORE negative == better match. Negate, then
+      // squash into [0, 1) monotonically (same shape as wiki-search's
+      // bm25ToScore).
+      const goodness = -row.bm25;
+      const ftsScore = goodness <= 0 ? 0 : goodness / (1 + goodness);
       const matchReasons: string[] = ["fts"];
 
       // Exact substring boost (matches v1 behavior).
@@ -196,7 +202,10 @@ export class BugMemoryRepo {
 
       // Same false-positive guard as v1: when the score is borderline
       // (<= 0.3), only keep matches that also satisfy file-path or
-      // tag-overlap.
+      // tag-overlap. This is the sole keep/drop decision — a second
+      // `score > 0.3` check here would drop tag-corroborated matches
+      // whenever the corpus is small enough for bm25's IDF to degenerate
+      // to ~0 (tags add a match reason, not score).
       if (score <= 0.3 && !fileMatch && !tagMatch) continue;
 
       if (fileMatch) {
@@ -205,9 +214,7 @@ export class BugMemoryRepo {
       }
       if (tagMatch) matchReasons.push("tags");
 
-      if (score > 0.3) {
-        results.push({ entry, score, matchReasons });
-      }
+      results.push({ entry, score, matchReasons });
     }
 
     return results.sort((a, b) => b.score - a.score);
