@@ -50,8 +50,9 @@ import { resolveConfigValue } from "./global-config";
 import { resolveVaultPath, isVaultInitialized } from "./vault";
 import type { ChannelPlatform } from "../types/channel";
 import { loadVaultIndex, getRecentNotes, updateVaultIndexForFile } from "./note-index";
-import { extractWikilinks } from "./note-linker";
 import { createNote, appendToDaily, ingestFile } from "./note-writer";
+import { parseFrontmatter } from "./frontmatter";
+import { backlinksForNote } from "./wiki-search";
 import { readdirSync, readFileSync as readFileSyncFS, existsSync as fsExistsSync } from "fs";
 import { join, resolve, normalize, sep } from "path";
 import type { VaultIndexEntry, NoteCategory } from "../types/note";
@@ -480,6 +481,10 @@ const WIKI_TREE_EXCLUDES = new Set([
   ".git",
   ".mink-vault.json",
   ".mink-index.json",
+  ".mink-search.db",
+  ".mink-search.db-wal",
+  ".mink-search.db-shm",
+  ".mink-search.db-journal",
   "node_modules",
 ]);
 const DEFAULT_RECENT_LIMIT = 25;
@@ -605,34 +610,6 @@ export function loadWikiPanel(opts: WikiPanelOptions = {}): WikiPanelPayload {
   };
 }
 
-function parseFrontmatter(content: string): { frontmatter: Record<string, unknown>; body: string } {
-  if (!content.startsWith("---")) return { frontmatter: {}, body: content };
-  const end = content.indexOf("\n---", 3);
-  if (end === -1) return { frontmatter: {}, body: content };
-  const raw = content.slice(3, end).trim();
-  const body = content.slice(end + 4).replace(/^\n/, "");
-  const frontmatter: Record<string, unknown> = {};
-  // Minimal YAML parser — supports key: value and key: [a, b] — good enough for note FM.
-  for (const rawLine of raw.split("\n")) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
-    const key = line.slice(0, colonIdx).trim();
-    const valRaw = line.slice(colonIdx + 1).trim();
-    if (valRaw.startsWith("[") && valRaw.endsWith("]")) {
-      frontmatter[key] = valRaw
-        .slice(1, -1)
-        .split(",")
-        .map((s) => s.trim().replace(/^["']|["']$/g, ""))
-        .filter(Boolean);
-    } else {
-      frontmatter[key] = valRaw.replace(/^["']|["']$/g, "");
-    }
-  }
-  return { frontmatter, body };
-}
-
 function resolveVaultRelativePath(relPath: string): string | null {
   if (!relPath || relPath.includes("\0")) return null;
   const root = resolveVaultPath();
@@ -655,30 +632,18 @@ export function loadWikiNote(relPath: string): WikiNotePayload | null {
   }
   const { frontmatter, body } = parseFrontmatter(content);
 
-  // Backlinks: look for wikilinks referencing this note's title or filename.
-  const index = loadVaultIndex();
-  const thisEntry = index.entries[relPath];
-  const targetTitle = thisEntry?.title ?? relPath.replace(/\.md$/, "");
-  const targetBasename = relPath.replace(/\.md$/, "").split("/").pop() ?? "";
-
-  const backlinks: Array<{ path: string; title: string }> = [];
-  for (const entry of Object.values(index.entries)) {
-    if (entry.filePath === relPath) continue;
-    const absSource = resolveVaultRelativePath(entry.filePath);
-    if (!absSource) continue;
-    let sourceContent: string;
-    try {
-      sourceContent = readFileSyncFS(absSource, "utf-8");
-    } catch {
-      continue;
-    }
-    const links = extractWikilinks(sourceContent);
-    const matches = links.some(
-      (l) => l === targetTitle || l === targetBasename || l === relPath,
-    );
-    if (matches) {
-      backlinks.push({ path: entry.filePath, title: entry.title });
-    }
+  // Backlinks come from the SQLite search index (notes + links tables) rather
+  // than re-reading every markdown file in the vault on every note view — see
+  // wiki-search.ts. backlinksForNote() runs a cheap mtime catch-up sweep
+  // first so backlinks stay correct after external edits (Obsidian, git
+  // sync) without a manual reindex.
+  let backlinks: Array<{ path: string; title: string }>;
+  try {
+    backlinks = backlinksForNote(relPath);
+  } catch {
+    // Search index unavailable (e.g. read-only filesystem) — degrade to no
+    // backlinks rather than failing the whole note view.
+    backlinks = [];
   }
 
   return { path: relPath, frontmatter, body, backlinks };

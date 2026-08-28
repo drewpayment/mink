@@ -20,6 +20,12 @@ import {
   vaultIndexStaleness,
 } from "../core/note-index";
 import { updateMasterIndex } from "../core/note-linker";
+import {
+  reindexVault,
+  resolveNoteArg,
+  backlinksForNote,
+  relatedForNote,
+} from "../core/wiki-search";
 import type { VaultManifest, NoteCategory } from "../types/note";
 
 export async function wiki(
@@ -39,6 +45,15 @@ export async function wiki(
     case "scan":
       wikiRebuildIndex();
       break;
+    case "reindex":
+      wikiReindex();
+      break;
+    case "backlinks":
+      wikiBacklinks(args.slice(1));
+      break;
+    case "related":
+      wikiRelated(args.slice(1));
+      break;
     case "organize":
       wikiOrganize();
       break;
@@ -51,17 +66,26 @@ export async function wiki(
     case "links":
       wikiLinks();
       break;
+    case "doctor":
+      await wikiDoctor(args.slice(1));
+      break;
     default:
       console.log("Usage: mink wiki <command>");
       console.log();
       console.log("  init                Initialize the notes/wiki vault");
       console.log("  status              Show vault statistics");
-      console.log("  rebuild-index       Full rescan and reindex of vault (alias: scan)");
+      console.log("  rebuild-index       Full rescan and reindex of the JSON vault index (alias: scan)");
       console.log("  scan                Alias for rebuild-index");
+      console.log("  reindex             Full rebuild of the FTS5 search index used by 'mink recall'");
+      console.log("  backlinks <note> [--json]   Notes that link to <note>");
+      console.log("  related <note> [--json]     Backlinks + outlinks + shared-tag neighbors");
       console.log("  organize            List inbox notes needing categorization");
       console.log("  link <path> [name]  Symlink external notes into the vault");
       console.log("  unlink <name>       Remove a symlinked directory from the vault");
       console.log("  links               List all linked directories");
+      console.log("  doctor [--fix] [--dry-run]");
+      console.log("                      Audit link hygiene and test pollution.");
+      console.log("                      --fix quarantines/repairs; --fix --dry-run previews.");
       break;
   }
 }
@@ -248,6 +272,105 @@ function wikiRebuildIndex(): void {
   console.log(`  indexed ${index.totalNotes} notes`);
 }
 
+// The search index is fully derived from the vault's own markdown, so
+// core/wiki-search.ts's query functions already attempt a delete + rebuild
+// on a thrown (e.g. corrupted-index) error before giving up. This is the
+// CLI-layer half of that: if they still throw after that recovery attempt,
+// print the clean message they constructed and exit — never an uncaught
+// stack trace for a corrupted index.
+function runOrExitOnCorruption<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (err) {
+    console.error(`[mink] ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
+
+function wikiReindex(): void {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    return;
+  }
+
+  console.log("[mink] rebuilding search index...");
+  const { indexed } = runOrExitOnCorruption(() => reindexVault());
+  console.log(`  indexed ${indexed} notes into the FTS5 search index (used by 'mink recall')`);
+}
+
+function hasJsonFlag(args: string[]): boolean {
+  return args.includes("--json");
+}
+
+function resolveNoteArgOrExit(args: string[]): string {
+  const positional = args.find((a) => !a.startsWith("--"));
+  if (!positional) {
+    console.error("Usage: mink wiki backlinks|related <note> [--json]");
+    console.error("  <note> may be a vault-relative path or an exact note title.");
+    process.exit(1);
+  }
+  const resolved = runOrExitOnCorruption(() => resolveNoteArg(positional));
+  if (!resolved) {
+    console.error(`[mink] no note found matching "${positional}"`);
+    process.exit(1);
+  }
+  return resolved;
+}
+
+function wikiBacklinks(args: string[]): void {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    return;
+  }
+
+  const path = resolveNoteArgOrExit(args);
+  const backlinks = runOrExitOnCorruption(() => backlinksForNote(path));
+
+  if (hasJsonFlag(args)) {
+    console.log(JSON.stringify({ note: path, backlinks }, null, 2));
+    return;
+  }
+
+  if (backlinks.length === 0) {
+    console.log(`[mink] no backlinks to ${path}`);
+    return;
+  }
+
+  console.log(`[mink] ${backlinks.length} backlink${backlinks.length === 1 ? "" : "s"} to ${path}:`);
+  console.log();
+  for (const b of backlinks) {
+    console.log(`  ${b.title}`);
+    console.log(`    ${b.path}`);
+  }
+}
+
+function wikiRelated(args: string[]): void {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    return;
+  }
+
+  const path = resolveNoteArgOrExit(args);
+  const related = runOrExitOnCorruption(() => relatedForNote(path));
+
+  if (hasJsonFlag(args)) {
+    console.log(JSON.stringify({ note: path, related }, null, 2));
+    return;
+  }
+
+  if (related.length === 0) {
+    console.log(`[mink] no related notes for ${path}`);
+    return;
+  }
+
+  console.log(`[mink] ${related.length} note${related.length === 1 ? "" : "s"} related to ${path}:`);
+  console.log();
+  for (const r of related) {
+    console.log(`  ${r.title}  (${r.reason}, overlap ${r.overlap})`);
+    console.log(`    ${r.path}`);
+  }
+}
+
 function wikiOrganize(): void {
   if (!isVaultInitialized()) {
     console.log("[mink] no vault initialized");
@@ -360,6 +483,33 @@ function wikiLinks(): void {
   for (const link of links) {
     console.log(`  ${link.name} -> ${link.target}`);
     console.log(`    linked: ${link.linkedAt}`);
+  }
+}
+
+async function wikiDoctor(args: string[]): Promise<void> {
+  if (!isVaultInitialized()) {
+    console.log("[mink] no vault initialized");
+    console.log("  Run 'mink wiki init' first.");
+    return;
+  }
+
+  const fix = args.includes("--fix");
+  const dryRun = args.includes("--dry-run");
+  if (dryRun && !fix) {
+    console.log("[mink] note: --dry-run only has an effect together with --fix; running audit only.");
+  }
+
+  const { auditVault, applyDoctorFixes, formatDoctorReport, formatFixResult } = await import(
+    "../core/wiki-doctor"
+  );
+
+  const report = auditVault();
+  console.log(formatDoctorReport(report));
+
+  if (fix) {
+    const result = applyDoctorFixes(report, { dryRun });
+    console.log();
+    console.log(formatFixResult(result));
   }
 }
 

@@ -5,7 +5,23 @@ import { atomicWriteText, safeAppendText } from "./fs-utils";
 import { categoryToDir, vaultDailyDir, vaultTemplates } from "./vault";
 import { loadTemplate } from "./vault-templates";
 import { getOrCreateDeviceId } from "./device";
+import { indexNoteFile } from "./wiki-search";
 import type { NoteMetadata, NoteFrontmatter, NoteCategory } from "../types/note";
+
+// Every write path below calls this right after the file lands on disk so
+// the FTS5 search index (mink recall, wiki backlinks/related) never drifts
+// from what's actually in the vault. Failures here must never break note
+// capture itself — worst case a note is briefly missing from `mink recall`
+// until the next mtime catch-up sweep repairs it.
+function indexAfterWrite(filePath: string, content: string): void {
+  try {
+    indexNoteFile(filePath, content);
+  } catch (err) {
+    console.warn(
+      `[mink] search index update failed for ${filePath}: ${(err as Error).message}`
+    );
+  }
+}
 
 const MAX_COLLISION_ATTEMPTS = 4;
 
@@ -86,7 +102,7 @@ export function generateFrontmatter(meta: {
   }
 
   if (meta.aliases && meta.aliases.length > 0) {
-    lines.push(`aliases: [${meta.aliases.join(", ")}]`);
+    lines.push(`aliases: [${meta.aliases.map(formatAliasValue).join(", ")}]`);
   }
 
   if (meta.extra) {
@@ -107,6 +123,14 @@ export function createNote(meta: NoteMetadata): {
   const slug = slugifyTitle(meta.title);
   const dir = categoryToDir(meta.category, meta.projectSlug);
 
+  // Write-time hygiene (phase 1 of the retrieval plan): files are always
+  // saved by slug, but notes get linked by display title. Auto-declaring the
+  // title as an alias means a `[[Display Title]]` wikilink resolves even
+  // though the file on disk is `display-title.md` — this is what keeps
+  // links from going dead the moment someone types the natural-language
+  // title instead of the exact slug.
+  const aliases = slug !== meta.title ? [meta.title] : undefined;
+
   let content: string;
 
   if (meta.template) {
@@ -117,23 +141,25 @@ export function createNote(meta: NoteMetadata): {
       updated: now,
       date: now.split("T")[0],
     });
-    content = rendered ?? buildNoteContent(meta, now);
+    content = rendered ?? buildNoteContent(meta, now, aliases);
   } else {
-    content = buildNoteContent(meta, now);
+    content = buildNoteContent(meta, now, aliases);
   }
 
   const filePath = resolveUniqueNotePath(dir, slug, content);
   atomicWriteText(filePath, content);
+  indexAfterWrite(filePath, content);
   return { filePath, content };
 }
 
-function buildNoteContent(meta: NoteMetadata, now: string): string {
+function buildNoteContent(meta: NoteMetadata, now: string, aliases?: string[]): string {
   const frontmatter = generateFrontmatter({
     created: now,
     updated: now,
     tags: meta.tags,
     category: meta.category,
     sourceProject: meta.sourceProject,
+    aliases,
   });
 
   return `${frontmatter}
@@ -142,6 +168,82 @@ function buildNoteContent(meta: NoteMetadata, now: string): string {
 
 ${meta.body}
 `;
+}
+
+// Inserts (or extends) an `aliases:` line in an existing note's frontmatter
+// without rewriting anything else — used by `mink wiki doctor --fix` to
+// backfill aliases on notes whose title/H1 differs from their filename slug.
+// Preserves every other frontmatter line verbatim (key order, quoting style,
+// unknown custom fields) so re-running the doctor is a byte-for-byte no-op
+// once aliases exist.
+export function upsertFrontmatterAliases(
+  content: string,
+  aliases: string[]
+): string {
+  const firstLineEnd = content.indexOf("\n");
+  if (firstLineEnd === -1) return content;
+  // Require the first line to be *exactly* "---" (mind a trailing \r on
+  // CRLF files) — content.startsWith("---") alone also matches a "----"
+  // rule or a "---foo" line, and more importantly would treat a markdown
+  // thematic break at the top of a body as frontmatter, splicing aliases
+  // into prose. Trimmed comparison rejects both.
+  if (content.slice(0, firstLineEnd).trim() !== "---") return content;
+  const closeIdx = content.indexOf("\n---", firstLineEnd);
+  if (closeIdx === -1) return content;
+
+  const fmBody = content.slice(firstLineEnd + 1, closeIdx);
+  const rest = content.slice(closeIdx); // "\n---\n\n# Title..."
+  // Strip a trailing \r per line so CRLF input normalizes to LF in the
+  // frontmatter block we rebuild (the untouched body after `rest` keeps
+  // whatever line endings it already had).
+  const lines = fmBody.split("\n").map((l) => l.replace(/\r$/, ""));
+
+  // A "---" thematic break followed by ordinary prose (no `key:` lines)
+  // isn't frontmatter either — bail rather than guess.
+  if (!lines.some((l) => /^\S+:/.test(l))) return content;
+
+  const aliasLineIdx = lines.findIndex((l) => /^aliases:\s*\[/.test(l));
+
+  if (aliasLineIdx !== -1) {
+    // Merge with the existing inline array, de-duping case-insensitively.
+    const match = lines[aliasLineIdx].match(/^aliases:\s*\[(.*)\]\s*$/);
+    const existing = match
+      ? match[1]
+          .split(",")
+          .map((a) => a.trim().replace(/^["']|["']$/g, ""))
+          .filter(Boolean)
+      : [];
+    const merged = [...existing];
+    const seen = new Set(existing.map((a) => a.toLowerCase()));
+    for (const alias of aliases) {
+      if (!seen.has(alias.toLowerCase())) {
+        seen.add(alias.toLowerCase());
+        merged.push(alias);
+      }
+    }
+    lines[aliasLineIdx] = `aliases: [${merged.map(formatAliasValue).join(", ")}]`;
+  } else {
+    lines.push(`aliases: [${aliases.map(formatAliasValue).join(", ")}]`);
+  }
+
+  return `---\n${lines.join("\n")}${rest}`;
+}
+
+// YAML flow-sequence values need quoting whenever they contain a character
+// that's structurally significant inside `[a, b, c]` — not just the comma/
+// bracket/quote set tags happen to avoid in practice. In particular a bare
+// ": " (or a trailing ":") inside a flow scalar reopens it as a nested
+// mapping (`aliases: [Chapter 1: Intro]` parses as `Chapter 1` mapping to
+// `Intro`, not a single string) — proven with exactly that title. Quote
+// whenever the value contains any YAML flow/indicator character, starts
+// with a flow-significant prefix, or has leading/trailing whitespace.
+function formatAliasValue(value: string): string {
+  const needsQuoting =
+    value === "" ||
+    value !== value.trim() ||
+    /[,\[\]{}:#&*!|>'"%@`]/.test(value) ||
+    /^[-?]\s|^[-?]$/.test(value);
+  return needsQuoting ? JSON.stringify(value) : value;
 }
 
 export function appendToDaily(date: string, content: string): string {
@@ -183,6 +285,9 @@ ${content}
     atomicWriteText(filePath, noteContent);
   }
 
+  // Re-read so an append (which only writes a fragment) still indexes the
+  // full current file content, not just the fragment just appended.
+  indexAfterWrite(filePath, readFileSync(filePath, "utf-8"));
   return filePath;
 }
 
@@ -206,6 +311,8 @@ export function ingestFile(
       .split("/")
       .pop()!
       .replace(/\.md$/, "");
+
+  const slug = slugifyTitle(title);
 
   // Check if file already has frontmatter
   const hasFrontmatter = raw.startsWith("---");
@@ -231,19 +338,23 @@ export function ingestFile(
       content = raw;
     }
   } else {
+    // Same write-time alias hygiene as createNote(): the file lands at its
+    // slug, so declare the extracted title as an alias when the two differ.
+    const aliases = slug !== title ? [title] : undefined;
     const frontmatter = generateFrontmatter({
       created: now,
       updated: now,
       tags: meta.tags ?? [],
       category: meta.category,
       sourceProject: meta.sourceProject,
+      aliases,
     });
     content = `${frontmatter}\n\n${raw}`;
   }
 
-  const slug = slugifyTitle(title);
   const dir = categoryToDir(meta.category, meta.projectSlug);
   const filePath = resolveUniqueNotePath(dir, slug, content);
   atomicWriteText(filePath, content);
+  indexAfterWrite(filePath, content);
   return { filePath, content };
 }

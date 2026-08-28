@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { rmSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync } from "fs";
+import { rmSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, utimesSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -119,6 +119,92 @@ TypeScript is great.`;
       const content = "Some content.";
       const result = insertWikilinks(content, []);
       expect(result).toBe(content);
+    });
+
+    describe("ambiguous basename disambiguation (write-time hygiene)", () => {
+      let vaultPath: string;
+
+      beforeEach(() => {
+        vaultPath = join(tempDir, "vault");
+        mkdirSync(join(vaultPath, "projects", "alpha"), { recursive: true });
+        mkdirSync(join(vaultPath, "projects", "beta"), { recursive: true });
+      });
+
+      test("emits a path-qualified link when multiple notes share the target's basename", () => {
+        writeFileSync(join(vaultPath, "projects", "alpha", "overview.md"), "# Alpha overview\n");
+        writeFileSync(join(vaultPath, "projects", "beta", "overview.md"), "# Beta overview\n");
+
+        const content = "See the overview for details.";
+        const result = insertWikilinks(content, ["overview"], { vaultRoot: vaultPath });
+
+        expect(result).toMatch(/\[\[projects\/(alpha|beta)\/overview\|overview\]\]/);
+      });
+
+      test("emits a bare link when only one note has that basename", () => {
+        writeFileSync(join(vaultPath, "projects", "alpha", "overview.md"), "# Alpha overview\n");
+
+        const content = "See the overview for details.";
+        const result = insertWikilinks(content, ["overview"], { vaultRoot: vaultPath });
+
+        expect(result).toContain("[[overview]]");
+        expect(result).not.toContain("|overview]]");
+      });
+
+      test("without vaultRoot, falls back to the old bare-link behavior even with duplicates on disk", () => {
+        writeFileSync(join(vaultPath, "projects", "alpha", "overview.md"), "# Alpha overview\n");
+        writeFileSync(join(vaultPath, "projects", "beta", "overview.md"), "# Beta overview\n");
+
+        const content = "See the overview for details.";
+        const result = insertWikilinks(content, ["overview"]);
+
+        expect(result).toContain("[[overview]]");
+      });
+
+      test("prefers a same-directory match over a more-recently-modified match elsewhere", () => {
+        const alphaPath = join(vaultPath, "projects", "alpha", "overview.md");
+        const betaPath = join(vaultPath, "projects", "beta", "overview.md");
+        writeFileSync(alphaPath, "# Alpha overview\n");
+        writeFileSync(betaPath, "# Beta overview\n");
+
+        // Beta is modified LATER (more recent mtime) than alpha, so a
+        // recency-only heuristic would pick beta. sourcePath below says
+        // we're writing from within projects/alpha/ — that sibling must
+        // win regardless of which file was touched more recently.
+        const past = new Date(Date.now() - 60_000);
+        const future = new Date(Date.now() + 60_000);
+        utimesSync(alphaPath, past, past);
+        utimesSync(betaPath, future, future);
+
+        const content = "See the overview for details.";
+        const result = insertWikilinks(content, ["overview"], {
+          vaultRoot: vaultPath,
+          sourcePath: "projects/alpha/notes.md",
+        });
+
+        expect(result).toContain("[[projects/alpha/overview|overview]]");
+      });
+
+      test("falls back to recency when no match shares the source note's directory", () => {
+        const alphaPath = join(vaultPath, "projects", "alpha", "overview.md");
+        const betaPath = join(vaultPath, "projects", "beta", "overview.md");
+        writeFileSync(alphaPath, "# Alpha overview\n");
+        writeFileSync(betaPath, "# Beta overview\n");
+
+        const past = new Date(Date.now() - 60_000);
+        const future = new Date(Date.now() + 60_000);
+        utimesSync(alphaPath, past, past);
+        utimesSync(betaPath, future, future);
+
+        const content = "See the overview for details.";
+        // Writing from a third, unrelated directory — neither match is a
+        // sibling, so recency decides.
+        const result = insertWikilinks(content, ["overview"], {
+          vaultRoot: vaultPath,
+          sourcePath: "areas/daily/2026-01-01.md",
+        });
+
+        expect(result).toContain("[[projects/beta/overview|overview]]");
+      });
     });
   });
 

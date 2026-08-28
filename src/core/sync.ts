@@ -80,6 +80,14 @@ wiki/_index.md
 wiki/.mink-index.json
 wiki/projects/*/conventions.md
 wiki/projects/*/architecture.md
+
+# Wiki full-text search index (SQLite FTS5) — rebuilt locally by
+# 'mink recall' / 'mink wiki reindex' via an mtime catch-up sweep, and would
+# otherwise churn the sync repo on every note read/write.
+wiki/.mink-search.db
+wiki/.mink-search.db-wal
+wiki/.mink-search.db-shm
+wiki/.mink-search.db-journal
 `;
 
 const GITATTRIBUTES_CONTENTS = `# Sync v2 — merge drivers eliminate conflicts on shared files.

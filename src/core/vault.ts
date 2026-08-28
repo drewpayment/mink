@@ -1,6 +1,15 @@
 import { join, basename, resolve } from "path";
 import { homedir } from "os";
-import { existsSync, mkdirSync, symlinkSync, unlinkSync, lstatSync, readlinkSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  symlinkSync,
+  unlinkSync,
+  lstatSync,
+  readlinkSync,
+  readFileSync,
+  writeFileSync,
+} from "fs";
 import { resolveConfigValue } from "./global-config";
 import { safeReadJson } from "./fs-utils";
 import { atomicWriteJson } from "./fs-utils";
@@ -108,6 +117,43 @@ export function ensureVaultStructure(): void {
   for (const dir of VAULT_DIRS) {
     mkdirSync(join(root, dir), { recursive: true });
   }
+  ensureVaultGitignore();
+}
+
+// Lines the search index needs ignored inside the vault's OWN .gitignore —
+// separate from ~/.mink's sync .gitignore (sync.ts), since the vault can
+// live at an arbitrary user-chosen path (wiki.path) outside ~/.mink and may
+// be tracked by the user's own git repo (e.g. an Obsidian vault they sync
+// independently). `.mink-search.db` is derived/regenerable state
+// (`mink wiki reindex` rebuilds it from the notes themselves) and
+// machine-specific (WAL sidecars), so it should never be committed.
+const SEARCH_DB_GITIGNORE_LINES = [
+  ".mink-search.db",
+  ".mink-search.db-wal",
+  ".mink-search.db-shm",
+  ".mink-search.db-journal",
+];
+
+// Merge-only: appends missing lines rather than overwriting, so a vault the
+// user manages under their own git repo keeps any customizations they've
+// already made to its .gitignore. Idempotent — safe to call on every
+// `ensureVaultStructure()`.
+export function ensureVaultGitignore(): void {
+  const root = resolveVaultPath();
+  const path = join(root, ".gitignore");
+  let existing = "";
+  try {
+    existing = readFileSync(path, "utf-8");
+  } catch {
+    existing = "";
+  }
+  const existingLines = new Set(existing.split("\n").map((l) => l.trim()));
+  const missing = SEARCH_DB_GITIGNORE_LINES.filter((l) => !existingLines.has(l));
+  if (missing.length === 0) return;
+
+  const header = "# Mink search index — rebuilt locally by 'mink recall' / 'mink wiki reindex', do not commit\n";
+  const separator = existing.length === 0 ? "" : (existing.endsWith("\n") ? "" : "\n") + "\n";
+  writeFileSync(path, existing + separator + header + missing.join("\n") + "\n");
 }
 
 export function categoryToDir(

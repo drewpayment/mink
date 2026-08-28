@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { rmSync, existsSync, readFileSync, mkdtempSync } from "fs";
+import { rmSync, existsSync, readFileSync, mkdtempSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -8,8 +8,11 @@ import {
   generateFrontmatter,
   createNote,
   appendToDaily,
+  upsertFrontmatterAliases,
 } from "../../src/core/note-writer";
 import { ensureVaultStructure } from "../../src/core/vault";
+import { recall, resetWikiSearchRuntimeForTests } from "../../src/core/wiki-search";
+import { _resetWikiSearchDbForTests } from "../../src/storage/wiki-search-db";
 
 describe("note-writer", () => {
   let tempDir: string;
@@ -20,9 +23,11 @@ describe("note-writer", () => {
     originalEnv = process.env.MINK_WIKI_PATH;
     process.env.MINK_WIKI_PATH = tempDir;
     ensureVaultStructure();
+    resetWikiSearchRuntimeForTests();
   });
 
   afterEach(() => {
+    _resetWikiSearchDbForTests();
     if (originalEnv === undefined) {
       delete process.env.MINK_WIKI_PATH;
     } else {
@@ -129,6 +134,19 @@ describe("note-writer", () => {
       expect(result).toContain("aliases: [alias1, alias2]");
     });
 
+    test("quotes YAML-significant characters in aliases", () => {
+      const result = generateFrontmatter({
+        created: "2024-01-01T00:00:00Z",
+        updated: "2024-01-01T00:00:00Z",
+        tags: [],
+        category: "inbox",
+        aliases: ["Auth, Sessions and Tokens", "Chapter 1: Intro", "plain"],
+      });
+      expect(result).toContain(
+        'aliases: ["Auth, Sessions and Tokens", "Chapter 1: Intro", plain]'
+      );
+    });
+
     test("includes extra fields when provided", () => {
       const result = generateFrontmatter({
         created: "2024-01-01T00:00:00Z",
@@ -231,6 +249,85 @@ describe("note-writer", () => {
       expect(content).toContain("# No Template");
       expect(content).toContain("Just a note.");
     });
+
+    test("write-time hygiene: auto-declares the title as an alias when slug != title", () => {
+      const result = createNote({
+        title: "My Great Note",
+        category: "inbox",
+        tags: [],
+        created: "2024-01-01T00:00:00Z",
+        updated: "2024-01-01T00:00:00Z",
+        body: "Body text.",
+      });
+
+      expect(result.filePath).toContain("my-great-note.md");
+      expect(result.content).toContain("aliases: [My Great Note]");
+    });
+
+    test("write-time hygiene: no alias added when the slug already equals the title", () => {
+      const result = createNote({
+        title: "plain",
+        category: "inbox",
+        tags: [],
+        created: "2024-01-01T00:00:00Z",
+        updated: "2024-01-01T00:00:00Z",
+        body: "Body text.",
+      });
+
+      expect(result.content).not.toContain("aliases:");
+    });
+
+    // The capture path used to join aliases raw, so a comma in the title split
+    // the auto-declared alias into two (losing the real one and minting a
+    // spurious short one) and a colon produced YAML that Obsidian rejects
+    // outright. Assert against a real YAML parse, not a substring, so these
+    // stay honest about what a reader actually sees.
+    test("write-time hygiene: a comma in the title stays inside one alias", () => {
+      const result = createNote({
+        title: "Auth, Sessions and Tokens",
+        category: "inbox",
+        tags: [],
+        created: "2024-01-01T00:00:00Z",
+        updated: "2024-01-01T00:00:00Z",
+        body: "Body text.",
+      });
+
+      const parsed = Bun.YAML.parse(
+        result.content.slice(4, result.content.indexOf("\n---", 3))
+      ) as { aliases: string[] };
+      expect(parsed.aliases).toEqual(["Auth, Sessions and Tokens"]);
+    });
+
+    test("write-time hygiene: a colon in the title yields valid YAML and an intact alias", () => {
+      const result = createNote({
+        title: "Chapter 1: Intro",
+        category: "inbox",
+        tags: [],
+        created: "2024-01-01T00:00:00Z",
+        updated: "2024-01-01T00:00:00Z",
+        body: "Body text.",
+      });
+
+      const parsed = Bun.YAML.parse(
+        result.content.slice(4, result.content.indexOf("\n---", 3))
+      ) as { aliases: string[] };
+      expect(parsed.aliases).toEqual(["Chapter 1: Intro"]);
+    });
+
+    test("indexes the note into the search DB so it's findable via recall immediately", () => {
+      createNote({
+        title: "Retry Backoff Policy",
+        category: "inbox",
+        tags: [],
+        created: "2024-01-01T00:00:00Z",
+        updated: "2024-01-01T00:00:00Z",
+        body: "The exponential backoff caps at 90 seconds for the sync worker.",
+      });
+
+      const results = recall("exponential backoff caps");
+      expect(results.length).toBe(1);
+      expect(results[0].title).toBe("Retry Backoff Policy");
+    });
   });
 
   describe("appendToDaily", () => {
@@ -271,6 +368,122 @@ describe("note-writer", () => {
       const content = readFileSync(filePath, "utf-8");
       // The append adds a ## HH:MM header
       expect(content).toMatch(/## \d{2}:\d{2}/);
+    });
+
+    test("indexes the full file (including appended content) for recall", () => {
+      // The daily-note template doesn't embed the creating call's body (see
+      // the "creates new daily note when none exists" test above) — only
+      // appends to an *existing* file carry their content in, as a
+      // timestamped section. So the first call just creates the file, and
+      // both searchable facts come from subsequent appends.
+      appendToDaily("2024-01-15", "seed");
+      appendToDaily("2024-01-15", "first entry about widgets");
+      appendToDaily("2024-01-15", "second entry about turbines");
+
+      // Both entries live in the same file — a fact from an earlier append
+      // must still be findable after a later append re-indexes the file.
+      expect(recall("turbines").length).toBe(1);
+      expect(recall("widgets").length).toBe(1);
+    });
+  });
+
+  describe("ingestFile", () => {
+    let sourceDir: string;
+
+    beforeEach(() => {
+      sourceDir = mkdtempSync(join(tmpdir(), "mink-ingest-src-"));
+    });
+
+    afterEach(() => {
+      rmSync(sourceDir, { recursive: true, force: true });
+    });
+
+    test("write-time hygiene: adds an alias when the extracted title differs from its slug", async () => {
+      const { ingestFile } = await import("../../src/core/note-writer");
+      const src = join(sourceDir, "source.md");
+      writeFileSync(src, "# My Ingested Title\n\nSome content about caching.\n");
+
+      const result = ingestFile(src, { category: "inbox" });
+      expect(result.filePath).toContain("my-ingested-title.md");
+      expect(result.content).toContain("aliases: [My Ingested Title]");
+    });
+
+    test("indexes ingested content for recall", async () => {
+      const { ingestFile } = await import("../../src/core/note-writer");
+      const src = join(sourceDir, "source2.md");
+      writeFileSync(src, "# Ingest Search Test\n\nA fact about flux capacitors.\n");
+
+      ingestFile(src, { category: "inbox" });
+      expect(recall("flux capacitors").length).toBe(1);
+    });
+  });
+
+  describe("upsertFrontmatterAliases", () => {
+    function fm(body: string, extra = ""): string {
+      return `---\ncreated: "2026-01-01T00:00:00.000Z"\ntags: []${extra}\n---\n\n${body}\n`;
+    }
+
+    test("quotes an alias value containing a colon (proven repro: 'Chapter 1: Intro')", () => {
+      // Regression for a real bug: an unquoted colon inside a YAML flow
+      // sequence reopens it as a nested mapping, so
+      // `aliases: [Chapter 1: Intro]` does NOT parse as the single string
+      // "Chapter 1: Intro" — it parses as a mapping `Chapter 1` -> `Intro`.
+      const result = upsertFrontmatterAliases(fm("# Chapter 1: Intro"), ["Chapter 1: Intro"]);
+      expect(result).toContain('aliases: ["Chapter 1: Intro"]');
+      // Explicitly assert the malformed unquoted form is NOT produced.
+      expect(result).not.toContain("aliases: [Chapter 1: Intro]");
+    });
+
+    test("quotes values with other YAML flow-indicator characters", () => {
+      const result = upsertFrontmatterAliases(fm("# x"), ["a, b", "100%", "#hashtag", "a & b"]);
+      expect(result).toContain('"a, b"');
+      expect(result).toContain('"100%"');
+      expect(result).toContain('"#hashtag"');
+      expect(result).toContain('"a & b"');
+    });
+
+    test("leaves a plain alphanumeric alias unquoted", () => {
+      const result = upsertFrontmatterAliases(fm("# x"), ["Global Catalog"]);
+      expect(result).toContain("aliases: [Global Catalog]");
+    });
+
+    test("does not touch a body that opens with a '---' thematic break followed by prose", () => {
+      // No `key:` line inside the block — this is markdown prose that
+      // happens to start with a horizontal rule, not frontmatter. Splicing
+      // an aliases: line into it would corrupt the note body.
+      const body = "---\nJust a paragraph that starts with a rule above it.\n\nMore prose.\n";
+      const result = upsertFrontmatterAliases(body, ["Some Title"]);
+      expect(result).toBe(body);
+    });
+
+    test("does not touch content whose first line is not exactly '---'", () => {
+      const body = "----\ncreated: x\n----\n\n# Title\n";
+      const result = upsertFrontmatterAliases(body, ["Title"]);
+      expect(result).toBe(body);
+    });
+
+    test("still recognizes real frontmatter with only one field", () => {
+      const body = "---\ntags: []\n---\n\n# Title\n";
+      const result = upsertFrontmatterAliases(body, ["Title"]);
+      expect(result).toContain("aliases: [Title]");
+    });
+
+    test("normalizes CRLF frontmatter to LF when rebuilding the block", () => {
+      const crlf = '---\r\ncreated: "2026-01-01T00:00:00.000Z"\r\ntags: []\r\n---\r\n\r\n# Title\r\n';
+      const result = upsertFrontmatterAliases(crlf, ["Title"]);
+      // Between the opening and closing "---" delimiters, the rebuilt
+      // frontmatter is LF-only — even though the input was CRLF and the
+      // untouched body after the closing delimiter keeps its original
+      // line endings.
+      const between = result.split("---")[1];
+      expect(between).not.toContain("\r");
+      expect(between).toContain("aliases: [Title]");
+    });
+
+    test("merges into an existing aliases array without duplicating, still quoting new unsafe values", () => {
+      const body = fm("# x", "\naliases: [Existing]");
+      const result = upsertFrontmatterAliases(body, ["Existing", "New: Value"]);
+      expect(result).toContain('aliases: [Existing, "New: Value"]');
     });
   });
 });
