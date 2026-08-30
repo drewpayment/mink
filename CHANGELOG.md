@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/drewpayment/mink/compare/v0.15.0...v0.16.0) (2026-08-28)
+
+
+### Features
+
+* agent retrieval overhaul — wiki doctor, FTS5 recall, agent playbook ([00345d5](https://github.com/drewpayment/mink/commit/00345d580b966783ca96cb476735c946d03e6666))
+
 ## [0.15.0](https://github.com/drewpayment/mink/compare/v0.14.0...v0.15.0) (2026-07-13)
 
 
