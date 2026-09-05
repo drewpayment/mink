@@ -10,6 +10,7 @@
 
 import { existsSync } from "fs";
 import { refreshProjectHooks } from "../core/hook-refresh";
+import { resolveLocalCwd } from "./update";
 
 export function refreshHooks(cwd: string, args: string[]): void {
   const all = args.includes("--all");
@@ -19,7 +20,7 @@ export function refreshHooks(cwd: string, args: string[]): void {
     console.log(
       r.refreshed
         ? `[mink] refreshed hooks (${r.agents.join(", ")}) → ${r.version}`
-        : "[mink] nothing to refresh — run `mink init` first."
+        : `[mink] skipped: ${r.reason ?? "nothing to refresh — run `mink init` first."}`
     );
     return;
   }
@@ -30,12 +31,14 @@ export function refreshHooks(cwd: string, args: string[]): void {
 
   let refreshed = 0;
   for (const p of listRegisteredProjects()) {
-    const local = p.pathsByDevice?.[deviceId] ?? p.cwd;
+    const local = resolveLocalCwd(p, deviceId);
     if (!local || !existsSync(local)) continue; // not present on this device
     const r = refreshProjectHooks(local, { force: true });
     if (r.refreshed) {
       refreshed++;
       console.log(`  ${p.name} (${r.agents.join(", ")})`);
+    } else if (r.reason) {
+      console.log(`  ${p.name}: skipped — ${r.reason}`);
     }
   }
   console.log(`[mink] refreshed hooks for ${refreshed} project(s) → installed version.`);
