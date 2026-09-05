@@ -115,7 +115,8 @@ export function buildHooksConfig(cliPath: string): HooksConfig {
   };
 }
 
-function isMinkCommand(cmd: string): boolean {
+function isMinkCommand(cmd: unknown): boolean {
+  if (typeof cmd !== "string") return false;
   const hasMinkSubcommand =
     cmd.includes("session-start") ||
     cmd.includes("session-stop") ||
@@ -133,10 +134,11 @@ function isMinkCommand(cmd: string): boolean {
   return cmd.includes("cli.js") || cmd.includes("cli.ts");
 }
 
-function isMinkHook(entry: HookEntry | Record<string, unknown>): boolean {
+export function isMinkHook(entry: HookEntry | Record<string, unknown>): boolean {
+  if (!entry || typeof entry !== "object") return false;
   // Handle current format: { matcher, hooks: [{ type, command }] }
   if (Array.isArray((entry as HookEntry).hooks)) {
-    return (entry as HookEntry).hooks.some((h) => isMinkCommand(h.command));
+    return (entry as HookEntry).hooks.some((h) => h && isMinkCommand(h.command));
   }
   // Handle legacy format: { matcher, command }
   if (typeof (entry as Record<string, unknown>).command === "string") {
@@ -181,7 +183,15 @@ export function mergeHooksIntoSettings(
   // For each hook type mink manages, remove old mink entries then add new ones
   for (const [event, entries] of Object.entries(newHooks)) {
     const current = existingHooks[event] ?? [];
-    const withoutMink = current.filter((e) => !isMinkHook(e));
+    const withoutMink = current.flatMap((e) => {
+      if (!isMinkHook(e)) return [e];
+      // A matcher group can contain both Mink and unrelated handlers.
+      if (Array.isArray(e.hooks)) {
+        const hooks = e.hooks.filter((h) => !isMinkCommand(h?.command));
+        if (hooks.length > 0) return [{ ...e, hooks }];
+      }
+      return [];
+    });
     existingHooks[event] = [...withoutMink, ...entries];
   }
 
