@@ -7,6 +7,18 @@ const command = process.argv[2];
 const cwd = process.cwd();
 
 switch (command) {
+  case "codex-hook": {
+    const { codexHook } = await import("./commands/codex-hook");
+    await codexHook(cwd);
+    break;
+  }
+
+  case "codex-status": {
+    const { codexStatus } = await import("./commands/codex-hook");
+    codexStatus(cwd);
+    break;
+  }
+
   case "session-start":
     sessionStart(cwd);
     break;
@@ -30,7 +42,7 @@ switch (command) {
     const targets = agentValue ? resolveTargetsFromFlag(agentValue) : undefined;
     if (agentValue && (!targets || targets.length === 0)) {
       console.error(`[mink] unknown --agent value: ${agentValue}`);
-      console.error("  Valid: claude, pi, all (or a comma-separated list)");
+      console.error("  Valid: claude, pi, codex, all (or a comma-separated list)");
       process.exit(1);
     }
     await init(cwd, { targets, interactive: !yes });
@@ -268,7 +280,8 @@ switch (command) {
     console.log();
     console.log("Commands:");
     console.log("  init [--agent X] [--yes] Initialize Mink in the current project");
-    console.log("                          --agent claude|pi|all (default: detect & prompt)");
+    console.log("                          --agent claude|pi|codex|all (default: detect & prompt)");
+    console.log("  codex-status            Check experimental Codex wiring and lifecycle receipts");
     console.log("  refresh-hooks [--all]   Regenerate hook wiring after an upgrade (--all: every project)");
     console.log("  status                  Display project health at a glance");
     console.log("  scan [--check]          Force a full file index rescan");

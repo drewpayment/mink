@@ -74,6 +74,10 @@ function rewireAgents(cwd: string, agents: string[]): void {
     try {
       if (agent === "claude") installClaude(cwd, cliPath);
       else if (agent === "pi") installPi(cwd, cliPath);
+      else if (agent === "codex") {
+        const { installCodex } = require("./agent-codex");
+        installCodex(cwd, cliPath);
+      }
     } catch {
       // Per-agent best-effort; one host failing must not block the others.
     }

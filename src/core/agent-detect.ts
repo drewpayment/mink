@@ -5,7 +5,7 @@ import { homedir } from "os";
 
 // Supported host coding assistants Mink can attach to. Adding a new host is a
 // matter of appending an entry here plus an installer in init.ts.
-export type AgentId = "claude" | "pi";
+export type AgentId = "claude" | "pi" | "codex";
 
 export interface AgentMeta {
   id: AgentId;
@@ -19,6 +19,13 @@ export interface AgentMeta {
 }
 
 export const AGENTS: AgentMeta[] = [
+  {
+    id: "codex",
+    label: "Codex (experimental: notes and lifecycle receipts)",
+    projectDir: ".codex",
+    globalDir: join(homedir(), ".codex"),
+    bin: "codex",
+  },
   {
     id: "claude",
     label: "Claude Code",
