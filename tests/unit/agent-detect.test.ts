@@ -21,7 +21,7 @@ describe("detectAgents", () => {
 
   test("returns an entry for every supported agent", () => {
     const info = detectAgents(dir);
-    expect(info.map((a) => a.id).sort()).toEqual(["claude", "pi"]);
+    expect(info.map((a) => a.id).sort()).toEqual(["claude", "codex", "pi"]);
   });
 
   test("reports the project-config signal when .pi/ exists", () => {
@@ -47,6 +47,7 @@ describe("resolveTargetsFromFlag", () => {
   });
 
   test("single id resolves to that agent", () => {
+    expect(resolveTargetsFromFlag("codex")).toEqual(["codex"]);
     expect(resolveTargetsFromFlag("pi")).toEqual(["pi"]);
     expect(resolveTargetsFromFlag("claude")).toEqual(["claude"]);
   });
