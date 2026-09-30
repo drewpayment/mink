@@ -44,7 +44,28 @@ function readLineFromStdin(): Promise<string> {
   });
 }
 
-export async function config(args: string[]): Promise<void> {
+export async function config(rawArgs: string[]): Promise<void> {
+  // `mink config set <key> <value>` / `mink config get <key>` are accepted as
+  // aliases for the positional forms. Help text, `mink upgrade` and the TUI
+  // have long told users to type `config set ...`, which previously failed
+  // with "unknown config key: set".
+  let args = rawArgs;
+  if (args[0] === "set") {
+    if (args.length < 3) {
+      console.error("Usage: mink config set <key> <value>");
+      printValidKeys();
+      process.exit(1);
+    }
+    args = args.slice(1);
+  } else if (args[0] === "get") {
+    if (args.length !== 2) {
+      console.error("Usage: mink config get <key>");
+      printValidKeys();
+      process.exit(1);
+    }
+    args = args.slice(1);
+  }
+
   // mink config --reset-all
   if (args.includes("--reset-all")) {
     process.stdout.write(

@@ -282,6 +282,16 @@ describe("mink config set recall.rerank — disclosure", () => {
     expect(out).toContain("up to 25 candidate notes per query to https://ai-gateway.vercel.sh/typesafe");
   });
 
+  test("`config set <key> <value>` and `config get <key>` work as aliases", async () => {
+    const out = await run(["set", "recall.rerank", "jev"]);
+    expect(out).toContain("recall.rerank = jev");
+    expect(out).toContain("titles, tags, paths and excerpts");
+    expect(resolveConfigValue("recall.rerank").value).toBe("jev");
+    expect(await run(["get", "recall.rerank"])).toContain("recall.rerank = jev (source: config file)");
+    await run(["set", "recall.rerank", "off"]);
+    expect(resolveConfigValue("recall.rerank").value).toBe("off");
+  });
+
   test("setting off (or another key) prints no notice", async () => {
     expect(await run(["recall.rerank", "off"])).not.toContain("notice");
     expect(await run(["recall.rerank-model", "jev"])).not.toContain("notice");
