@@ -9,6 +9,9 @@ import {
   reindexVault,
   catchUpIndex,
   recall,
+  recallCandidates,
+  DEFAULT_POOL_SIZE,
+  DEFAULT_NEIGHBOUR_CAP,
   resolveNoteArg,
   backlinksForNote,
   relatedForNote,
@@ -331,5 +334,52 @@ describe("wiki-search — corruption recovery", () => {
     const { indexed } = reindexVault();
     expect(indexed).toBe(1);
     expect(recall("gyroscopes").length).toBe(1);
+  });
+});
+
+describe("wiki-search — recallCandidates (wide)", () => {
+  test("defaults are exported", () => {
+    expect(DEFAULT_POOL_SIZE).toBe(40);
+    expect(DEFAULT_NEIGHBOUR_CAP).toBe(8);
+  });
+
+  test("a natural-language question finds the note strict recall misses, plus linked neighbours", () => {
+    writeNote(
+      "resources/partner-bucket.md",
+      "---\ntags: [infra]\ncategory: resources\n---\n\n# Partner bucket allocation\n\nEach partner gets a token bucket. See [[Contract terms]].\n"
+    );
+    writeNote("resources/contract.md", "---\ntags: []\ncategory: resources\n---\n\n# Contract terms\n\nLegal wording.\n");
+    reindexVault();
+    const q = "How do we throttle partner API traffic with a token bucket?";
+    expect(recall(q)).toEqual([]);
+    const wide = recallCandidates(q, {}, { poolSize: DEFAULT_POOL_SIZE, neighbourCap: DEFAULT_NEIGHBOUR_CAP });
+    expect(wide.map((r) => [r.path, r.origin])).toEqual([
+      ["resources/partner-bucket.md", "lexical"],
+      ["resources/contract.md", "graph"],
+    ]);
+  });
+
+  test("catches up on notes written after the last index, like recall()", () => {
+    reindexVault();
+    writeNote("inbox/late.md", "---\ntags: []\ncategory: inbox\n---\n\n# Late\n\nzeppelin hangar\n");
+    resetWikiSearchRuntimeForTests();
+    expect(recallCandidates("where is the zeppelin?", {}, { poolSize: 10, neighbourCap: 2 }).map((r) => r.path)).toEqual([
+      "inbox/late.md",
+    ]);
+  });
+
+  test("--project filter excludes a neighbour in another project", () => {
+    writeNote("projects/a/hit.md", "---\ntags: []\ncategory: projects\n---\n\n# Hit\n\nquasar. See [[Elsewhere]] and [[Sibling]].\n");
+    writeNote("projects/b/elsewhere.md", "---\ntags: []\ncategory: projects\n---\n\n# Elsewhere\n\nx\n");
+    writeNote("projects/a/sibling.md", "---\ntags: []\ncategory: projects\n---\n\n# Sibling\n\ny\n");
+    reindexVault();
+    const cfg = { poolSize: 10, neighbourCap: 8 };
+    expect(recallCandidates("quasar", {}, cfg).map((r) => r.path).sort()).toEqual([
+      "projects/a/hit.md",
+      "projects/a/sibling.md",
+      "projects/b/elsewhere.md",
+    ]);
+    const scoped = recallCandidates("quasar", { project: "a" }, cfg);
+    expect(scoped.map((r) => r.path).sort()).toEqual(["projects/a/hit.md", "projects/a/sibling.md"]);
   });
 });

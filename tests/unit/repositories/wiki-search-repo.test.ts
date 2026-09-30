@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
-import { WikiSearchRepo, type WikiSearchNoteInput } from "../../../src/repositories/wiki-search-repo";
+import { WikiSearchRepo, buildFtsQueryAny, type WikiSearchNoteInput } from "../../../src/repositories/wiki-search-repo";
 import { _resetWikiSearchDbForTests } from "../../../src/storage/wiki-search-db";
 
 let tempDir: string;
@@ -383,6 +383,224 @@ describe("WikiSearchRepo", () => {
     test("returns null when nothing matches", () => {
       const repo = WikiSearchRepo.forVault();
       expect(repo.resolveNoteArg("nope")).toBeNull();
+    });
+  });
+});
+
+describe("buildFtsQueryAny", () => {
+  test("drops stopwords, phrase-quotes, prefixes and OR-joins", () => {
+    expect(buildFtsQueryAny("How do we throttle partner API traffic?")).toBe(
+      '"throttle"* OR "partner"* OR "api"* OR "traffic"*'
+    );
+  });
+
+  test("drops single-character tokens and contraction stems", () => {
+    // "what's" -> "what" + "s"; a bare "s"* prefix would match nearly every note
+    expect(buildFtsQueryAny("What's the deploy process? Don't guess")).toBe(
+      '"deploy"* OR "process"* OR "guess"*'
+    );
+    expect(buildFtsQueryAny("a b c")).toBeNull();
+  });
+
+  test("returns null for empty and stopword-only queries", () => {
+    expect(buildFtsQueryAny("")).toBeNull();
+    expect(buildFtsQueryAny("how do we do that?")).toBeNull();
+  });
+
+  test("keeps 'not', 'api', 'find' and 'use' as significant terms", () => {
+    expect(buildFtsQueryAny("not api find use")).toBe('"not"* OR "api"* OR "find"* OR "use"*');
+  });
+
+  test("escapes embedded double quotes", () => {
+    expect(buildFtsQueryAny('say "hi"')).toBe('"say"* OR "hi"*');
+  });
+});
+
+describe("WikiSearchRepo.searchCandidates", () => {
+  const cfg = { poolSize: 40, neighbourCap: 8 };
+
+  function seedBucketVault(repo: WikiSearchRepo) {
+    repo.upsertNote(
+      note({
+        path: "resources/partner-bucket-allocation.md",
+        title: "Partner bucket allocation",
+        body: "Each partner gets a token bucket with a refill rate agreed in the contract.",
+      })
+    );
+    repo.upsertNote(note({ path: "inbox/lunch.md", title: "Lunch", body: "We should get lunch about noon." }));
+  }
+
+  test("any-term matching finds a note that strict search misses", () => {
+    const repo = WikiSearchRepo.forVault();
+    seedBucketVault(repo);
+    const q = "how do we allocate the partner token bucket refill rate";
+    expect(repo.search(q)).toEqual([]);
+    const wide = repo.searchCandidates(q, {}, cfg);
+    expect(wide[0].path).toBe("resources/partner-bucket-allocation.md");
+    expect(wide[0].origin).toBe("lexical");
+    expect(wide[0].snippet.length).toBeGreaterThan(0);
+  });
+
+  test("a stopword-only query falls back to strict behaviour", () => {
+    const repo = WikiSearchRepo.forVault();
+    repo.upsertNote(note({ path: "inbox/a.md", title: "About it", body: "how do we do that" }));
+    const q = "how do we do that";
+    const strict = repo.search(q);
+    expect(strict.length).toBe(1);
+    const wide = repo.searchCandidates(q, {}, cfg);
+    expect(wide.map((r) => r.path)).toEqual(strict.map((r) => r.path));
+    expect(wide.every((r) => r.origin === "lexical")).toBe(true);
+    expect(wide[0].score).toBe(strict[0].score);
+  });
+
+  test("falls back to the strict substring scan when the any-term query matches nothing", () => {
+    const repo = WikiSearchRepo.forVault();
+    repo.upsertNote(note({ path: "inbox/auth.md", title: "Auth", body: "Handles authentication tokens." }));
+    const wide = repo.searchCandidates("authenticat", {}, cfg);
+    expect(wide.map((r) => r.path)).toEqual(["inbox/auth.md"]);
+    expect(wide[0].origin).toBe("lexical");
+  });
+
+  test("returns nothing when nothing matches", () => {
+    const repo = WikiSearchRepo.forVault();
+    seedBucketVault(repo);
+    expect(repo.searchCandidates("zzzzqqq", {}, cfg)).toEqual([]);
+  });
+
+  test("poolSize bounds the lexical hits", () => {
+    const repo = WikiSearchRepo.forVault();
+    for (let i = 0; i < 6; i++) repo.upsertNote(note({ path: `inbox/n${i}.md`, title: `N${i}`, body: "widget" }));
+    const wide = repo.searchCandidates("widget", {}, { poolSize: 3, neighbourCap: 8 });
+    expect(wide.length).toBe(3);
+  });
+
+  test("strict search() results are unchanged by the candidate path", () => {
+    const repo = WikiSearchRepo.forVault();
+    repo.upsertNote(note({ path: "inbox/a.md", title: "Kubernetes networking", body: "filler" }));
+    repo.upsertNote(note({ path: "inbox/b.md", title: "Random", body: "kubernetes networking in passing" }));
+    const before = repo.search("kubernetes networking");
+    repo.searchCandidates("kubernetes networking", {}, cfg);
+    expect(repo.search("kubernetes networking")).toEqual(before);
+    expect(before.every((r) => r.origin === undefined)).toBe(true);
+    expect(before[0].path).toBe("inbox/a.md");
+  });
+
+  describe("graph neighbours", () => {
+    function seedGraph(repo: WikiSearchRepo) {
+      repo.upsertNote(note({ path: "hit.md", title: "Hit", body: "quasar" }));
+      repo.upsertNote(note({ path: "out.md", title: "Out", body: "linked target" }));
+      repo.upsertNote(note({ path: "back.md", title: "Back", body: "links to the hit" }));
+      repo.upsertNote(note({ path: "unrelated.md", title: "Unrelated", body: "nothing" }));
+      repo.replaceLinksForSource("hit.md", [{ target: "Out", resolvedPath: "out.md" }]);
+      repo.replaceLinksForSource("back.md", [{ target: "Hit", resolvedPath: "hit.md" }]);
+    }
+
+    test("adds outlink and backlink neighbours with origin graph, score 0, body-prefix snippet", () => {
+      const repo = WikiSearchRepo.forVault();
+      seedGraph(repo);
+      const wide = repo.searchCandidates("quasar", {}, cfg);
+      expect(wide.map((r) => [r.path, r.origin])).toEqual([
+        ["hit.md", "lexical"],
+        ["back.md", "graph"],
+        ["out.md", "graph"],
+      ]);
+      const graph = wide.filter((r) => r.origin === "graph");
+      expect(graph.every((r) => r.score === 0)).toBe(true);
+      expect(graph.find((r) => r.path === "out.md")!.snippet).toBe("linked target");
+    });
+
+    test("ignores unresolved outlinks", () => {
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(note({ path: "hit.md", title: "Hit", body: "quasar" }));
+      repo.replaceLinksForSource("hit.md", [{ target: "Ghost", resolvedPath: null }]);
+      expect(repo.searchCandidates("quasar", {}, cfg).map((r) => r.path)).toEqual(["hit.md"]);
+    });
+
+    test("does not duplicate notes already in the lexical pool", () => {
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(note({ path: "a.md", title: "A", body: "quasar" }));
+      repo.upsertNote(note({ path: "b.md", title: "B", body: "quasar" }));
+      repo.replaceLinksForSource("a.md", [{ target: "B", resolvedPath: "b.md" }]);
+      const wide = repo.searchCandidates("quasar", {}, cfg);
+      expect(wide.map((r) => r.path).sort()).toEqual(["a.md", "b.md"]);
+      expect(wide.every((r) => r.origin === "lexical")).toBe(true);
+    });
+
+    test("caps neighbours and orders by seed count, then best seed rank, then path", () => {
+      const repo = WikiSearchRepo.forVault();
+      // s1 outranks s2 (title hit vs body hit)
+      repo.upsertNote(note({ path: "s1.md", title: "quasar", body: "x" }));
+      repo.upsertNote(note({ path: "s2.md", title: "S2", body: "quasar" }));
+      for (const p of ["shared.md", "z-only-s1.md", "a-only-s2.md", "b-only-s2.md"]) {
+        repo.upsertNote(note({ path: p, title: p, body: "neighbour body" }));
+      }
+      repo.replaceLinksForSource("s1.md", [
+        { target: "shared", resolvedPath: "shared.md" },
+        { target: "z", resolvedPath: "z-only-s1.md" },
+      ]);
+      repo.replaceLinksForSource("s2.md", [
+        { target: "shared", resolvedPath: "shared.md" },
+        { target: "a", resolvedPath: "a-only-s2.md" },
+        { target: "b", resolvedPath: "b-only-s2.md" },
+      ]);
+      const all = repo.searchCandidates("quasar", {}, { poolSize: 10, neighbourCap: 10 });
+      expect(all.filter((r) => r.origin === "graph").map((r) => r.path)).toEqual([
+        "shared.md", // two seeds
+        "z-only-s1.md", // best seed rank 0 beats rank 1
+        "a-only-s2.md", // tie on seeds and rank: path order
+        "b-only-s2.md",
+      ]);
+      const capped = repo.searchCandidates("quasar", {}, { poolSize: 10, neighbourCap: 2 });
+      expect(capped.filter((r) => r.origin === "graph").map((r) => r.path)).toEqual(["shared.md", "z-only-s1.md"]);
+      // deterministic across calls
+      expect(repo.searchCandidates("quasar", {}, { poolSize: 10, neighbourCap: 2 })).toEqual(capped);
+    });
+
+    test("only the top seedCount lexical hits seed expansion", () => {
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(note({ path: "s1.md", title: "quasar", body: "x" }));
+      repo.upsertNote(note({ path: "s2.md", title: "S2", body: "quasar" }));
+      repo.upsertNote(note({ path: "n2.md", title: "N2", body: "y" }));
+      repo.replaceLinksForSource("s2.md", [{ target: "N2", resolvedPath: "n2.md" }]);
+      const one = repo.searchCandidates("quasar", {}, { poolSize: 10, neighbourCap: 8, seedCount: 1 });
+      expect(one.map((r) => r.path)).toEqual(["s1.md", "s2.md"]);
+      const two = repo.searchCandidates("quasar", {}, { poolSize: 10, neighbourCap: 8, seedCount: 2 });
+      expect(two.map((r) => r.path)).toEqual(["s1.md", "s2.md", "n2.md"]);
+    });
+
+    test("filters apply to neighbours (project, tag, category, since)", () => {
+      const repo = WikiSearchRepo.forVault();
+      repo.upsertNote(
+        note({ path: "projects/a/hit.md", title: "Hit", projectSlug: "a", tags: ["keep"], category: "projects", body: "quasar" })
+      );
+      repo.upsertNote(
+        note({ path: "projects/a/same.md", title: "Same", projectSlug: "a", tags: ["keep"], category: "projects", body: "s" })
+      );
+      repo.upsertNote(
+        note({ path: "projects/b/other.md", title: "Other", projectSlug: "b", tags: ["keep"], category: "projects", body: "o" })
+      );
+      repo.upsertNote(
+        note({ path: "projects/a/notag.md", title: "NoTag", projectSlug: "a", tags: [], category: "projects", body: "n" })
+      );
+      repo.upsertNote(
+        note({ path: "projects/a/old.md", title: "Old", projectSlug: "a", tags: ["keep"], category: "projects", body: "old", updatedAt: "2020-01-01T00:00:00.000Z" })
+      );
+      repo.replaceLinksForSource("projects/a/hit.md", [
+        { target: "Same", resolvedPath: "projects/a/same.md" },
+        { target: "Other", resolvedPath: "projects/b/other.md" },
+        { target: "NoTag", resolvedPath: "projects/a/notag.md" },
+        { target: "Old", resolvedPath: "projects/a/old.md" },
+      ]);
+
+      const paths = (o: Parameters<WikiSearchRepo["searchCandidates"]>[1]) =>
+        repo.searchCandidates("quasar", o, cfg).filter((r) => r.origin === "graph").map((r) => r.path).sort();
+      expect(paths({})).toEqual([
+        "projects/a/notag.md", "projects/a/old.md", "projects/a/same.md", "projects/b/other.md",
+      ]);
+      expect(paths({ project: "a" })).not.toContain("projects/b/other.md");
+      expect(paths({ tag: "keep" })).not.toContain("projects/a/notag.md");
+      expect(paths({ since: "2024-01-01T00:00:00.000Z" })).not.toContain("projects/a/old.md");
+      expect(paths({ category: "inbox" })).toEqual([]);
     });
   });
 });

@@ -40,6 +40,19 @@ export interface RecallResult {
   tags: string[];
   category: string;
   updated: string;
+  /** Where the result came from; set by wide candidate generation only. */
+  origin?: "lexical" | "graph";
+  /** Judged relevance probability (0..1); unset until a judge fills it. */
+  relevance?: number;
+}
+
+export type CandidateResult = RecallResult & { origin: "lexical" | "graph" };
+
+export interface CandidateConfig {
+  poolSize: number;
+  neighbourCap: number;
+  /** How many top lexical hits seed graph expansion (default 5). */
+  seedCount?: number;
 }
 
 export interface LinkInput {
@@ -208,10 +221,106 @@ export class WikiSearchRepo {
     return this.searchSubstringFallback(query, filters);
   }
 
+  // Wide candidate generation: any-term (OR) FTS over non-stopword tokens,
+  // bm25-ordered, up to `poolSize`, plus one-hop graph neighbours of the top
+  // `seedCount` lexical hits (both link directions, filters applied in SQL,
+  // capped at `neighbourCap`). Falls back to strict search() when the query
+  // is all stopwords or the any-term pass finds nothing. Lexical hits come
+  // first in bm25 order, then neighbours.
+  searchCandidates(query: string, opts: RecallOptions, cfg: CandidateConfig): CandidateResult[] {
+    const poolSize = Math.max(1, Math.min(cfg.poolSize, 200));
+    const filters = buildFilters({ ...opts, limit: poolSize });
+
+    let lexical: RecallResult[] = [];
+    const anyQuery = buildFtsQueryAny(query);
+    if (anyQuery !== null) lexical = this.runFts(anyQuery, filters);
+    if (lexical.length === 0) lexical = this.search(query, { ...opts, limit: poolSize });
+
+    const pool: CandidateResult[] = lexical.map((r) => ({ ...r, origin: "lexical" as const }));
+    if (pool.length === 0) return pool;
+    const neighbours = this.graphNeighbours(pool, filters, cfg.seedCount ?? 5, cfg.neighbourCap);
+    return [...pool, ...neighbours];
+  }
+
+  private graphNeighbours(
+    pool: CandidateResult[],
+    filters: Filters,
+    seedCount: number,
+    neighbourCap: number
+  ): CandidateResult[] {
+    if (neighbourCap <= 0 || seedCount <= 0) return [];
+    const seeds = pool.slice(0, seedCount).map((r) => r.path);
+    const seedRank = new Map(seeds.map((p, i) => [p, i]));
+    const inPool = new Set(pool.map((r) => r.path));
+    const marks = seeds.map(() => "?").join(", ");
+    const filterSql = filters.sql.length > 0 ? ` AND ${filters.sql.join(" AND ")}` : "";
+
+    type Row = {
+      seed: string;
+      path: string;
+      title: string;
+      category: string;
+      tags: string;
+      updated_at: string;
+      body: string;
+    };
+    const cols = "n.path AS path, n.title AS title, n.category AS category, n.tags AS tags, n.updated_at AS updated_at, n.body AS body";
+    let rows: Row[];
+    try {
+      const out = this.db
+        .prepare(
+          `SELECT l.source_path AS seed, ${cols}
+           FROM links l JOIN notes n ON n.path = l.resolved_path
+           WHERE l.source_path IN (${marks}) AND l.resolved_path IS NOT NULL${filterSql}`
+        )
+        .all(...seeds, ...filters.params) as unknown as Row[];
+      const back = this.db
+        .prepare(
+          `SELECT l.resolved_path AS seed, ${cols}
+           FROM links l JOIN notes n ON n.path = l.source_path
+           WHERE l.resolved_path IN (${marks})${filterSql}`
+        )
+        .all(...seeds, ...filters.params) as unknown as Row[];
+      rows = [...out, ...back];
+    } catch {
+      return [];
+    }
+
+    const agg = new Map<string, { row: Row; seeds: Set<string>; best: number }>();
+    for (const r of rows) {
+      if (inPool.has(r.path)) continue;
+      const rank = seedRank.get(r.seed) ?? Number.MAX_SAFE_INTEGER;
+      const cur = agg.get(r.path);
+      if (cur) {
+        cur.seeds.add(r.seed);
+        cur.best = Math.min(cur.best, rank);
+      } else {
+        agg.set(r.path, { row: r, seeds: new Set([r.seed]), best: rank });
+      }
+    }
+
+    return [...agg.values()]
+      .sort((a, b) => b.seeds.size - a.seeds.size || a.best - b.best || (a.row.path < b.row.path ? -1 : 1))
+      .slice(0, neighbourCap)
+      .map(({ row }) => ({
+        path: row.path,
+        title: row.title,
+        snippet: buildFallbackSnippet(row.body, []),
+        score: 0,
+        tags: (row.tags ?? "").split(" ").filter(Boolean),
+        category: row.category,
+        updated: row.updated_at,
+        origin: "graph" as const,
+      }));
+  }
+
   private searchFts(query: string, filters: Filters): RecallResult[] {
     const ftsQuery = buildFtsQuery(query);
     if (ftsQuery === null) return [];
+    return this.runFts(ftsQuery, filters);
+  }
 
+  private runFts(ftsQuery: string, filters: Filters): RecallResult[] {
     const params: SqlParam[] = [ftsQuery, ...filters.params, filters.limit];
     let sql = `
       SELECT n.path AS path, n.title AS title, n.category AS category,
@@ -492,6 +601,32 @@ function buildFtsQuery(raw: string): string | null {
   const tokens = tokenize(raw);
   if (tokens.length === 0) return null;
   return tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" ");
+}
+
+// Function/question words with no retrieval signal. Only used to widen
+// (any-term) queries; strict search keeps every token. Deliberately modest:
+// no domain words, and nothing like "not", "api", "find" or "use".
+const STOPWORDS = new Set([
+  "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "am",
+  "do", "does", "did", "how", "what", "when", "where", "who", "whom", "why", "which",
+  "we", "our", "ours", "us", "i", "me", "my", "you", "your", "he", "she", "they", "them", "their",
+  "it", "its", "of", "for", "to", "in", "on", "at", "by", "and", "or", "with", "from", "about",
+  "there", "here", "this", "that", "these", "those", "can", "could", "should", "would", "will",
+  "any", "have", "has", "had", "as", "into", "if", "so", "than", "then",
+  // contraction stems left behind by tokenize() ("don't" -> "don", "t")
+  "don", "doesn", "didn", "isn", "aren", "wasn", "weren",
+]);
+
+// Any-term (OR) variant of buildFtsQuery for wide candidate generation:
+// same tokenization and quoting/prefix, stopwords dropped, OR-joined.
+// Single-character tokens are dropped too: tokenize() splits contractions
+// ("what's" -> "what", "s"), and a lone `"s"*` prefix OR-term matches nearly
+// every note, flooding the pool. Returns null when no significant token
+// remains (caller falls back to strict mode).
+export function buildFtsQueryAny(raw: string): string | null {
+  const tokens = tokenize(raw).filter((t) => t.length > 1 && !STOPWORDS.has(t));
+  if (tokens.length === 0) return null;
+  return tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
 }
 
 // Cheap keyword-in-context snippet for the substring-fallback path (no

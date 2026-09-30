@@ -79,6 +79,8 @@ export interface Unit {
   hasAdversary: boolean;
   latenciesMs: number[];
   judgeInputTokens: number | null;
+  /** Results the arm returned for this unit (mean over variants for best-of). */
+  poolSize: number;
 }
 
 export interface Metrics {
@@ -87,7 +89,11 @@ export interface Metrics {
   hit1: number | null;
   hit3: number | null;
   hit10: number | null;
+  /** Share of positives whose expected path is anywhere in the returned results. */
+  hitPool: number | null;
   mrr: number | null;
+  /** Mean number of results returned per unit (pool-size cost). */
+  poolSize: number | null;
   nNegative: number;
   /** Share of negatives where the arm returned nothing; null if none. */
   abstention: number | null;
@@ -222,6 +228,7 @@ function variantToUnit(c: CaseResult, v: VariantOutcome): Unit {
     hasAdversary: false,
     latenciesMs: [v.latencyMs],
     judgeInputTokens: v.judgeInputTokens,
+    poolSize: v.ranked.length,
   };
 }
 
@@ -253,6 +260,7 @@ export function buildUnits(cases: CaseResult[], scope: Scope, adversarialCaseIds
         hasAdversary: adv,
         latenciesMs: pool.map((v) => v.latencyMs),
         judgeInputTokens: sumTokens(pool),
+        poolSize: mean(pool.map((v) => v.ranked.length)) ?? 0,
       });
     }
   }
@@ -272,7 +280,12 @@ export function computeMetrics(units: Unit[]): Metrics {
     hit1: frac((u) => hitAtK(u.rank, 1), positives),
     hit3: frac((u) => hitAtK(u.rank, 3), positives),
     hit10: frac((u) => hitAtK(u.rank, 10), positives),
+    // rank is computed over everything the arm returned, so "anywhere in
+    // the returned results" is exactly rank !== null. For strict this equals
+    // hit@limit.
+    hitPool: frac((u) => u.rank !== null, positives),
     mrr: mean(positives.map((u) => reciprocalRank(u.rank))),
+    poolSize: mean(units.map((u) => u.poolSize)),
     nNegative: negatives.length,
     abstention: frac((u) => u.abstained, negatives),
     nAdversarial: adversarial.length,
@@ -382,9 +395,11 @@ function metricRow(label: string, m: Metrics): string[] {
     pct(m.hit1),
     pct(m.hit3),
     pct(m.hit10),
+    pct(m.hitPool),
     num(m.mrr),
     m.nNegative ? `${pct(m.abstention)} (n=${m.nNegative})` : "-",
     m.nAdversarial ? `${pct(m.adversarialPass)} (n=${m.nAdversarial})` : "-",
+    m.poolSize === null ? "-" : m.poolSize.toFixed(1),
     ms(m.latencyP50Ms),
     ms(m.latencyP95Ms),
     m.judgeInputTokens === null ? "-" : String(m.judgeInputTokens),
@@ -396,9 +411,11 @@ const METRIC_HEADER = [
   "hit@1",
   "hit@3",
   "hit@10",
+  "hit@pool",
   "MRR",
   "abstain",
   "adv-pass",
+  "pool",
   "p50 ms",
   "p95 ms",
   "judge tok",
@@ -479,7 +496,8 @@ export function renderScorecard(report: RetrievalReport, verbose = false): strin
   return [
     "# Retrieval eval scorecard",
     "",
-    "hit@k / MRR are over non-negative cases; abstain is over negative cases (empty result = abstained);",
+    "hit@k / MRR are over non-negative cases; hit@pool = expected note anywhere in what the arm returned;",
+    "pool = mean results returned per query; abstain is over negative cases (empty result = abstained);",
     "adv-pass = adversarial note not at rank 1. Scopes: `question` = natural-language question;",
     "`queries-avg` = per-variant average over keyword queries; `queries-best` = best-of-queries per case.",
     "",

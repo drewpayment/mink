@@ -21,6 +21,8 @@ import {
 import { extractWikilinks } from "./note-linker";
 import {
   WikiSearchRepo,
+  type CandidateConfig,
+  type CandidateResult,
   type RecallOptions,
   type RecallResult,
   type NoteRef,
@@ -363,6 +365,22 @@ export function recall(query: string, opts: RecallOptions = {}): RecallResult[] 
   return withCorruptionRecovery(() => {
     catchUpIndex();
     return WikiSearchRepo.forVault().search(query, opts);
+  });
+}
+
+export const DEFAULT_POOL_SIZE = 40;
+export const DEFAULT_NEIGHBOUR_CAP = 8;
+
+// Wide candidate generation (any-term FTS + one-hop graph neighbours). The
+// results are candidates for a later relevance step, not answers.
+export function recallCandidates(
+  query: string,
+  opts: RecallOptions = {},
+  cfg: CandidateConfig = { poolSize: DEFAULT_POOL_SIZE, neighbourCap: DEFAULT_NEIGHBOUR_CAP }
+): CandidateResult[] {
+  return withCorruptionRecovery(() => {
+    catchUpIndex();
+    return WikiSearchRepo.forVault().searchCandidates(query, opts, cfg);
   });
 }
 
