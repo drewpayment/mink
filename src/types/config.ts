@@ -23,6 +23,14 @@ export interface GlobalConfig {
   "compression.min-savings-ratio"?: string;
   "compression.holdout-fraction"?: string;
   "compression.retention-hours"?: string;
+  "recall.rerank"?: string;
+  "recall.rerank-api-key"?: string;
+  "recall.rerank-base-url"?: string;
+  "recall.rerank-model"?: string;
+  "recall.rerank-min-relevance"?: string;
+  "recall.rerank-pool-size"?: string;
+  "recall.rerank-timeout-ms"?: string;
+  "recall.rerank-concurrency"?: string;
 }
 
 export type ConfigKey = keyof GlobalConfig & string;
@@ -35,6 +43,8 @@ export interface ConfigKeyMeta {
   envVar: string;
   description: string;
   scope: ConfigScope;
+  /** Secret values are masked wherever config is printed (spec 18). */
+  secret?: boolean;
 }
 
 export interface DeviceInfo {
@@ -126,6 +136,7 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     envVar: "MINK_CHANNEL_DISCORD_BOT_TOKEN",
     description: "Discord bot token for Claude Code Channels",
     scope: "local",
+    secret: true,
   },
   {
     key: "channel.discord.enabled",
@@ -220,6 +231,64 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
     description: "How long compressed originals stay retrievable before eviction",
     scope: "shared",
   },
+  {
+    key: "recall.rerank",
+    default: "off",
+    envVar: "MINK_RECALL_RERANK",
+    description:
+      "Relevance reranking for mink recall (spec 25): off or jev. jev sends candidate note titles, tags, paths and excerpts to the configured judge service.",
+    scope: "shared",
+  },
+  {
+    key: "recall.rerank-api-key",
+    default: "",
+    envVar: "MINK_RECALL_RERANK_API_KEY",
+    description: "API key for the rerank judge (falls back to JEV_API_KEY). Per-machine secret, never synced.",
+    scope: "local",
+    secret: true,
+  },
+  {
+    key: "recall.rerank-base-url",
+    default: "https://api.typesafe.ai",
+    envVar: "MINK_RECALL_RERANK_BASE_URL",
+    description: "Judge endpoint: https://api.typesafe.ai (direct) or https://ai-gateway.vercel.sh/typesafe (Vercel AI Gateway)",
+    scope: "local",
+  },
+  {
+    key: "recall.rerank-model",
+    default: "jev-latest",
+    envVar: "MINK_RECALL_RERANK_MODEL",
+    description: "Judge model name (the Vercel AI Gateway accepts jev or jev-latest)",
+    scope: "shared",
+  },
+  {
+    key: "recall.rerank-min-relevance",
+    default: "0.5",
+    envVar: "MINK_RECALL_RERANK_MIN_RELEVANCE",
+    description: "Drop reranked results scoring below this relevance probability (0-1)",
+    scope: "shared",
+  },
+  {
+    key: "recall.rerank-pool-size",
+    default: "40",
+    envVar: "MINK_RECALL_RERANK_POOL_SIZE",
+    description: "Candidate notes gathered and judged per recall query",
+    scope: "shared",
+  },
+  {
+    key: "recall.rerank-timeout-ms",
+    default: "3000",
+    envVar: "MINK_RECALL_RERANK_TIMEOUT_MS",
+    description: "Total time budget for judging; on overrun recall falls back to lexical order",
+    scope: "shared",
+  },
+  {
+    key: "recall.rerank-concurrency",
+    default: "8",
+    envVar: "MINK_RECALL_RERANK_CONCURRENCY",
+    description: "Maximum concurrent judge requests",
+    scope: "shared",
+  },
 ];
 
 const VALID_KEYS = new Set<string>(CONFIG_KEYS.map((k) => k.key));
@@ -230,4 +299,20 @@ export function isValidConfigKey(key: string): key is ConfigKey {
 
 export function getConfigKeyMeta(key: ConfigKey): ConfigKeyMeta {
   return CONFIG_KEYS.find((k) => k.key === key)!;
+}
+
+export function isSecretConfigKey(key: ConfigKey): boolean {
+  return getConfigKeyMeta(key).secret === true;
+}
+
+/** "••••" + last 4 characters, or "(not set)" when empty. Short values reveal nothing. */
+export function maskSecretValue(value: string | undefined): string {
+  if (!value) return "(not set)";
+  return value.length <= 4 ? "••••" : "••••" + value.slice(-4);
+}
+
+/** Display form of a config value: masked for secret keys, verbatim otherwise. */
+export function displayConfigValue(key: ConfigKey, value: string | undefined): string {
+  if (isSecretConfigKey(key)) return maskSecretValue(value);
+  return value ?? "";
 }

@@ -1,6 +1,7 @@
 import {
   CONFIG_KEYS,
   isValidConfigKey,
+  displayConfigValue,
 } from "../types/config";
 import {
   resolveConfigValue,
@@ -15,6 +16,20 @@ function printValidKeys(): void {
   for (const meta of CONFIG_KEYS) {
     console.error(`  ${meta.key} — ${meta.description}`);
   }
+}
+
+// One-time (per `config set`) plain-language disclosure: reranking sends note
+// content off the machine.
+function printRerankDisclosure(): void {
+  const baseUrl = resolveConfigValue("recall.rerank-base-url").value;
+  const poolSize = Number(resolveConfigValue("recall.rerank-pool-size").value) || 40;
+  console.log("");
+  console.log("[mink] notice: relevance reranking is now on.");
+  console.log(
+    `  'mink recall' will send note titles, tags, paths and excerpts of up to ${poolSize} candidate notes per query to ${baseUrl}.`
+  );
+  console.log("  Turn it off any time with: mink config recall.rerank off");
+  console.log("  Or skip it for one query with: mink recall --no-rerank \"<query>\"");
 }
 
 function readLineFromStdin(): Promise<string> {
@@ -69,12 +84,12 @@ export async function config(args: string[]): Promise<void> {
     const all = resolveAllConfig();
     console.log("[mink] configuration:");
     for (const entry of all) {
-      let line = `  ${entry.key} = ${entry.value} (${entry.scope}, source: ${entry.source})`;
+      let line = `  ${entry.key} = ${displayConfigValue(entry.key, entry.value)} (${entry.scope}, source: ${entry.source})`;
       if (
         entry.source === "environment variable" &&
         entry.configFileValue !== undefined
       ) {
-        line += ` [config file value: ${entry.configFileValue} — overridden]`;
+        line += ` [config file value: ${displayConfigValue(entry.key, entry.configFileValue)} — overridden]`;
       }
       console.log(line);
     }
@@ -92,18 +107,19 @@ export async function config(args: string[]): Promise<void> {
   if (args.length >= 2) {
     const value = args.slice(1).join(" ");
     setConfigValue(key, value);
-    console.log(`[mink] ${key} = ${value}`);
+    console.log(`[mink] ${key} = ${displayConfigValue(key, value)}`);
+    if (key === "recall.rerank" && value.trim().toLowerCase() === "jev") printRerankDisclosure();
     return;
   }
 
   // mink config <key> — show one
   const resolved = resolveConfigValue(key);
-  let line = `${key} = ${resolved.value} (source: ${resolved.source})`;
+  let line = `${key} = ${displayConfigValue(key, resolved.value)} (source: ${resolved.source})`;
   if (
     resolved.source === "environment variable" &&
     resolved.configFileValue !== undefined
   ) {
-    line += `\n  note: config file value (${resolved.configFileValue}) is overridden`;
+    line += `\n  note: config file value (${displayConfigValue(key, resolved.configFileValue)}) is overridden`;
   }
   console.log(line);
 }

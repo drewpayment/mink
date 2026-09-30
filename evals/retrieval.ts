@@ -2,7 +2,7 @@
 // fixture vault, with no agent, network or API key involved. See
 // evals/README.md "Retrieval-level eval".
 //
-//   bun evals/retrieval.ts [--arms strict,wide,judge] [--json] [--verbose] [--limit 10]
+//   bun evals/retrieval.ts [--arms strict,wide,judge] [--json] [--verbose] [--limit 10] [--min-relevance 0.5]
 //
 // It is a scoreboard, not a gate: exit 0 even when cases miss; non-zero only
 // on harness errors.
@@ -17,6 +17,7 @@ import {
   renderScorecard,
   runArm,
   selectArms,
+  type ArmOutput,
   type RankedResult,
   type RetrievalArm,
   type RetrievalCase,
@@ -129,22 +130,48 @@ export function wideArm(): RetrievalArm {
   };
 }
 
-function stubArm(name: string, blurb: string): RetrievalArm {
+export const JUDGE_ARM_SKIP_REASON =
+  "opt-in: pass --arms judge (needs MINK_RECALL_RERANK_API_KEY or JEV_API_KEY)";
+
+/**
+ * Arm 2: recallCandidates() pool reranked by the configured relevance judge
+ * (live network, costs money). Opt-in: runs only when a key is in the
+ * environment AND the arm is named explicitly in --arms, so a key sitting in
+ * someone's shell never triggers spend on a default run. Config comes from
+ * env only: available() runs before the temp MINK_ROOT_OVERRIDE exists, so it
+ * never touches the user's real ~/.mink config; run() executes under the temp
+ * root, whose config is empty.
+ *
+ * Abstention means an empty result (nothing cleared --min-relevance). A
+ * judge fallback is reported through ArmOutput.fallbackReason so it shows in
+ * the scorecard's `fallbacks` column instead of masquerading as judge output.
+ */
+export function judgeArm(opts: { minRelevance?: number } = {}): RetrievalArm {
   return {
-    name,
-    available: () => `not yet implemented (${blurb})`,
-    async run() {
-      throw new Error(`${name} arm is not implemented`);
+    name: "judge",
+    available(ctx) {
+      const key = process.env.MINK_RECALL_RERANK_API_KEY || process.env.JEV_API_KEY;
+      return key && ctx?.requested ? true : JUDGE_ARM_SKIP_REASON;
+    },
+    async run(query, limit): Promise<ArmOutput> {
+      const ranked = await import("../src/core/recall-ranked");
+      const settings = ranked.resolveRerankSettings();
+      const out = await ranked.recallRanked(query, { limit }, {
+        mode: "judge",
+        settings,
+        minRelevance: opts.minRelevance,
+      });
+      return {
+        results: out.results.map((r) => ({ path: r.path, score: r.relevance ?? r.score })),
+        judgeInputTokens: out.summary.input_tokens,
+        fallbackReason: out.summary.fallback_reason,
+      };
     },
   };
 }
 
-export function registeredArms(): RetrievalArm[] {
-  return [
-    strictArm(),
-    wideArm(),
-    stubArm("judge", "external relevance reranker"),
-  ];
+export function registeredArms(opts: { minRelevance?: number } = {}): RetrievalArm[] {
+  return [strictArm(), wideArm(), judgeArm(opts)];
 }
 
 interface CliOptions {
@@ -152,6 +179,7 @@ interface CliOptions {
   json: boolean;
   verbose: boolean;
   limit: number;
+  minRelevance?: number;
 }
 
 export function parseCli(argv: string[]): CliOptions {
@@ -163,13 +191,18 @@ export function parseCli(argv: string[]): CliOptions {
     else if (a === "--arms") o.arms = parseArmsFlag(argv[++i] ?? "");
     else if (a.startsWith("--arms=")) o.arms = parseArmsFlag(a.slice(7));
     else if (a === "--limit") o.limit = Number(argv[++i]);
+    else if (a === "--min-relevance") o.minRelevance = Number(argv[++i]);
+    else if (a.startsWith("--min-relevance=")) o.minRelevance = Number(a.slice(16));
     else throw new Error(`unknown argument: ${a}`);
   }
   if (!Number.isInteger(o.limit) || o.limit < 1) throw new Error("--limit must be a positive integer");
+  if (o.minRelevance !== undefined && !(o.minRelevance >= 0 && o.minRelevance <= 1)) {
+    throw new Error("--min-relevance must be a number between 0 and 1");
+  }
   return o;
 }
 
-export async function runRetrievalEval(opts: CliOptions, arms = registeredArms()): Promise<RetrievalReport> {
+export async function runRetrievalEval(opts: CliOptions, arms = registeredArms({ minRelevance: opts.minRelevance })): Promise<RetrievalReport> {
   const cases = loadRetrievalCases();
   const { active, skipped } = selectArms(arms, opts.arms);
   const adversarial = new Set(cases.filter((c) => (c.adversarial_paths ?? []).length > 0).map((c) => c.id));
