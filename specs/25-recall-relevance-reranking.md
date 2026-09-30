@@ -61,8 +61,10 @@ covered here as a secondary, advisory capability.
 - The judging question is fixed, versioned wording. Changing the wording is a versioned change, the
   same as changing the judge model, because probabilities from different wordings aren't
   comparable.
-- The judge model version is **pinned** by default. A floating "latest" alias is allowed only when
-  the user sets it explicitly.
+- The judge model is **configurable** and is pinned to a concrete version wherever the provider
+  route allows it. Some routes only expose a floating "latest" alias. On those routes the version
+  can drift without notice, so the configured model name is recorded with every judgment, and the
+  threshold is re-checked against the retrieval evaluation periodically.
 - Judgments run concurrently, up to a configurable limit, and must respect the provider's
   rate-limit signals by backing off within the time budget.
 
@@ -75,7 +77,7 @@ covered here as a secondary, advisory capability.
   from the **lexical-empty** case where no candidates were found at all.
 - The requested result limit is applied **after** reranking. The pool is always larger than the
   limit.
-- The default threshold is calibrated per pinned judge version against the retrieval evaluation
+- The default threshold is calibrated per judge model against the retrieval evaluation
   (see Test Requirements). It is not carried over from another scoring system.
 
 ### Output Contract
@@ -258,8 +260,9 @@ AND more than N candidates were eligible for judging, unless fewer existed
 - **The judge returns a value outside 0–1, or no value.** That response is treated as malformed and
   triggers a fallback for the whole query.
 - **Rate limited.** Back off within the budget. If the budget runs out, fall back.
-- **The pinned model is retired by the provider.** Treated as a configuration error, with one
-  actionable warning and a lexical fallback. Never silently float to "latest".
+- **The configured model is unknown to, or retired by, the provider.** Treated as a configuration
+  error, with one actionable warning and a lexical fallback. Never silently substitute another
+  model.
 - **Cache database corrupted or schema-mismatched.** The cache is discarded and rebuilt, and the
   recall still completes.
 - **Clock skew or an unusual `updated` value.** Irrelevant to judging, because dates are filtered

@@ -61,8 +61,9 @@ budget is 3s, not sub-second.
 - **Fail open to lexical.** Every judge error resolves to the lexical result plus a
   `fallback_reason`. Never exit non-zero because of the judge.
 - **Filters stay in SQL.** `--project/--tag/--category/--since` never reach the judge.
-- **Pin the model.** The default is a concrete version (`jev-1.13.0` at time of writing), not
-  `jev-latest`.
+- **Model naming.** The default is `jev-latest`, because the gateway route can't pin a version
+  (verified 2026-09-29, see Open question 1). Users on the direct API may set a concrete version.
+  Record the model name with every judgment.
 
 | Phase | Theme | Network | Risk | Why this order |
 |------|-------|---------|------|----------------|
@@ -187,9 +188,9 @@ especially on the vocabulary-mismatch cases.
     - 529 or 5xx → `overloaded`
   - Validate that `answers.answers_query.noul` is a finite number in [0, 1]. Anything else is
     `malformed`.
-  - **Open question to verify first:** that the Vercel AI Gateway path
-    (`https://ai-gateway.vercel.sh/typesafe`) accepts the same `/v1/systemone` shape and bearer
-    auth. Record a contract fixture from each endpoint.
+  - **Verified 2026-09-29:** the Vercel AI Gateway path (`https://ai-gateway.vercel.sh/typesafe`)
+    accepts the same `/v1/systemone` shape with bearer auth using a gateway key. See Open
+    question 1 for the details.
 - **Reranker** — new `src/core/rerank.ts`
   - `rerank(query, candidates, judge, { budgetMs, concurrency, minRelevance, limit })` returns
     `{ results, summary }`.
@@ -223,7 +224,7 @@ especially on the vocabulary-mismatch cases.
   | `recall.rerank` | `off` (`off` \| `jev`) | shared | `MINK_RECALL_RERANK` |
   | `recall.rerank-api-key` | — (**secret**) | local | `MINK_RECALL_RERANK_API_KEY`, falls back to `JEV_API_KEY` |
   | `recall.rerank-base-url` | `https://api.typesafe.ai` | local | `MINK_RECALL_RERANK_BASE_URL` |
-  | `recall.rerank-model` | `jev-1.13.0` | shared | `MINK_RECALL_RERANK_MODEL` |
+  | `recall.rerank-model` | `jev-latest` | shared | `MINK_RECALL_RERANK_MODEL` |
   | `recall.rerank-min-relevance` | `0.5` (placeholder; recalibrated in Phase 3) | shared | … |
   | `recall.rerank-pool-size` | `40` | shared | … |
   | `recall.rerank-timeout-ms` | `3000` | shared | … |
@@ -289,9 +290,10 @@ the embedded-instruction case isn't ranked first. Put the scorecard in the PR.
 - **Calibration**
   - Run `eval:retrieval` with the judge arm, and sweep `minRelevance` from 0.2 to 0.8. Pick the
     threshold that maximises negative abstention without losing any positive hit@3.
-  - Record it as the default for the pinned model in `CONFIG_KEYS`. Document the calibration run in
+  - Record it as the default for the configured model in `CONFIG_KEYS`. Document the calibration run in
     the PR.
-  - Any future model-version bump must repeat this step.
+  - Repeat this step on any model change. Because the gateway floats `jev-latest`, also repeat it
+    periodically, e.g. whenever eval scores shift unexpectedly.
 
 **Exit:** repeating the same eval run costs about zero tokens. `mink status` shows rerank usage. The
 threshold default is backed by data.
@@ -336,9 +338,16 @@ All of these are advisory. They print suggestions and never change the note.
 
 ## Open questions
 
-1. Does the gateway route (`ai-gateway.vercel.sh/typesafe`) accept the native `/v1/systemone`
-   request unchanged? Answer this in the first hour of Phase 2 with one test call using a synthetic
-   state.
+1. ~~Does the gateway route accept the native `/v1/systemone` request unchanged?~~ **Answered
+   2026-09-29 with synthetic probes:**
+   - **Protocol:** yes. It returns HTTP 200 with the same response shape plus
+     `provider_metadata`, in 240–600ms per call.
+   - **Keys:** a gateway key gets a 401 from `api.typesafe.ai`, so a key is tied to its endpoint.
+   - **Models:** the gateway only exposes `typesafe-ai/jev` (`jev` or `jev-latest`). Versioned ids
+     such as `jev-1.13.0` return 404 `model_not_found`, and the response echoes the requested name
+     rather than the resolved version. Pinning is therefore impossible through the gateway.
+   - **Discrimination:** the answering note scored 0.95, a topical agenda note 0.03, and an
+     embedded-instruction note 0.02.
 2. Is 40 the right pool size? Phase 0/1 data decides this: take the smallest pool at which `wide`
    hit@40 on positives reaches 100% on the fixture.
 3. Should `recall.rerank` be shared (it follows the user to every machine, and machines without a
