@@ -32,6 +32,8 @@ import { ENGINES, isClaudeOnPath, type EngineContext } from "./engines";
 import {
   sha256,
   grade,
+  buildChildEnv,
+  recallModeLabel,
   applyBackupMarker,
   writeBackupMarkerAt,
   readBackupMarkerAt,
@@ -92,6 +94,7 @@ interface CliOptions {
   only: string[] | null;
   limit: number | null;
   timeoutMs: number;
+  rerank: boolean;
 }
 
 interface CaseOutcome {
@@ -116,6 +119,7 @@ function parseArgs(argv: string[]): CliOptions {
     only: null,
     limit: null,
     timeoutMs: 120_000,
+    rerank: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -140,6 +144,9 @@ function parseArgs(argv: string[]): CliOptions {
         break;
       case "--timeout":
         opts.timeoutMs = (Number.parseInt(argv[++i] ?? "", 10) || 120) * 1000;
+        break;
+      case "--rerank":
+        opts.rerank = true;
         break;
       case "--help":
       case "-h":
@@ -168,6 +175,9 @@ Options:
   --case <id[,id2]>  Run only the named case id(s) from evals/cases.json.
   --limit <n>        Run only the first n cases (after --case filtering).
   --timeout <sec>    Per-case timeout in seconds (default: 120).
+  --rerank           Run with recall reranking on (MINK_RECALL_RERANK=jev). Needs
+                     MINK_RECALL_RERANK_API_KEY or JEV_API_KEY; sends fixture note
+                     excerpts to the judge. Default: rerank forced off (baseline).
   --keep-tmp         Don't delete the temp fixture instance after the run.
 `);
 }
@@ -429,9 +439,10 @@ function selectCases(all: EvalCase[], opts: CliOptions): EvalCase[] {
   return selected;
 }
 
-function printScorecard(outcomes: CaseOutcome[]): boolean {
+function printScorecard(outcomes: CaseOutcome[], recallMode: string): boolean {
   console.log();
   console.log("mink-agent retrieval eval — scorecard");
+  console.log(`recall mode: ${recallMode}`);
   console.log("=".repeat(60));
 
   const byCategory = new Map<CaseCategory, CaseOutcome[]>();
@@ -527,11 +538,16 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    MINK_ROOT_OVERRIDE: fixture.minkRoot,
-    MINK_WIKI_PATH: fixture.vaultPath,
-  };
+  let env: NodeJS.ProcessEnv;
+  try {
+    env = buildChildEnv(process.env, fixture, { rerank: opts.rerank });
+  } catch (err) {
+    console.error(`[mink eval] ${err instanceof Error ? err.message : err}`);
+    fixture.cleanup();
+    activeFixture = null;
+    process.exit(1);
+  }
+  console.log(`[mink eval] recall mode: ${recallModeLabel(opts.rerank)}`);
 
   tryRebuildIndex(env, fixture.minkRoot);
 
@@ -575,7 +591,7 @@ async function main(): Promise<void> {
     activeFixture = null;
   }
 
-  const allPassed = printScorecard(outcomes);
+  const allPassed = printScorecard(outcomes, recallModeLabel(opts.rerank));
   process.exit(allPassed ? 0 : 1);
 }
 

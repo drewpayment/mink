@@ -361,6 +361,12 @@ recall falls back to lexical ordering and still exits 0; `--json` reports the re
 `retrieval.fallback_reason`. Keys are masked in `mink config` output. Tunables:
 `recall.rerank-model`, `-min-relevance`, `-pool-size`, `-timeout-ms`, `-concurrency`.
 
+**With `mink agent`:** the agent starts every search with your full question (the judge works
+best with complete sentences, not keyword digests), trusts the relevance ordering, and treats a
+judged-empty result as a strong "not found" instead of widening endlessly. It only uses reranking
+when your config enables it and never passes `--rerank` on its own; if the judge is unavailable it
+falls back to the lexical playbook.
+
 ### Vault structure
 
 ```
