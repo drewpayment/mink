@@ -213,3 +213,57 @@ export function grade(kase: EvalCase, output: string): { pass: boolean; reason: 
         }`,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Recall mode / child environment
+// ---------------------------------------------------------------------------
+
+export type RecallMode = "rerank" | "baseline";
+
+const RERANK_SECRET_VARS = ["MINK_RECALL_RERANK_API_KEY", "JEV_API_KEY"] as const;
+const RERANK_PASSTHROUGH_VARS = ["MINK_RECALL_RERANK_BASE_URL", "MINK_RECALL_RERANK_MODEL"] as const;
+
+export function recallModeLabel(rerank: boolean): string {
+  return rerank ? "rerank (jev)" : "baseline (rerank off)";
+}
+
+export function hasRerankKey(parent: NodeJS.ProcessEnv): boolean {
+  return RERANK_SECRET_VARS.some((k) => (parent[k] ?? "").trim() !== "");
+}
+
+/**
+ * Builds the env for the `claude -p` child. Always pins MINK_RECALL_RERANK
+ * explicitly so a user's global config/env can't silently change a run.
+ * With rerank on, the base URL / key pass through from the parent env and a
+ * missing key throws; with it off, the key vars are removed so a baseline
+ * run cannot rerank even by accident.
+ */
+export function buildChildEnv(
+  parent: NodeJS.ProcessEnv,
+  fixture: { minkRoot: string; vaultPath: string },
+  opts: { rerank: boolean }
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...parent,
+    MINK_ROOT_OVERRIDE: fixture.minkRoot,
+    MINK_WIKI_PATH: fixture.vaultPath,
+  };
+  for (const k of RERANK_SECRET_VARS) delete env[k];
+  for (const k of RERANK_PASSTHROUGH_VARS) delete env[k];
+
+  if (!opts.rerank) {
+    env.MINK_RECALL_RERANK = "off";
+    return env;
+  }
+  if (!hasRerankKey(parent)) {
+    throw new Error(
+      "--rerank needs a judge API key: set MINK_RECALL_RERANK_API_KEY or JEV_API_KEY " +
+        "(and MINK_RECALL_RERANK_BASE_URL if not using the default endpoint) in the environment."
+    );
+  }
+  env.MINK_RECALL_RERANK = "jev";
+  for (const k of [...RERANK_SECRET_VARS, ...RERANK_PASSTHROUGH_VARS]) {
+    if (parent[k] !== undefined) env[k] = parent[k];
+  }
+  return env;
+}

@@ -370,6 +370,12 @@ entries. The gateway only offers the floating `jev-latest`, so entries also expi
 (per machine, never synced), and `mink status` summarises the last 7 days: queries, cache hit rate,
 input tokens and estimated cost, and fallbacks. `--json` reports `retrieval.cache_hits`.
 
+**With `mink agent`:** the agent starts every search with your full question (the judge works
+best with complete sentences, not keyword digests), trusts the relevance ordering, and treats a
+judged-empty result as a strong "not found" instead of widening endlessly. It only uses reranking
+when your config enables it and never passes `--rerank` on its own; if the judge is unavailable it
+falls back to the lexical playbook.
+
 ### Vault structure
 
 ```
