@@ -26,7 +26,7 @@ describe("recall.rerank config keys", () => {
       "recall.rerank-api-key": ["", "local"],
       "recall.rerank-base-url": ["https://api.typesafe.ai", "local"],
       "recall.rerank-model": ["jev-latest", "shared"],
-      "recall.rerank-min-relevance": ["0.5", "shared"],
+      "recall.rerank-min-relevance": ["0.7", "shared"],
       "recall.rerank-pool-size": ["40", "shared"],
       "recall.rerank-timeout-ms": ["3000", "shared"],
       "recall.rerank-concurrency": ["8", "shared"],
@@ -86,7 +86,7 @@ describe("resolveRerankSettings", () => {
       apiKey: "",
       baseUrl: RERANK_DEFAULTS.baseUrl,
       model: "jev-latest",
-      minRelevance: 0.5,
+      minRelevance: 0.7,
       poolSize: 40,
       timeoutMs: 3000,
       concurrency: 8,
@@ -130,12 +130,12 @@ describe("resolveRerankSettings", () => {
     process.env.MINK_RECALL_RERANK_CONCURRENCY = "9999";
     const s = resolveRerankSettings();
     expect(s.mode).toBe("off");
-    expect(s.minRelevance).toBe(0.5);
+    expect(s.minRelevance).toBe(0.7);
     expect(s.poolSize).toBe(40);
     expect(s.timeoutMs).toBe(3000);
     expect(s.concurrency).toBe(8);
     process.env.MINK_RECALL_RERANK_MIN_RELEVANCE = "1.5";
-    expect(resolveRerankSettings().minRelevance).toBe(0.5);
+    expect(resolveRerankSettings().minRelevance).toBe(0.7);
     process.env.MINK_RECALL_RERANK_MIN_RELEVANCE = "0";
     expect(resolveRerankSettings().minRelevance).toBe(0);
   });

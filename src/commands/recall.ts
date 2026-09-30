@@ -95,7 +95,7 @@ export async function recall(_cwd: string, args: string[]): Promise<void> {
   let results: RecallResult[];
   let candidateCount = 0;
   let judgeSummary: RetrievalSummary | null = null;
-  let minRelevance = parsed.minRelevance ?? 0.5;
+  let minRelevance = parsed.minRelevance ?? 0.7;
   try {
     const opts = {
       limit: parsed.limit,
@@ -153,6 +153,7 @@ export async function recall(_cwd: string, args: string[]): Promise<void> {
           fallback_reason: judgeSummary.fallback_reason,
           judge_model: judgeSummary.judge_model,
           input_tokens: judgeSummary.input_tokens,
+          cache_hits: judgeSummary.cache_hits,
         }
       : {
           ranker: parsed.wide ? "wide" : "lexical",

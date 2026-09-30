@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
-import { WikiSearchRepo, buildFtsQueryAny, type WikiSearchNoteInput } from "../../../src/repositories/wiki-search-repo";
+import { WikiSearchRepo, judgmentKeyId, buildFtsQueryAny, type WikiSearchNoteInput } from "../../../src/repositories/wiki-search-repo";
 import { _resetWikiSearchDbForTests } from "../../../src/storage/wiki-search-db";
 
 let tempDir: string;
@@ -602,5 +602,86 @@ describe("WikiSearchRepo.searchCandidates", () => {
       expect(paths({ since: "2024-01-01T00:00:00.000Z" })).not.toContain("projects/a/old.md");
       expect(paths({ category: "inbox" })).toEqual([]);
     });
+  });
+});
+
+describe("judgment cache", () => {
+  const key = (path: string, over: Record<string, string> = {}) => ({
+    queryNorm: "q",
+    path,
+    reprHash: "h1",
+    judgeKey: "m/v1",
+    ...over,
+  });
+
+  test("put/get round trip; misses (other hash, model, query) are absent", () => {
+    const repo = WikiSearchRepo.forVault();
+    repo.putJudgments([
+      { ...key("a.md"), relevance: 0.8 },
+      { ...key("b.md"), relevance: 0.1 },
+    ]);
+    const got = repo.getJudgments([
+      key("a.md"),
+      key("b.md"),
+      key("a.md", { reprHash: "h2" }),
+      key("a.md", { judgeKey: "other/v1" }),
+      key("a.md", { queryNorm: "other" }),
+      key("missing.md"),
+    ]);
+    expect([...got.values()].sort()).toEqual([0.1, 0.8]);
+    expect(got.get(judgmentKeyId(key("a.md")))).toBe(0.8);
+    // upsert replaces
+    repo.putJudgments([{ ...key("a.md"), relevance: 0.2 }]);
+    expect(repo.getJudgments([key("a.md")]).get(judgmentKeyId(key("a.md")))).toBe(0.2);
+  });
+
+  test("prune drops entries older than the max age", () => {
+    const repo = WikiSearchRepo.forVault();
+    const now = 1_000_000_000_000;
+    repo.putJudgments([
+      { ...key("old.md"), relevance: 0.5, judgedAt: now - 40 * 86_400_000 },
+      { ...key("new.md"), relevance: 0.5, judgedAt: now - 1000 },
+    ]);
+    expect(repo.pruneJudgments({ now })).toBe(1);
+    expect(repo.getJudgments([key("old.md"), key("new.md")]).size).toBe(1);
+  });
+
+  test("prune enforces the row cap, keeping the newest", () => {
+    const repo = WikiSearchRepo.forVault();
+    const now = 1_000_000_000_000;
+    repo.putJudgments(
+      Array.from({ length: 10 }, (_, i) => ({ ...key(`n${i}.md`), relevance: 0.5, judgedAt: now - (10 - i) * 1000 }))
+    );
+    repo.pruneJudgments({ maxRows: 4, now });
+    const kept = repo.getJudgments(Array.from({ length: 10 }, (_, i) => key(`n${i}.md`)));
+    expect(kept.size).toBe(4);
+    expect(kept.has(judgmentKeyId(key("n9.md")))).toBe(true);
+    expect(kept.has(judgmentKeyId(key("n0.md")))).toBe(false);
+  });
+
+  test("a v1 database upgrades in place to v2 without losing notes", () => {
+    const { openDriver } = require("../../../src/storage/driver");
+    const { WIKI_SEARCH_SCHEMA_VERSION, WIKI_SEARCH_INITIAL_SCHEMA } = require("../../../src/storage/wiki-search-schema");
+    const dbPath = join(tempDir, ".mink-search.db");
+    const raw = openDriver(dbPath);
+    // Build a genuine v1 database: current schema minus judgment_cache, stamped 1.
+    raw.exec(WIKI_SEARCH_INITIAL_SCHEMA.split("-- LLM relevance judgments")[0]);
+    raw.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '1')").run();
+    raw
+      .prepare(
+        "INSERT INTO notes (path, title, category, mtime_ms, updated_at) VALUES ('keep.md', 'Keep', 'inbox', 1, 'x')"
+      )
+      .run();
+    expect(raw.prepare("SELECT name FROM sqlite_master WHERE name = 'judgment_cache'").get()).toBeUndefined();
+    raw.close();
+
+    const repo = WikiSearchRepo.forVault(); // opens + applies the schema
+    repo.putJudgments([{ ...key("keep.md"), relevance: 0.7 }]);
+    expect(repo.getJudgments([key("keep.md")]).size).toBe(1);
+    expect(repo.getBodies(["keep.md"]).has("keep.md")).toBe(true);
+    const db = require("../../../src/storage/wiki-search-db").openWikiSearchDb();
+    const v = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string };
+    expect(v.value).toBe(String(WIKI_SEARCH_SCHEMA_VERSION));
+    expect(WIKI_SEARCH_SCHEMA_VERSION).toBe(2);
   });
 });

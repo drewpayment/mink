@@ -293,7 +293,7 @@ JEV_API_KEY=... MINK_RECALL_RERANK_BASE_URL=https://ai-gateway.vercel.sh/typesaf
   roughly $0.001 per query at $0.042 per million tokens. The full case set runs one query per
   question plus one per keyword variant, so budget for a few hundred judge calls per query
   count, and read the `judge tok` column for the actual total.
-- `--min-relevance <p>` overrides the threshold (default 0.5) for calibration sweeps.
+- `--min-relevance <p>` overrides the threshold (default 0.7) for one-off runs. For calibration use `--sweep` (below).
 
 ### Judge results
 
@@ -322,4 +322,42 @@ Remaining misses:
 - **`negative-atlas-mobile-language`** returns the Atlas Web overview rather than abstaining.
 - **`body-hit-atlas-state-library`** ("atlas web state library") is judged-empty.
 
-The threshold (0.5) is a placeholder until the Phase 3 calibration sweep.
+This run used the old placeholder threshold 0.5. The calibrated default is now 0.7 (see Threshold sweep).
+
+### Threshold sweep
+
+```bash
+JEV_API_KEY=... MINK_RECALL_RERANK_BASE_URL=https://ai-gateway.vercel.sh/typesafe \
+  bun run eval:retrieval --sweep            # arms default to strict,wide,judge
+bun run eval:retrieval --arms judge --sweep --json
+```
+
+`--sweep` needs the judge arm. It runs that arm **once** with `minRelevance = 0`, keeps each
+result's judged `relevance`, then re-derives every ranked list offline for thresholds 0.1 to 0.9
+(step 0.1) by dropping results below the threshold. hit@1, hit@3, MRR, abstention and adv-pass are
+recomputed per scope for each threshold, so a full sweep costs one judge pass. `--min-relevance` is
+rejected with `--sweep`.
+
+The recommendation line is the highest threshold that maximises negative abstention (question
+scope) without pushing positive hit@3 below its value at 0.1. Because the gateway floats
+`jev-latest`, repeat the sweep when the model changes or scores shift unexpectedly.
+
+Calibration run: 2026-09-30, `jev-latest` via the Vercel AI Gateway, fixture vault (28 cases).
+
+| threshold | question hit@1 / hit@3 / abstain | queries-avg hit@1 / hit@3 / abstain | queries-best hit@1 / abstain |
+| --- | --- | --- | --- |
+| 0.1–0.4 | 95% / 100% / 83% | 95% / 98% / 83–92% | 100% / 83% |
+| 0.5 (old default) | 95% / 100% / 83% | 90% / 93% / 92% | 95% / 83% |
+| 0.6 | 95% / 100% / **100%** | 90% / 93% / 92% | 95% / 83% |
+| **0.7 (default)** | **95% / 100% / 100%** | **90% / 93% / 100%** | **95% / 100%** |
+| 0.8 | 95% / 100% / 100% | 86% / 88% / 100% | — |
+| 0.9 | 86% / 91% / 100% | 69% / 69% / 100% | — |
+
+The adversarial note never ranks first at any threshold.
+
+Recommended `recall.rerank-min-relevance`: **0.7**. The sweep's automatic rule (question scope
+only) picks 0.8, but 0.8 costs keyword-query hits (queries-avg hit@3 falls from 93% to 88%). 0.7 is
+the highest threshold that is perfect on full questions without losing any keyword-query hit
+relative to 0.5, and it is at least as good as 0.5 and 0.6 in every scope. Caveat: the fixture has
+only 6 negative cases, so treat this as a sensible default rather than a precise optimum. Re-run
+the sweep on model changes.

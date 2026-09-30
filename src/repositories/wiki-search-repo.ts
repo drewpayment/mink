@@ -76,6 +76,27 @@ export interface RelatedResult extends NoteRef {
 // `mink recall` contract.
 const BM25_WEIGHTS = { title: 10.0, aliases: 8.0, tags: 4.0, body: 1.0 };
 
+export interface JudgmentKey {
+  queryNorm: string;
+  path: string;
+  reprHash: string;
+  judgeKey: string;
+}
+
+export interface JudgmentEntry extends JudgmentKey {
+  relevance: number;
+  /** Epoch ms; defaults to now on put. */
+  judgedAt?: number;
+}
+
+export const JUDGMENT_CACHE_MAX_ROWS = 20_000;
+export const JUDGMENT_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Stable map key for a composite judgment key. */
+export function judgmentKeyId(k: JudgmentKey): string {
+  return JSON.stringify([k.queryNorm, k.path, k.reprHash, k.judgeKey]);
+}
+
 export class WikiSearchRepo {
   constructor(private readonly db: DbDriver) {}
 
@@ -150,6 +171,94 @@ export class WikiSearchRepo {
       for (const r of rows) out.set(r.path, r.body ?? "");
     }
     return out;
+  }
+
+  // ── Judgment cache ───────────────────────────────────────────────────────
+
+  /** Batch lookup; the result is keyed by judgmentKeyId(). Misses are absent. */
+  getJudgments(keys: JudgmentKey[]): Map<string, number> {
+    const out = new Map<string, number>();
+    // Group by (query, judge) so each group is one `path IN (...)` query.
+    const groups = new Map<string, JudgmentKey[]>();
+    for (const k of keys) {
+      const g = JSON.stringify([k.queryNorm, k.judgeKey]);
+      const list = groups.get(g);
+      if (list) list.push(k);
+      else groups.set(g, [k]);
+    }
+    const CHUNK = 400;
+    for (const group of groups.values()) {
+      for (let i = 0; i < group.length; i += CHUNK) {
+        const chunk = group.slice(i, i + CHUNK);
+        const marks = chunk.map(() => "?").join(", ");
+        const rows = this.db
+          .prepare(
+            `SELECT query_norm, path, repr_hash, judge_key, relevance FROM judgment_cache
+             WHERE query_norm = ? AND judge_key = ? AND path IN (${marks})`
+          )
+          .all(chunk[0].queryNorm, chunk[0].judgeKey, ...chunk.map((k) => k.path)) as unknown as Array<{
+          query_norm: string;
+          path: string;
+          repr_hash: string;
+          judge_key: string;
+          relevance: number;
+        }>;
+        const wanted = new Set(chunk.map(judgmentKeyId));
+        for (const r of rows) {
+          const id = judgmentKeyId({
+            queryNorm: r.query_norm,
+            path: r.path,
+            reprHash: r.repr_hash,
+            judgeKey: r.judge_key,
+          });
+          if (wanted.has(id)) out.set(id, Number(r.relevance));
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Upserts all entries in one transaction. */
+  putJudgments(entries: JudgmentEntry[]): void {
+    if (entries.length === 0) return;
+    const now = Date.now();
+    this.db.transaction(() => {
+      const stmt = this.db.prepare(
+        `INSERT INTO judgment_cache (query_norm, path, repr_hash, judge_key, relevance, judged_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(query_norm, path, repr_hash, judge_key) DO UPDATE SET
+           relevance = excluded.relevance, judged_at = excluded.judged_at`
+      );
+      for (const e of entries) {
+        stmt.run(e.queryNorm, e.path, e.reprHash, e.judgeKey, e.relevance, e.judgedAt ?? now);
+      }
+    });
+  }
+
+  /** Drops entries older than maxAgeMs, then the oldest rows beyond maxRows. Returns rows deleted. */
+  pruneJudgments(opts: { maxRows?: number; maxAgeMs?: number; now?: number } = {}): number {
+    const maxRows = opts.maxRows ?? JUDGMENT_CACHE_MAX_ROWS;
+    const maxAgeMs = opts.maxAgeMs ?? JUDGMENT_CACHE_MAX_AGE_MS;
+    const now = opts.now ?? Date.now();
+    let deleted = 0;
+    this.db.transaction(() => {
+      deleted += Number(
+        this.db.prepare("DELETE FROM judgment_cache WHERE judged_at < ?").run(now - maxAgeMs).changes
+      );
+      const row = this.db.prepare("SELECT COUNT(*) AS n FROM judgment_cache").get() as { n: number } | undefined;
+      const excess = Number(row?.n ?? 0) - maxRows;
+      if (excess > 0) {
+        deleted += Number(
+          this.db
+            .prepare(
+              `DELETE FROM judgment_cache WHERE rowid IN
+                 (SELECT rowid FROM judgment_cache ORDER BY judged_at ASC LIMIT ?)`
+            )
+            .run(excess).changes
+        );
+      }
+    });
+    return deleted;
   }
 
   listAllPaths(): Array<{ path: string; mtimeMs: number }> {
