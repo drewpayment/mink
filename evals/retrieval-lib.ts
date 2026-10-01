@@ -25,6 +25,8 @@
 export interface RankedResult {
   path: string;
   score?: number;
+  /** Judged relevance (0..1), when the arm is a judge; enables the threshold sweep. */
+  relevance?: number;
   /** Tokens an external judge consumed to produce this ranking (per query). */
   judgeInputTokens?: number;
 }
@@ -71,6 +73,8 @@ export interface VariantOutcome {
   kind: VariantKind;
   query: string;
   ranked: string[];
+  /** Judge relevance parallel to `ranked` (descending); absent for non-judge arms and fallbacks. */
+  relevances?: number[];
   latencyMs: number;
   /** 1-based rank of the first expected path, null if absent. */
   rank: number | null;
@@ -201,6 +205,9 @@ export function scoreVariant(
     kind,
     query,
     ranked,
+    ...(results.length > 0 && results.every((r) => typeof r.relevance === "number")
+      ? { relevances: results.map((r) => r.relevance as number) }
+      : {}),
     latencyMs,
     rank: rankOfFirst(ranked, kase.expected_paths),
     adversarialRank: rankOfFirst(ranked, kase.adversarial_paths ?? []),
@@ -353,6 +360,7 @@ export interface RetrievalReport {
   caseCount: number;
   arms: ArmReport[];
   skipped: SkippedArm[];
+  sweep?: { rows: SweepRow[]; recommendation: SweepRecommendation };
 }
 
 export function buildArmReport(name: string, cases: CaseResult[], adversarialCaseIds: Set<string>): ArmReport {
@@ -365,6 +373,105 @@ export function buildArmReport(name: string, cases: CaseResult[], adversarialCas
     scopes[scope] = { overall: computeMetrics(units), byCategory };
   }
   return { name, scopes, cases };
+}
+
+// ---------------------------------------------------------------------------
+// Threshold sweep
+// ---------------------------------------------------------------------------
+
+export const SWEEP_THRESHOLDS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+
+/**
+ * Re-derives a judge arm's outcomes as if `minRelevance` had been `threshold`:
+ * results below it are dropped (order is preserved, the judge sorts by
+ * relevance). Variants without relevances (fallbacks, empty results) are left
+ * as they were. Only the rank/abstention-relevant fields change.
+ */
+export function applyThreshold(cases: CaseResult[], kases: RetrievalCase[], threshold: number): CaseResult[] {
+  const byId = new Map(kases.map((k) => [k.id, k]));
+  return cases.map((c) => {
+    const kase = byId.get(c.id);
+    if (!kase) return c;
+    return {
+      ...c,
+      variants: c.variants.map((v) => {
+        if (!v.relevances) return v;
+        const keep = v.relevances.map((r) => r >= threshold);
+        const ranked = v.ranked.filter((_, i) => keep[i]);
+        return {
+          ...v,
+          ranked,
+          relevances: v.relevances.filter((_, i) => keep[i]),
+          rank: rankOfFirst(ranked, kase.expected_paths),
+          adversarialRank: rankOfFirst(ranked, kase.adversarial_paths ?? []),
+        };
+      }),
+    };
+  });
+}
+
+export interface SweepRow {
+  threshold: number;
+  scopes: Record<Scope, Metrics>;
+}
+
+export function sweepThresholds(
+  cases: CaseResult[],
+  kases: RetrievalCase[],
+  adversarialCaseIds: Set<string>,
+  thresholds: number[] = SWEEP_THRESHOLDS
+): SweepRow[] {
+  return thresholds.map((threshold) => {
+    const derived = applyThreshold(cases, kases, threshold);
+    const scopes = {} as Record<Scope, Metrics>;
+    for (const scope of SCOPES) scopes[scope] = computeMetrics(buildUnits(derived, scope, adversarialCaseIds));
+    return { threshold, scopes };
+  });
+}
+
+export interface SweepRecommendation {
+  threshold: number | null;
+  reason: string;
+}
+
+/**
+ * Highest threshold that maximises negative abstention (question scope)
+ * without dropping positive hit@3 below its value at the lowest threshold.
+ */
+export function recommendThreshold(rows: SweepRow[]): SweepRecommendation {
+  if (rows.length === 0) return { threshold: null, reason: "no sweep rows" };
+  const sorted = [...rows].sort((a, b) => a.threshold - b.threshold);
+  const floor = sorted[0].scopes.question.hit3;
+  const eligible = sorted.filter((r) => floor === null || (r.scopes.question.hit3 ?? 0) >= floor);
+  const abst = (r: SweepRow) => r.scopes.question.abstention ?? 0;
+  const best = Math.max(...eligible.map(abst));
+  const pick = [...eligible].reverse().find((r) => abst(r) === best) as SweepRow;
+  return {
+    threshold: pick.threshold,
+    reason:
+      `highest threshold maximising negative abstention (${pct(pick.scopes.question.abstention)}) ` +
+      `with question hit@3 >= ${pct(floor)} (its value at ${sorted[0].threshold.toFixed(1)})`,
+  };
+}
+
+export function renderSweep(rows: SweepRow[], rec: SweepRecommendation): string {
+  const out: string[] = ["## Threshold sweep (judge arm, single pass at minRelevance=0)", ""];
+  for (const scope of SCOPES) {
+    out.push(`### ${scope}`, "");
+    out.push(
+      table(
+        ["threshold", ...METRIC_HEADER.slice(0, 8)],
+        rows.map((r) => metricRow(r.threshold.toFixed(1), r.scopes[scope]).slice(0, 9))
+      ),
+      ""
+    );
+  }
+  out.push(
+    rec.threshold === null
+      ? `Recommendation: none (${rec.reason})`
+      : `Recommendation: recall.rerank-min-relevance ${rec.threshold.toFixed(1)} (${rec.reason})`
+  );
+  return out.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -537,6 +644,7 @@ export function renderScorecard(report: RetrievalReport, verbose = false): strin
     "",
     renderSummary(report),
     "",
+    ...(report.sweep ? [renderSweep(report.sweep.rows, report.sweep.recommendation), ""] : []),
     renderCategories(report),
     renderCaseDetail(report, verbose),
   ].join("\n");

@@ -2,7 +2,7 @@
 // fixture vault, with no agent, network or API key involved. See
 // evals/README.md "Retrieval-level eval".
 //
-//   bun evals/retrieval.ts [--arms strict,wide,judge] [--json] [--verbose] [--limit 10] [--min-relevance 0.5]
+//   bun evals/retrieval.ts [--arms strict,wide,judge] [--json] [--verbose] [--limit 10] [--min-relevance 0.5] [--sweep]
 //
 // It is a scoreboard, not a gate: exit 0 even when cases miss; non-zero only
 // on harness errors.
@@ -13,6 +13,8 @@ import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import {
   buildArmReport,
+  recommendThreshold,
+  sweepThresholds,
   parseArmsFlag,
   renderScorecard,
   runArm,
@@ -162,7 +164,7 @@ export function judgeArm(opts: { minRelevance?: number } = {}): RetrievalArm {
         minRelevance: opts.minRelevance,
       });
       return {
-        results: out.results.map((r) => ({ path: r.path, score: r.relevance ?? r.score })),
+        results: out.results.map((r) => ({ path: r.path, score: r.relevance ?? r.score, relevance: r.relevance })),
         judgeInputTokens: out.summary.input_tokens,
         fallbackReason: out.summary.fallback_reason,
       };
@@ -180,16 +182,18 @@ interface CliOptions {
   verbose: boolean;
   limit: number;
   minRelevance?: number;
+  sweep: boolean;
 }
 
 export function parseCli(argv: string[]): CliOptions {
-  const o: CliOptions = { arms: null, json: false, verbose: false, limit: 10 };
+  const o: CliOptions = { arms: null, json: false, verbose: false, limit: 10, sweep: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--json") o.json = true;
     else if (a === "--verbose") o.verbose = true;
     else if (a === "--arms") o.arms = parseArmsFlag(argv[++i] ?? "");
     else if (a.startsWith("--arms=")) o.arms = parseArmsFlag(a.slice(7));
+    else if (a === "--sweep") o.sweep = true;
     else if (a === "--limit") o.limit = Number(argv[++i]);
     else if (a === "--min-relevance") o.minRelevance = Number(argv[++i]);
     else if (a.startsWith("--min-relevance=")) o.minRelevance = Number(a.slice(16));
@@ -199,10 +203,16 @@ export function parseCli(argv: string[]): CliOptions {
   if (o.minRelevance !== undefined && !(o.minRelevance >= 0 && o.minRelevance <= 1)) {
     throw new Error("--min-relevance must be a number between 0 and 1");
   }
+  if (o.sweep && o.arms !== null && !o.arms.includes("judge")) throw new Error("--sweep requires the judge arm (--arms ...,judge)");
+  if (o.sweep && o.arms === null) o.arms = ["strict", "wide", "judge"];
+  if (o.sweep && o.minRelevance !== undefined) throw new Error("--sweep runs the judge arm at minRelevance 0; drop --min-relevance");
   return o;
 }
 
-export async function runRetrievalEval(opts: CliOptions, arms = registeredArms({ minRelevance: opts.minRelevance })): Promise<RetrievalReport> {
+export async function runRetrievalEval(
+  opts: CliOptions,
+  arms = registeredArms({ minRelevance: opts.sweep ? 0 : opts.minRelevance })
+): Promise<RetrievalReport> {
   const cases = loadRetrievalCases();
   const { active, skipped } = selectArms(arms, opts.arms);
   const adversarial = new Set(cases.filter((c) => (c.adversarial_paths ?? []).length > 0).map((c) => c.id));
@@ -214,6 +224,10 @@ export async function runRetrievalEval(opts: CliOptions, arms = registeredArms({
     for (const arm of active) {
       const results = await runArm(arm, cases, opts.limit);
       report.arms.push(buildArmReport(arm.name, results, adversarial));
+      if (opts.sweep && arm.name === "judge") {
+        const rows = sweepThresholds(results, cases, adversarial);
+        report.sweep = { rows, recommendation: recommendThreshold(rows) };
+      }
     }
   } finally {
     fixture.cleanup();

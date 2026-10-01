@@ -361,6 +361,15 @@ recall falls back to lexical ordering and still exits 0; `--json` reports the re
 `retrieval.fallback_reason`. Keys are masked in `mink config` output. Tunables:
 `recall.rerank-model`, `-min-relevance`, `-pool-size`, `-timeout-ms`, `-concurrency`.
 
+**Caching and usage.** Judgments are cached in the vault's search index
+(`<vault>/.mink-search.db`, never synced), keyed by normalised query, note path, a hash of exactly
+what was sent (title, tags, excerpt) and `model/question-version`. Repeating a query, or asking it
+again after editing an unrelated note, costs no tokens; editing a note invalidates only its own
+entries. The gateway only offers the floating `jev-latest`, so entries also expire after 30 days
+(cache is capped at 20k rows). Each reranked recall appends a line to `~/.mink/recall-usage.jsonl`
+(per machine, never synced), and `mink status` summarises the last 7 days: queries, cache hit rate,
+input tokens and estimated cost, and fallbacks. `--json` reports `retrieval.cache_hits`.
+
 ### Vault structure
 
 ```

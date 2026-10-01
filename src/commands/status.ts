@@ -20,6 +20,7 @@ import {
 } from "../core/state-aggregator";
 import { loadCounters } from "../core/state-counters";
 import { getDaemonStatus } from "../core/daemon";
+import { summarizeRecallUsage, formatRecallUsageLine } from "../core/recall-usage";
 import { totalEntryCount } from "../core/learning-memory";
 
 interface FileCheck {
@@ -199,6 +200,17 @@ export function status(cwd: string): void {
     console.log("  Bug log: error reading");
   }
   console.log();
+
+  // Recall rerank usage (spec 25): omitted when there is none in the window.
+  try {
+    const usage = summarizeRecallUsage();
+    if (usage) {
+      console.log(`  ${formatRecallUsageLine(usage)}`);
+      console.log();
+    }
+  } catch {
+    // best-effort
+  }
 
   // Section 6: Daemon status
   try {

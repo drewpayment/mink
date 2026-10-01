@@ -263,7 +263,7 @@ export const CONFIG_KEYS: ConfigKeyMeta[] = [
   },
   {
     key: "recall.rerank-min-relevance",
-    default: "0.5",
+    default: "0.7",
     envVar: "MINK_RECALL_RERANK_MIN_RELEVANCE",
     description: "Drop reranked results scoring below this relevance probability (0-1)",
     scope: "shared",

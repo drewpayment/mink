@@ -11,10 +11,11 @@ import {
   DEFAULT_POOL_SIZE,
 } from "./wiki-search";
 import { resolveConfigValue } from "./global-config";
-import { rerank, type RetrievalSummary } from "./rerank";
+import { rerank, normalizeQuery, candidateReprHash, type JudgmentCache, type RetrievalSummary } from "./rerank";
+import { appendRecallUsage } from "./recall-usage";
 import { createJevJudge } from "./judges/jev";
-import type { RelevanceJudge } from "./relevance-judge";
-import { WikiSearchRepo, type RecallOptions, type RecallResult } from "../repositories/wiki-search-repo";
+import type { JudgeCandidate, RelevanceJudge } from "./relevance-judge";
+import { WikiSearchRepo, judgmentKeyId, type RecallOptions, type RecallResult } from "../repositories/wiki-search-repo";
 import type { ConfigKey } from "../types/config";
 
 export type RecallMode = "strict" | "wide" | "judge";
@@ -33,7 +34,7 @@ export interface RerankSettings {
 export const RERANK_DEFAULTS = {
   baseUrl: "https://api.typesafe.ai",
   model: "jev-latest",
-  minRelevance: 0.5,
+  minRelevance: 0.7,
   poolSize: 40,
   timeoutMs: 3000,
   concurrency: 8,
@@ -100,6 +101,41 @@ export interface RecallRankedOutcome {
   summary: RetrievalSummary;
 }
 
+/** SQLite-backed judgment cache in the vault's search DB. */
+export function createSqliteJudgmentCache(repo: WikiSearchRepo): JudgmentCache {
+  return {
+    get(query, candidates: JudgeCandidate[], judgeKey) {
+      const queryNorm = normalizeQuery(query);
+      const keys = candidates.map((c) => ({
+        queryNorm,
+        path: c.path,
+        reprHash: candidateReprHash(c),
+        judgeKey,
+      }));
+      const found = repo.getJudgments(keys);
+      const out = new Map<string, number>();
+      keys.forEach((k) => {
+        const rel = found.get(judgmentKeyId(k));
+        if (rel !== undefined) out.set(k.path, rel);
+      });
+      return out;
+    },
+    put(query, entries, judgeKey) {
+      const queryNorm = normalizeQuery(query);
+      repo.putJudgments(
+        entries.map((e) => ({
+          queryNorm,
+          path: e.candidate.path,
+          reprHash: candidateReprHash(e.candidate),
+          judgeKey,
+          relevance: e.relevance,
+        }))
+      );
+      repo.pruneJudgments();
+    },
+  };
+}
+
 export async function recallRanked(
   query: string,
   opts: RecallOptions,
@@ -119,6 +155,7 @@ export async function recallRanked(
         fallback_reason: null,
         judge_model: null,
         input_tokens: 0,
+        cache_hits: 0,
       },
     };
   }
@@ -141,6 +178,7 @@ export async function recallRanked(
         fallback_reason: fallback,
         judge_model: null,
         input_tokens: 0,
+        cache_hits: 0,
       },
     };
   };
@@ -155,11 +193,16 @@ export async function recallRanked(
   }
   if (pool.length === 0) return widePlain(null);
 
-  const bodies = WikiSearchRepo.forVault().getBodies(pool.map((r) => r.path));
-  return rerank(query, pool, bodies, judge, {
+  const repo = WikiSearchRepo.forVault();
+  const bodies = repo.getBodies(pool.map((r) => r.path));
+  const t0 = Date.now();
+  const out = await rerank(query, pool, bodies, judge, {
     budgetMs: settings.timeoutMs,
     concurrency: settings.concurrency,
     minRelevance: cfg.minRelevance ?? settings.minRelevance,
     limit,
+    cache: createSqliteJudgmentCache(repo),
   });
+  appendRecallUsage(out.summary, Date.now() - t0);
+  return out;
 }

@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { afterEach, beforeEach } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { parseRecallArgs, recall } from "../../../src/commands/recall";
 import { ensureVaultStructure, vaultManifestPath } from "../../../src/core/vault";
@@ -229,7 +229,7 @@ describe("mink recall command — judge reranking", () => {
   const scores: Record<string, number> = {
     "resources/bucket.md": 0.95,
     "meetings/agenda.md": 0.03,
-    "resources/limits.md": 0.6,
+    "resources/limits.md": 0.75,
   };
   const fakeJudge = (behaviour?: (path: string) => JudgeError | null): RelevanceJudge => ({
     modelVersion: "fake-model",
@@ -294,7 +294,7 @@ describe("mink recall command — judge reranking", () => {
     expect(err).toBe("");
     expect(Object.keys(json)).toEqual(["query", "results", "retrieval"]);
     expect(json.results.map((r: { path: string }) => r.path)).toEqual(["resources/bucket.md", "resources/limits.md"]);
-    expect(json.results.map((r: { relevance: number }) => r.relevance)).toEqual([0.95, 0.6]);
+    expect(json.results.map((r: { relevance: number }) => r.relevance)).toEqual([0.95, 0.75]);
     expect(json.results[0]).toMatchObject({ path: "resources/bucket.md", title: "Partner bucket" });
     expect(json.retrieval).toEqual({
       ranker: "judge",
@@ -304,6 +304,7 @@ describe("mink recall command — judge reranking", () => {
       fallback_reason: null,
       judge_model: "fake-model",
       input_tokens: 300,
+      cache_hits: 0,
     });
     expect(judged.sort()).toEqual(["meetings/agenda.md", "resources/bucket.md", "resources/limits.md"]);
   });
@@ -315,12 +316,37 @@ describe("mink recall command — judge reranking", () => {
     expect(json.retrieval.candidates).toBe(3);
   });
 
+  test("judge mode reports cache_hits; an identical second query makes zero judge calls", async () => {
+    fake();
+    const first = JSON.parse((await run(["--rerank", "--json", "partner throttling"])).out);
+    expect(first.retrieval.cache_hits).toBe(0);
+    expect(judged.length).toBe(3);
+    judged = [];
+    const second = JSON.parse((await run(["--rerank", "--json", "Partner   THROTTLING"])).out);
+    expect(judged).toEqual([]);
+    expect(second.retrieval).toMatchObject({ ranker: "judge", cache_hits: 3, judged: 3, input_tokens: 0 });
+    expect(second.results.map((r: { path: string }) => r.path)).toEqual(first.results.map((r: { path: string }) => r.path));
+  });
+
+  test("usage is logged for judge mode only (not strict or wide)", async () => {
+    const usage = join(fx.current.minkRoot, "recall-usage.jsonl");
+    fake();
+    await run(["--json", "token bucket"]);
+    await run(["--no-rerank", "--wide", "--json", "partner throttling"]);
+    expect(existsSync(usage)).toBe(false);
+    await run(["--rerank", "--json", "partner throttling"]);
+    const lines = readFileSync(usage, "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines.length).toBe(1);
+    expect(lines[0]).toMatchObject({ candidates: 3, judged: 3, cache_hits: 0, input_tokens: 300, fallback_reason: null, judge_model: "fake-model" });
+    expect(typeof lines[0].latency_ms).toBe("number");
+  });
+
   test("human output shows relevance per hit", async () => {
     fake();
     const { out } = await run(["--rerank", "partner throttling"]);
     expect(out).toContain("2 results for");
     expect(out).toContain("relevance 0.95");
-    expect(out).toContain("relevance 0.60");
+    expect(out).toContain("relevance 0.75");
     expect(out.indexOf("Partner bucket")).toBeLessThan(out.indexOf("Partner limits"));
     expect(out).not.toContain("reranking not applied");
   });

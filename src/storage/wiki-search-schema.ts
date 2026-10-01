@@ -11,7 +11,14 @@
 // Column weighting (see wiki-search-repo.ts's bm25() call) makes title/alias
 // hits outrank body hits, per the `mink recall` ranking contract.
 
-export const WIKI_SEARCH_SCHEMA_VERSION = 1;
+export const WIKI_SEARCH_SCHEMA_VERSION = 2;
+
+// Version history
+//   1  notes / notes_fts / links
+//   2  + judgment_cache (spec 25 phase 3). Purely additive, so a v1 database
+//      upgrades in place: every statement below is CREATE ... IF NOT EXISTS
+//      and applyWikiSearchSchema() then stamps meta.schema_version = 2. No
+//      rebuild is needed and no notes/links data is touched.
 
 export const WIKI_SEARCH_INITIAL_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -74,6 +81,22 @@ CREATE TABLE IF NOT EXISTS links (
 CREATE INDEX IF NOT EXISTS idx_links_source   ON links(source_path);
 CREATE INDEX IF NOT EXISTS idx_links_resolved ON links(resolved_path);
 CREATE INDEX IF NOT EXISTS idx_links_target   ON links(target);
+
+-- LLM relevance judgments (spec 25). Derived, per-machine, safely droppable.
+-- repr_hash is the sha256 of the exact JudgeCandidate sent, so editing a
+-- note's title/tags/excerpt invalidates its entries. judge_key is
+-- '<model>/<question version>'; the gateway floats 'jev-latest', so entries
+-- also expire by age (see WikiSearchRepo.pruneJudgments).
+CREATE TABLE IF NOT EXISTS judgment_cache (
+  query_norm  TEXT NOT NULL,
+  path        TEXT NOT NULL,
+  repr_hash   TEXT NOT NULL,
+  judge_key   TEXT NOT NULL,
+  relevance   REAL NOT NULL,
+  judged_at   INTEGER NOT NULL,
+  PRIMARY KEY (query_norm, path, repr_hash, judge_key)
+);
+CREATE INDEX IF NOT EXISTS idx_judgment_cache_judged_at ON judgment_cache(judged_at);
 `;
 
 export interface DriverForWikiSchema {
@@ -86,7 +109,7 @@ export interface DriverForWikiSchema {
 
 export function applyWikiSearchSchema(db: DriverForWikiSchema): void {
   db.exec(WIKI_SEARCH_INITIAL_SCHEMA);
-  db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)").run(
+  db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(
     "schema_version",
     String(WIKI_SEARCH_SCHEMA_VERSION)
   );
