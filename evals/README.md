@@ -178,6 +178,7 @@ bun run eval:retrieval -- --json                # machine-readable
 bun run eval:retrieval -- --verbose             # + top-5 paths per query
 bun run eval:retrieval -- --arms strict,wide    # pick arms (default: all registered)
 bun run eval:retrieval -- --limit 10            # results requested per query
+bun run eval:retrieval -- --arms judge --min-relevance 0.6   # judge threshold (see below)
 ```
 
 It copies `fixtures/vault/` into a temp dir, points `MINK_ROOT_OVERRIDE` /
@@ -196,8 +197,12 @@ An arm is `{ name, available(), run(query, limit) }`. Registered today:
   one-hop graph neighbours of the top lexical hits. `run()` returns the **full pool**
   (lexical hits first, then graph neighbours), not truncated to `--limit`, so pool recall
   and pool size can be measured. hit@k and MRR use the pool's order.
-- `judge` — stub that reports "not yet implemented" and is skipped (reported, not
-  failed). A future phase fills it in.
+- `judge` — the `wide` pool reranked by the configured relevance judge
+  (`recall.rerank-*`, spec 25). It calls a live service and costs money, so it is **opt-in**:
+  it runs only when a key is set (`MINK_RECALL_RERANK_API_KEY` or `JEV_API_KEY`) **and**
+  `judge` is named explicitly in `--arms`. A default run always skips it, even with a key in
+  your environment. Results are the reranked list truncated to `--limit` after the
+  `--min-relevance` threshold; an empty list is an abstention.
 
 ### What is run
 
@@ -217,7 +222,10 @@ each keyword string in `queries`.
 - **adv-pass** — over `adversarial` cases: the `adversarial_paths` note is not rank 1
   (its rank is in the per-case table).
 - **p50/p95 ms** — nearest-rank latency percentiles per query.
-- **judge tok** — `judgeInputTokens`, summed; `-`/null until the judge arm exists.
+- **judge tok** — judge input tokens, summed over the arm's queries; `-` for arms with no judge.
+- **fallbacks** — queries where the judge arm wanted to rerank but fell back to the wide order
+  (timeout, network, auth, rate limit, ...). Always check it: a non-zero count means part of
+  the judge row is really `wide` output.
 
 Three scopes are reported (summary and per category):
 
@@ -268,3 +276,50 @@ abstains (0-17% on negatives).
 an empty result, and an any-term query almost always finds something. Deciding that
 "nothing here answers this" is the judge's job (Phase 2), not candidate generation's.
 Treat the wide arm's abstain column as a baseline the judge should beat, not a regression.
+
+### Judge arm
+
+```bash
+JEV_API_KEY=... MINK_RECALL_RERANK_BASE_URL=https://ai-gateway.vercel.sh/typesafe \
+  bun run eval:retrieval --arms strict,wide,judge
+```
+
+- Key: `MINK_RECALL_RERANK_API_KEY` or `JEV_API_KEY`. Base URL: `MINK_RECALL_RERANK_BASE_URL`
+  (default `https://api.typesafe.ai`; use the gateway URL above with a Vercel AI Gateway key).
+  Other `MINK_RECALL_RERANK_*` variables (model, pool size, timeout, concurrency) apply too.
+- Config comes from the environment only: the eval runs under a temp `MINK_ROOT_OVERRIDE`, so
+  your real `~/.mink` config is never read.
+- Cost: about 25k input tokens per query (about 40 candidates, roughly 600 tokens each), so
+  roughly $0.001 per query at $0.042 per million tokens. The full case set runs one query per
+  question plus one per keyword variant, so budget for a few hundred judge calls per query
+  count, and read the `judge tok` column for the actual total.
+- `--min-relevance <p>` overrides the threshold (default 0.5) for calibration sweeps.
+
+### Judge results
+
+Live run on 2026-09-29, through the Vercel AI Gateway with `jev-latest` and the default settings
+(min-relevance 0.5, pool 40, budget 3s, concurrency 8). 28 cases, limit 10.
+
+| arm / scope | hit@1 | hit@3 | hit@10 | MRR | abstain | adv-pass | p50 ms | p95 ms | fallbacks |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| strict / question | 0% | 0% | 0% | 0.000 | 100% | 100% | 0 | 1 | 0 |
+| wide / question | 64% | 91% | 100% | 0.768 | 17% | 0% | 0 | 0 | 0 |
+| **judge / question** | **95%** | **100%** | **100%** | **0.977** | **83%** | **100%** | 840 | 1402 | 0 |
+| strict / queries-best | 64% | 64% | 64% | 0.636 | 83% | 0% | 0 | 0 | 0 |
+| wide / queries-best | 86% | 95% | 100% | 0.920 | 17% | 0% | 0 | 0 | 0 |
+| **judge / queries-best** | **95%** | **95%** | **95%** | **0.955** | **83%** | **100%** | 650 | 1030 | 0 |
+
+Tokens: 680,613 judge input tokens for the whole run (question plus every keyword variant), which
+is about $0.03 at $0.042 per 1M.
+
+Remaining misses:
+- **Terse keyword queries lose context.** "europe slow page load" and "eu latency atlas web" come
+  back judged-empty, while the full natural-language question finds the answer at rank 1. The
+  judge works best with complete questions, so agents should pass the user's question through
+  rather than keywords.
+- **`graph-hop-overview-basename-disambiguation`** (question) ranks the right overview 2nd,
+  behind the monolith note that links to it.
+- **`negative-atlas-mobile-language`** returns the Atlas Web overview rather than abstaining.
+- **`body-hit-atlas-state-library`** ("atlas web state library") is judged-empty.
+
+The threshold (0.5) is a placeholder until the Phase 3 calibration sweep.

@@ -29,11 +29,31 @@ export interface RankedResult {
   judgeInputTokens?: number;
 }
 
+/**
+ * Richer arm output: lets an arm report run-level facts that a bare result
+ * list cannot carry (tokens spent on a judged-empty query, a silent fallback).
+ */
+export interface ArmOutput {
+  results: RankedResult[];
+  /** Tokens an external judge consumed for this query (even if it returned nothing). */
+  judgeInputTokens?: number;
+  /** Set when the arm wanted to rerank but fell back; the reason. */
+  fallbackReason?: string | null;
+}
+
 export interface RetrievalArm {
   name: string;
-  /** true when runnable, otherwise a human-readable reason it is skipped. */
-  available(): boolean | string;
-  run(query: string, limit: number): Promise<RankedResult[]>;
+  /**
+   * true when runnable, otherwise a human-readable reason it is skipped.
+   * `requested` is true when the arm was named explicitly in --arms; arms that
+   * cost money use it to stay opt-in.
+   */
+  available(ctx?: { requested: boolean }): boolean | string;
+  run(query: string, limit: number): Promise<RankedResult[] | ArmOutput>;
+}
+
+function normalizeArmOutput(out: RankedResult[] | ArmOutput): ArmOutput {
+  return Array.isArray(out) ? { results: out } : out;
 }
 
 export interface RetrievalCase {
@@ -57,6 +77,8 @@ export interface VariantOutcome {
   /** 1-based rank of the best-ranked adversarial note, null if absent. */
   adversarialRank: number | null;
   judgeInputTokens: number | null;
+  /** Fallback reason when the arm fell back from its intended ranker, else null. */
+  fallback?: string | null;
 }
 
 export interface CaseResult {
@@ -81,6 +103,8 @@ export interface Unit {
   judgeInputTokens: number | null;
   /** Results the arm returned for this unit (mean over variants for best-of). */
   poolSize: number;
+  /** Variants in this unit where the arm fell back from its intended ranker. */
+  fallbacks: number;
 }
 
 export interface Metrics {
@@ -102,6 +126,8 @@ export interface Metrics {
   latencyP50Ms: number | null;
   latencyP95Ms: number | null;
   judgeInputTokens: number | null;
+  /** Queries where the arm fell back (e.g. judge timeout) instead of ranking as intended. */
+  fallbacks: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -162,13 +188,15 @@ export function scoreVariant(
   kase: RetrievalCase,
   kind: VariantKind,
   query: string,
-  results: RankedResult[],
+  output: RankedResult[] | ArmOutput,
   latencyMs: number
 ): VariantOutcome {
+  const { results, judgeInputTokens, fallbackReason } = normalizeArmOutput(output);
   const ranked = results.map((r) => r.path);
-  const tokens = results.some((r) => typeof r.judgeInputTokens === "number")
+  const perResult = results.some((r) => typeof r.judgeInputTokens === "number")
     ? results.reduce((s, r) => s + (r.judgeInputTokens ?? 0), 0)
     : null;
+  const tokens = typeof judgeInputTokens === "number" ? judgeInputTokens : perResult;
   return {
     kind,
     query,
@@ -177,6 +205,7 @@ export function scoreVariant(
     rank: rankOfFirst(ranked, kase.expected_paths),
     adversarialRank: rankOfFirst(ranked, kase.adversarial_paths ?? []),
     judgeInputTokens: tokens,
+    fallback: fallbackReason ?? null,
   };
 }
 
@@ -229,6 +258,7 @@ function variantToUnit(c: CaseResult, v: VariantOutcome): Unit {
     latenciesMs: [v.latencyMs],
     judgeInputTokens: v.judgeInputTokens,
     poolSize: v.ranked.length,
+    fallbacks: v.fallback ? 1 : 0,
   };
 }
 
@@ -261,6 +291,7 @@ export function buildUnits(cases: CaseResult[], scope: Scope, adversarialCaseIds
         latenciesMs: pool.map((v) => v.latencyMs),
         judgeInputTokens: sumTokens(pool),
         poolSize: mean(pool.map((v) => v.ranked.length)) ?? 0,
+        fallbacks: pool.filter((v) => v.fallback).length,
       });
     }
   }
@@ -293,6 +324,7 @@ export function computeMetrics(units: Unit[]): Metrics {
     latencyP50Ms: percentile(latencies, 50),
     latencyP95Ms: percentile(latencies, 95),
     judgeInputTokens: tokenUnits.length ? tokenUnits.reduce((s, u) => s + (u.judgeInputTokens ?? 0), 0) : null,
+    fallbacks: units.reduce((s, u) => s + u.fallbacks, 0),
   };
 }
 
@@ -360,7 +392,7 @@ export function selectArms(
   const active: RetrievalArm[] = [];
   const skipped: SkippedArm[] = [];
   for (const arm of chosen) {
-    const avail = arm.available();
+    const avail = arm.available({ requested: requested !== null && requested.includes(arm.name) });
     if (avail === true) active.push(arm);
     else skipped.push({ name: arm.name, reason: avail === false ? "unavailable" : avail });
   }
@@ -403,6 +435,7 @@ function metricRow(label: string, m: Metrics): string[] {
     ms(m.latencyP50Ms),
     ms(m.latencyP95Ms),
     m.judgeInputTokens === null ? "-" : String(m.judgeInputTokens),
+    String(m.fallbacks),
   ];
 }
 
@@ -419,6 +452,7 @@ const METRIC_HEADER = [
   "p50 ms",
   "p95 ms",
   "judge tok",
+  "fallbacks",
 ];
 
 export function renderSummary(report: RetrievalReport): string {

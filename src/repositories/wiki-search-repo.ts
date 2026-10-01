@@ -135,6 +135,23 @@ export class WikiSearchRepo {
     });
   }
 
+  // Note bodies for the given vault-relative paths (one IN query per chunk).
+  // Paths with no row are absent from the map.
+  getBodies(paths: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    const unique = [...new Set(paths)];
+    const CHUNK = 500; // stays well under SQLite's bound-parameter limit
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      const chunk = unique.slice(i, i + CHUNK);
+      const marks = chunk.map(() => "?").join(", ");
+      const rows = this.db
+        .prepare(`SELECT path, body FROM notes WHERE path IN (${marks})`)
+        .all(...chunk) as unknown as Array<{ path: string; body: string }>;
+      for (const r of rows) out.set(r.path, r.body ?? "");
+    }
+    return out;
+  }
+
   listAllPaths(): Array<{ path: string; mtimeMs: number }> {
     const rows = this.db.prepare("SELECT path, mtime_ms AS mtimeMs FROM notes").all() as unknown as Array<{
       path: string;
@@ -617,6 +634,14 @@ const STOPWORDS = new Set([
   "don", "doesn", "didn", "isn", "aren", "wasn", "weren",
 ]);
 
+// Query tokens that carry retrieval signal: lowercase letter/number runs
+// with single characters and stopwords dropped. Shared by the any-term FTS
+// builder and the reranker's excerpt windowing so both agree on "the words
+// that matter".
+export function significantQueryTokens(raw: string): string[] {
+  return tokenize(raw).filter((t) => t.length > 1 && !STOPWORDS.has(t));
+}
+
 // Any-term (OR) variant of buildFtsQuery for wide candidate generation:
 // same tokenization and quoting/prefix, stopwords dropped, OR-joined.
 // Single-character tokens are dropped too: tokenize() splits contractions
@@ -624,7 +649,7 @@ const STOPWORDS = new Set([
 // every note, flooding the pool. Returns null when no significant token
 // remains (caller falls back to strict mode).
 export function buildFtsQueryAny(raw: string): string | null {
-  const tokens = tokenize(raw).filter((t) => t.length > 1 && !STOPWORDS.has(t));
+  const tokens = significantQueryTokens(raw);
   if (tokens.length === 0) return null;
   return tokens.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
 }

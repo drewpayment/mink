@@ -329,6 +329,38 @@ mink note list --tag meeting
 mink note search "authentication"
 ```
 
+### Relevance reranking (optional)
+
+`mink recall "<query>"` ranks notes lexically. `--wide` gathers a larger, more forgiving
+candidate pool, and an optional **relevance judge** (TypeSafe Jev) can then score each
+candidate against your query, reorder by that score, and drop notes that don't actually answer
+it (`no relevant notes for ...`). It is off by default and never runs inside hooks.
+
+```bash
+# 1. Where the judge lives
+#    direct (needs a TypeSafe key):      https://api.typesafe.ai   (default)
+#    Vercel AI Gateway (gateway key):    https://ai-gateway.vercel.sh/typesafe
+mink config recall.rerank-base-url https://ai-gateway.vercel.sh/typesafe
+
+# 2. Your key: stored per machine in ~/.mink/config.local and never synced.
+#    (Or use the MINK_RECALL_RERANK_API_KEY / JEV_API_KEY environment variables.)
+mink config recall.rerank-api-key <key>
+
+# 3. Turn it on (prints the privacy notice below)
+mink config recall.rerank jev
+
+mink recall --json "how do we throttle partner traffic"   # reranked
+mink recall --no-rerank "..."                             # skip for one query
+mink recall --rerank --min-relevance 0.7 "..."            # force on / stricter threshold
+```
+
+**Privacy:** with reranking on, each `mink recall` sends the titles, tags, vault paths and
+bounded body excerpts of up to 40 candidate notes to the configured base URL. Nothing is sent
+while it is off. If the judge is unreachable, too slow (3s budget), or the key is rejected,
+recall falls back to lexical ordering and still exits 0; `--json` reports the reason in
+`retrieval.fallback_reason`. Keys are masked in `mink config` output. Tunables:
+`recall.rerank-model`, `-min-relevance`, `-pool-size`, `-timeout-ms`, `-concurrency`.
+
 ### Vault structure
 
 ```

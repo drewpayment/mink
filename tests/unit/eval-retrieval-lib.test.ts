@@ -19,10 +19,53 @@ import {
   parseArmsFlag,
   renderScorecard,
   type CaseResult,
+  type VariantOutcome,
   type RetrievalArm,
   type RetrievalCase,
 } from "../../evals/retrieval-lib";
-import { loadRetrievalCases, registeredArms, runRetrievalEval, parseCli } from "../../evals/retrieval";
+import {
+  loadRetrievalCases,
+  registeredArms,
+  runRetrievalEval,
+  parseCli,
+  JUDGE_ARM_SKIP_REASON,
+} from "../../evals/retrieval";
+import { setJudgeFactoryForTests } from "../../src/core/recall-ranked";
+import { JudgeError, type RelevanceJudge } from "../../src/core/relevance-judge";
+
+function withEnv(vars: Record<string, string | undefined>, fn: () => void): void {
+  const saved: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(vars)) {
+    saved[k] = process.env[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+async function withEnvAsync(vars: Record<string, string | undefined>, fn: () => Promise<void>): Promise<void> {
+  const saved: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(vars)) {
+    saved[k] = process.env[k];
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    await fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
 import { useMinkFixture } from "../helpers/mink-fixture";
 
 const kase = (over: Partial<RetrievalCase> = {}): RetrievalCase => ({
@@ -241,10 +284,155 @@ describe("arm selection", () => {
     expect(parseArmsFlag("strict, wide,,judge")).toEqual(["strict", "wide", "judge"]);
   });
 
-  test("registered judge stub is skipped; strict and wide run", () => {
-    const { active, skipped } = selectArms(registeredArms(), null);
-    expect(active.map((a) => a.name)).toEqual(["strict", "wide"]);
-    expect(skipped.map((s) => s.name)).toEqual(["judge"]);
+  test("the judge arm is skipped on a default run even when a key is in the environment", () => {
+    withEnv({ JEV_API_KEY: "k-1234", MINK_RECALL_RERANK_API_KEY: "k-5678" }, () => {
+      const { active, skipped } = selectArms(registeredArms(), null);
+      expect(active.map((a) => a.name)).toEqual(["strict", "wide"]);
+      expect(skipped).toEqual([{ name: "judge", reason: JUDGE_ARM_SKIP_REASON }]);
+    });
+    expect(JUDGE_ARM_SKIP_REASON).toBe(
+      "opt-in: pass --arms judge (needs MINK_RECALL_RERANK_API_KEY or JEV_API_KEY)"
+    );
+  });
+
+  test("the judge arm needs BOTH an explicit --arms judge and a key", () => {
+    withEnv({ JEV_API_KEY: undefined, MINK_RECALL_RERANK_API_KEY: undefined }, () => {
+      expect(selectArms(registeredArms(), ["judge"]).skipped).toEqual([{ name: "judge", reason: JUDGE_ARM_SKIP_REASON }]);
+    });
+    withEnv({ JEV_API_KEY: "k-1234", MINK_RECALL_RERANK_API_KEY: undefined }, () => {
+      expect(selectArms(registeredArms(), ["judge"]).active.map((a) => a.name)).toEqual(["judge"]);
+      // naming other arms explicitly does not opt the judge in
+      expect(selectArms(registeredArms(), ["strict", "wide"]).skipped).toEqual([]);
+    });
+    withEnv({ JEV_API_KEY: undefined, MINK_RECALL_RERANK_API_KEY: "k-5678" }, () => {
+      expect(selectArms(registeredArms(), ["strict", "wide", "judge"]).active.map((a) => a.name)).toEqual([
+        "strict",
+        "wide",
+        "judge",
+      ]);
+    });
+  });
+
+  test("arms' available() receives whether they were requested explicitly", () => {
+    const seen: Array<boolean | undefined> = [];
+    const probe: RetrievalArm = {
+      name: "probe",
+      available: (ctx) => {
+        seen.push(ctx?.requested);
+        return true;
+      },
+      run: async () => [],
+    };
+    selectArms([probe], null);
+    selectArms([probe], ["probe"]);
+    expect(seen).toEqual([false, true]);
+  });
+});
+
+describe("--min-relevance flag", () => {
+  test("parsed and validated", () => {
+    expect(parseCli([]).minRelevance).toBeUndefined();
+    expect(parseCli(["--min-relevance", "0.7"]).minRelevance).toBe(0.7);
+    expect(parseCli(["--min-relevance=0.2"]).minRelevance).toBe(0.2);
+    expect(() => parseCli(["--min-relevance", "2"])).toThrow(/between 0 and 1/);
+    expect(() => parseCli(["--min-relevance", "x"])).toThrow(/between 0 and 1/);
+  });
+});
+
+describe("fallbacks metric", () => {
+  const outcome = (over: Partial<VariantOutcome> = {}): VariantOutcome => ({
+    kind: "question",
+    query: "q",
+    ranked: ["a.md"],
+    latencyMs: 1,
+    rank: 1,
+    adversarialRank: null,
+    judgeInputTokens: null,
+    ...over,
+  });
+
+  test("scoreVariant records ArmOutput fallback reason and tokens, even for an empty result", () => {
+    const v = scoreVariant(kase(), "question", "q", { results: [], judgeInputTokens: 900, fallbackReason: "timeout" }, 2);
+    expect(v.fallback).toBe("timeout");
+    expect(v.judgeInputTokens).toBe(900);
+    expect(v.ranked).toEqual([]);
+    expect(scoreVariant(kase(), "question", "q", [{ path: "a.md" }], 2).fallback).toBeNull();
+  });
+
+  test("computeMetrics counts fallbacks per scope; best-of counts each variant that fell back", () => {
+    const cases: CaseResult[] = [
+      {
+        id: "c1",
+        category: "body-hit",
+        isNegative: false,
+        variants: [
+          outcome({ fallback: "timeout" }),
+          outcome({ kind: "queries", fallback: "network" }),
+          outcome({ kind: "queries", fallback: null }),
+        ],
+      },
+      { id: "c2", category: "body-hit", isNegative: false, variants: [outcome(), outcome({ kind: "queries" })] },
+    ];
+    const m = (scope: "question" | "queries-avg" | "queries-best") =>
+      computeMetrics(buildUnits(cases, scope, new Set())).fallbacks;
+    expect(m("question")).toBe(1);
+    expect(m("queries-avg")).toBe(1);
+    expect(m("queries-best")).toBe(1);
+    const both: CaseResult[] = [{ ...cases[0], variants: cases[0].variants.map((v) => ({ ...v, fallback: "timeout" })) }];
+    expect(computeMetrics(buildUnits(both, "queries-best", new Set())).fallbacks).toBe(2);
+  });
+
+  test("arms that never fall back report zero, and the scorecard has a fallbacks column", async () => {
+    const arm: RetrievalArm = { name: "x", available: () => true, run: async () => [{ path: "a.md" }] };
+    const cases = [await runArmOnCase(arm, kase({ queries: ["q1"] }), 10)];
+    const report = { limit: 10, caseCount: 1, arms: [buildArmReport("x", cases, new Set())], skipped: [] };
+    expect(report.arms[0].scopes.question.overall.fallbacks).toBe(0);
+    expect(renderScorecard(report)).toContain("| fallbacks |");
+  });
+});
+
+describe("judge arm end to end (fake judge, no network)", () => {
+  useMinkFixture("eval-retrieval-judge");
+
+  const fakeJudge = (fail?: JudgeError): RelevanceJudge => ({
+    modelVersion: "fake",
+    questionVersion: "t/v1",
+    async judge(_q, c) {
+      if (fail) throw fail;
+      return { relevance: c.title.toLowerCase().includes("rate") ? 0.9 : 0.1, inputTokens: 50 };
+    },
+  });
+
+  test("runs under the temp vault, reports tokens, and counts zero fallbacks on success", async () => {
+    await withEnvAsync({ MINK_RECALL_RERANK_API_KEY: "fake-key-1234", JEV_API_KEY: undefined }, async () => {
+      setJudgeFactoryForTests(() => fakeJudge());
+      try {
+        const report = await runRetrievalEval(parseCli(["--arms", "judge"]));
+        expect(report.arms.map((a) => a.name)).toEqual(["judge"]);
+        expect(report.skipped).toEqual([]);
+        const overall = report.arms[0].scopes.question.overall;
+        expect(overall.fallbacks).toBe(0);
+        expect(overall.judgeInputTokens!).toBeGreaterThan(0);
+      } finally {
+        setJudgeFactoryForTests(null);
+      }
+    });
+  });
+
+  test("a failing judge shows up as fallbacks, not as silent judge results", async () => {
+    await withEnvAsync({ MINK_RECALL_RERANK_API_KEY: "fake-key-1234", JEV_API_KEY: undefined }, async () => {
+      setJudgeFactoryForTests(() => fakeJudge(new JudgeError("network", "offline")));
+      try {
+        const report = await runRetrievalEval(parseCli(["--arms", "judge"]));
+        const overall = report.arms[0].scopes.question.overall;
+        // questions with zero lexical candidates never reach the judge, so not every case falls back
+        expect(overall.fallbacks).toBeGreaterThan(0);
+        expect(overall.fallbacks).toBeLessThanOrEqual(loadRetrievalCases().length);
+        expect(renderScorecard(report)).toContain("fallbacks");
+      } finally {
+        setJudgeFactoryForTests(null);
+      }
+    });
   });
 });
 
