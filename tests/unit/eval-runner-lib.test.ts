@@ -245,3 +245,53 @@ describe("evals/lib applyBackupMarker (crash-safety guard)", () => {
     expect(readBackupMarkerAt(backupPath)).toBeNull();
   });
 });
+
+import { buildChildEnv, recallModeLabel, hasRerankKey } from "../../evals/lib";
+
+describe("evals/lib buildChildEnv", () => {
+  const fixture = { minkRoot: "/tmp/fx/root", vaultPath: "/tmp/fx/vault" };
+
+  test("baseline forces rerank off and strips judge credentials", () => {
+    const env = buildChildEnv(
+      {
+        PATH: "/bin",
+        MINK_RECALL_RERANK: "jev",
+        MINK_RECALL_RERANK_API_KEY: "k1",
+        JEV_API_KEY: "k2",
+        MINK_RECALL_RERANK_BASE_URL: "https://x",
+      },
+      fixture,
+      { rerank: false }
+    );
+    expect(env.MINK_RECALL_RERANK).toBe("off");
+    expect(env.MINK_RECALL_RERANK_API_KEY).toBeUndefined();
+    expect(env.JEV_API_KEY).toBeUndefined();
+    expect(env.MINK_RECALL_RERANK_BASE_URL).toBeUndefined();
+    expect(env.PATH).toBe("/bin");
+    expect(env.MINK_ROOT_OVERRIDE).toBe(fixture.minkRoot);
+    expect(env.MINK_WIKI_PATH).toBe(fixture.vaultPath);
+  });
+
+  test("rerank turns jev on and passes key and base url through", () => {
+    const env = buildChildEnv(
+      { MINK_RECALL_RERANK: "off", JEV_API_KEY: "k2", MINK_RECALL_RERANK_BASE_URL: "https://gw" },
+      fixture,
+      { rerank: true }
+    );
+    expect(env.MINK_RECALL_RERANK).toBe("jev");
+    expect(env.JEV_API_KEY).toBe("k2");
+    expect(env.MINK_RECALL_RERANK_BASE_URL).toBe("https://gw");
+  });
+
+  test("rerank without a key throws a clear error", () => {
+    expect(() => buildChildEnv({ PATH: "/bin" }, fixture, { rerank: true })).toThrow(/API key/);
+    expect(() => buildChildEnv({ JEV_API_KEY: "  " }, fixture, { rerank: true })).toThrow(/API key/);
+  });
+
+  test("hasRerankKey and label", () => {
+    expect(hasRerankKey({ MINK_RECALL_RERANK_API_KEY: "a" })).toBe(true);
+    expect(hasRerankKey({})).toBe(false);
+    expect(recallModeLabel(true)).toContain("rerank");
+    expect(recallModeLabel(false)).toContain("baseline");
+  });
+});

@@ -81,7 +81,18 @@ npm run eval:agent -- --case body-hit-rate-limiter-algorithm
 npm run eval:agent -- --limit 3
 npm run eval:agent -- --keep-tmp                 # leave the temp fixture instance on disk for inspection
 npm run eval:agent -- --no-install               # skip (re)installing mink-agent; assumes it's already current
+npm run eval:agent -- --rerank                   # run with recall reranking on (see below)
 ```
+
+### Recall mode (`--rerank`)
+
+Every run pins the recall mode explicitly and prints it in the scorecard header, so runs are
+comparable. By default the child env sets `MINK_RECALL_RERANK=off` (and strips any judge key), so
+your global mink config or env cannot silently change a baseline. With `--rerank` the child gets
+`MINK_RECALL_RERANK=jev`, and `MINK_RECALL_RERANK_BASE_URL` / `MINK_RECALL_RERANK_MODEL` plus the
+key (`MINK_RECALL_RERANK_API_KEY` or `JEV_API_KEY`) pass through from your environment; the run
+exits immediately if no key is set. Reranking sends fixture note excerpts to the judge and spends
+judge tokens on top of the agent's. Compare the two scorecards, watching the negative cases.
 
 Requires the `claude` CLI on `PATH` and **spends real tokens** — one `claude
 -p` call per case. It is a separate script (`eval:agent`), not part of

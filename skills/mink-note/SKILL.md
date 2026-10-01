@@ -39,8 +39,10 @@ If the user provided text after `/mink:note`, use that as the note content. Othe
 Check for an existing note on this subject before creating a new one — search bodies, not just titles:
 
 ```bash
-mink recall --json "<subject of the note>"
+mink recall --json "<the note's subject as a natural-language phrase>"
 ```
+
+Read `retrieval.ranker` in the JSON. In `judge` mode (the user enabled reranking), results carry a `relevance` (0-1): a hit at 0.8 or higher is a likely duplicate, so read it and update or link instead of creating. `empty_reason: "judged"` means nothing similar exists. In `lexical` mode an empty result is weak evidence, so retry once with `--wide`. If `fallback_reason` is set, the judge was unavailable; treat results as lexical. Never pass `--rerank` yourself: it sends note excerpts to an external service, so it is the user's choice.
 
 If `mink recall` isn't available yet (older mink version), fall back to `mink note search "<subject>"`, but prefer `mink recall` whenever present — it ranks matches and searches full note bodies, so it catches near-duplicates that a title/tag/description-only search would miss.
 
@@ -63,7 +65,7 @@ Based on the note content and vault context, determine:
   - `archives` — Completed work, historical record
   - `inbox` — Only if genuinely unclear
 - **Tags**: 1-5 relevant tags from the existing tag vocabulary when possible, new tags when necessary. Use lowercase, hyphenated format.
-- **Wikilinks**: If the note mentions people, projects, or concepts that exist as notes in the vault, include `[[wikilinks]]` in the body text. Include **at least one** link to an existing note when one is plausibly related — use `mink recall "<concept>"` to find a target rather than leaving the note an orphan. If the bare note name is ambiguous (multiple notes share a basename, e.g. two `overview.md` files across projects), use a path-qualified link instead: `[[projects/<slug>/overview|overview]]`.
+- **Wikilinks**: If the note mentions people, projects, or concepts that exist as notes in the vault, include `[[wikilinks]]` in the body text. Include **at least one** link to an existing note when one is plausibly related — use `mink recall --json "<concept as a short phrase>"` (or `--wide` if strict finds nothing; in judge mode prefer high-`relevance` hits) to find a target rather than leaving the note an orphan. If the bare note name is ambiguous (multiple notes share a basename, e.g. two `overview.md` files across projects), use a path-qualified link instead: `[[projects/<slug>/overview|overview]]`.
 - **Aliases**: if the title you choose differs from the slug mink will derive from it (different casing, punctuation, or a shorter/longer display form), **don't assume `mink note` adds `aliases:` for you** — it has no `--aliases` flag today. After running `mink note`, check the created file's frontmatter and, if `aliases:` is missing or incomplete, edit the file directly to add `aliases: [<Title>, ...]` so other notes can link to it by either name. (Some `mink` versions may auto-add this at write time — re-adding it is a harmless no-op then, and required on versions that don't.) Add further aliases if the user is likely to refer to the note by a third name too.
 
 ### Step 4: Create the Note
@@ -121,6 +123,7 @@ mink note --file ./scratch.md                           # Ingest external file
 mink note list [--category X] [--tag X] [--recent N]   # List notes
 mink note search <term>                                  # Title/tags/description search (pre-recall fallback)
 mink recall "<query>" [--json] [--tag X] [--category X] [--project X] [--since ISO]
+            [--wide] [--rerank | --no-rerank] [--min-relevance 0-1]
                                                           # Ranked full-text search over titles/aliases/tags/bodies
 mink wiki backlinks <note> [--json]                      # Notes that link to <note>
 mink wiki related <note> [--json]                        # Backlinks + outlinks + shared-tag neighbors
