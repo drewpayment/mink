@@ -192,8 +192,12 @@ errors. Pure metric logic lives in `retrieval-lib.ts` (unit-tested in
 An arm is `{ name, available(), run(query, limit) }`. Registered today:
 
 - `strict` — `recall(query, { limit })`, i.e. AND-joined BM25 with substring fallback.
-- `wide`, `judge` — stubs that report "not yet implemented" and are skipped
-  (reported, not failed). Future phases fill them in.
+- `wide` — `recallCandidates()`: any-term (OR) FTS over non-stopword tokens plus
+  one-hop graph neighbours of the top lexical hits. `run()` returns the **full pool**
+  (lexical hits first, then graph neighbours), not truncated to `--limit`, so pool recall
+  and pool size can be measured. hit@k and MRR use the pool's order.
+- `judge` — stub that reports "not yet implemented" and is skipped (reported, not
+  failed). A future phase fills it in.
 
 ### What is run
 
@@ -204,6 +208,9 @@ each keyword string in `queries`.
 
 - **hit@1/3/10** — share of non-negative cases whose first expected path
   (any-of `expected_paths`) is in the top k.
+- **hit@pool** — share of non-negative cases whose expected path appears *anywhere* in what
+  the arm returned. For `strict` this equals hit@limit; for `wide` it measures pool recall.
+- **pool** — mean number of results returned per query (the pool-size cost of a wide arm).
 - **MRR** — mean reciprocal rank of the first expected path; 0 if absent within the limit.
 - **abstain** — over `negative` cases: share where the arm returned nothing
   (for strict, an empty result list is an abstention).
@@ -225,16 +232,39 @@ Three scopes are reported (summary and per category):
 `vocab-mismatch` and `topical-false-positive` cases are expected to fail under
 strict BM25; they are deliberately not rigged.
 
-### Strict baseline (28 cases, limit 10)
+### Strict vs wide (28 cases, limit 10)
 
-| scope | n | hit@1 | hit@3 | hit@10 | MRR | abstain | adv-pass |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| question | 22 | 0% | 0% | 0% | 0.000 | 100% (n=6) | 100% (n=1) |
-| queries-avg | 42 | 45% | 48% | 48% | 0.464 | 92% (n=12) | 50% (n=2) |
-| queries-best | 22 | 64% | 64% | 64% | 0.636 | 83% (n=6) | 0% (n=1) |
+Per scope, overall (hit@1 / hit@3 / hit@10 / hit@pool / MRR / abstain / mean pool size):
 
-Natural-language questions score 0% because strict AND-joins every token,
-stopwords included, and finds no note containing all of them; keyword queries
-do far better. `vocab-mismatch` and `topical-false-positive` are 0% in every
-scope. The adversarial note ranks first for one query variant, so `queries-best`
-adv-pass is 0%. Latency is sub-millisecond at p50.
+| arm / scope | n | hit@1 | hit@3 | hit@10 | hit@pool | MRR | abstain | pool |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| strict / question | 22 | 0% | 0% | 0% | 0% | 0.000 | 100% (n=6) | 0.1 |
+| wide / question | 22 | 64% | 91% | 100% | 100% | 0.768 | 17% (n=6) | 18.8 |
+| strict / queries-avg | 42 | 45% | 48% | 48% | 48% | 0.464 | 92% (n=12) | 0.9 |
+| wide / queries-avg | 42 | 69% | 86% | 93% | 98% | 0.789 | 17% (n=12) | 14.0 |
+| strict / queries-best | 22 | 64% | 64% | 64% | 64% | 0.636 | 83% (n=6) | 1.0 |
+| wide / queries-best | 22 | 86% | 95% | 100% | 100% | 0.920 | 17% (n=6) | 14.0 |
+
+Hard categories, hit@pool (hit@10 in parentheses; strict is 0% everywhere):
+
+| category | scope | wide hit@pool (hit@10) |
+| --- | --- | --- |
+| vocab-mismatch | question | 100% (100%) |
+| vocab-mismatch | queries-avg | 88% (75%) |
+| vocab-mismatch | queries-best | 100% (100%) |
+| topical-false-positive | question | 100% (100%) |
+| topical-false-positive | queries-avg | 100% (83%) |
+| topical-false-positive | queries-best | 100% (100%) |
+
+Reading it: strict returns almost nothing for a natural-language question because it
+AND-joins every token, stopwords included. Wide drops stopwords and ORs the rest, so
+the right note is in the pool for every question. The cost is pool size (14-19 results
+per query instead of about 1), so the right note is often present but not first: hit@1
+is 64% on questions while hit@pool is 100%. That gap is what the Phase 2 judge is meant
+to close. The `adversarial` note still ranks first for some variants, and `wide` rarely
+abstains (0-17% on negatives).
+
+**Wide abstention is expected to be poor.** For `wide`, as for `strict`, abstention means
+an empty result, and an any-term query almost always finds something. Deciding that
+"nothing here answers this" is the judge's job (Phase 2), not candidate generation's.
+Treat the wide arm's abstain column as a baseline the judge should beat, not a regression.

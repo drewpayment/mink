@@ -163,6 +163,30 @@ describe("case scoring and aggregation", () => {
     expect(q.hit1).toBe(0.5);
   });
 
+  test("hitPool counts an expected path anywhere in the returned pool; poolSize is the mean size", async () => {
+    const deep = [...Array.from({ length: 11 }, (_, i) => `n${i}.md`), "a.md"];
+    const arm = fixedArm({ "what is x?": deep, "x one": ["z.md"], "x two": [] });
+    const r = await runArmOnCase(arm, kase(), 20);
+    const q = computeMetrics(buildUnits([r], "question", new Set()));
+    expect(q.hit10).toBe(0); // rank 12
+    expect(q.hitPool).toBe(1);
+    expect(q.poolSize).toBe(12);
+    const avg = computeMetrics(buildUnits([r], "queries-avg", new Set()));
+    expect(avg.hitPool).toBe(0);
+    expect(avg.poolSize).toBe(0.5);
+    // best-of: pool size is averaged over the case's variants
+    expect(computeMetrics(buildUnits([r], "queries-best", new Set())).poolSize).toBe(0.5);
+    // negatives do not contribute to hitPool
+    const neg = await runArmOnCase(fixedArm({ q: ["a.md"] }), kase({ question: "q", queries: [], expected_paths: [] }), 5);
+    expect(computeMetrics(buildUnits([neg], "question", new Set())).hitPool).toBeNull();
+  });
+
+  test("scorecard shows hit@pool and pool columns", () => {
+    const md = renderScorecard({ limit: 10, caseCount: 2, arms: [buildArmReport("fixed", results(), new Set())], skipped: [] });
+    expect(md).toContain("hit@pool");
+    expect(md).toContain("| pool |");
+  });
+
   test("adversarial best-scope is worst-case across variants", () => {
     const r: CaseResult[] = [
       {
@@ -217,10 +241,10 @@ describe("arm selection", () => {
     expect(parseArmsFlag("strict, wide,,judge")).toEqual(["strict", "wide", "judge"]);
   });
 
-  test("registered wide/judge stubs are skipped", () => {
+  test("registered judge stub is skipped; strict and wide run", () => {
     const { active, skipped } = selectArms(registeredArms(), null);
-    expect(active.map((a) => a.name)).toEqual(["strict"]);
-    expect(skipped.map((s) => s.name)).toEqual(["wide", "judge"]);
+    expect(active.map((a) => a.name)).toEqual(["strict", "wide"]);
+    expect(skipped.map((s) => s.name)).toEqual(["judge"]);
   });
 });
 
@@ -235,14 +259,21 @@ describe("cases.json", () => {
   });
 });
 
-describe("strict arm on the fixture vault (integration)", () => {
+describe("strict and wide arms on the fixture vault (integration)", () => {
   useMinkFixture("eval-retrieval");
 
   test("produces a result for every case and variant, and cleans up", async () => {
     const cases = loadRetrievalCases();
     const report = await runRetrievalEval(parseCli([]));
-    expect(report.arms.map((a) => a.name)).toEqual(["strict"]);
+    expect(report.arms.map((a) => a.name)).toEqual(["strict", "wide"]);
     const strict = report.arms[0];
+    const wide = report.arms[1];
+    // the wide arm returns its whole pool, not a limit-truncated list, and
+    // its pool recall is at least strict's
+    for (const scope of ["question", "queries-avg", "queries-best"] as const) {
+      expect(wide.scopes[scope].overall.hitPool!).toBeGreaterThanOrEqual(strict.scopes[scope].overall.hitPool!);
+    }
+    expect(wide.scopes["question"].overall.hitPool!).toBeGreaterThan(0);
     expect(strict.cases).toHaveLength(cases.length);
     for (const c of strict.cases) {
       const src = cases.find((k) => k.id === c.id)!;
@@ -250,7 +281,7 @@ describe("strict arm on the fixture vault (integration)", () => {
     }
     expect(strict.scopes["queries-best"].overall.nAdversarial).toBe(1);
     expect(strict.scopes["question"].overall.nNegative).toBeGreaterThan(0);
-    expect(report.skipped.map((s) => s.name)).toEqual(["wide", "judge"]);
+    expect(report.skipped.map((s) => s.name)).toEqual(["judge"]);
     // env restored to the useMinkFixture temp dirs, not left on the eval's vault
     expect(process.env.MINK_WIKI_PATH ?? "").not.toContain("mink-retrieval-eval-");
   });

@@ -110,6 +110,25 @@ export function strictArm(): RetrievalArm {
   };
 }
 
+/**
+ * Arm 1: recallCandidates() — any-term FTS plus one-hop graph neighbours.
+ * Returns the FULL candidate pool (lexical then graph), not truncated to
+ * `limit`, so the scorecard can measure pool recall (hit@pool) and cost
+ * (pool size). hit@k / MRR are still computed on the pool's order.
+ */
+export function wideArm(): RetrievalArm {
+  return {
+    name: "wide",
+    available: () => true,
+    async run(query): Promise<RankedResult[]> {
+      const { recallCandidates, DEFAULT_POOL_SIZE, DEFAULT_NEIGHBOUR_CAP } = await import("../src/core/wiki-search");
+      return recallCandidates(query, {}, { poolSize: DEFAULT_POOL_SIZE, neighbourCap: DEFAULT_NEIGHBOUR_CAP }).map(
+        (r) => ({ path: r.path, score: r.score })
+      );
+    },
+  };
+}
+
 function stubArm(name: string, blurb: string): RetrievalArm {
   return {
     name,
@@ -123,7 +142,7 @@ function stubArm(name: string, blurb: string): RetrievalArm {
 export function registeredArms(): RetrievalArm[] {
   return [
     strictArm(),
-    stubArm("wide", "any-term + graph-neighbour candidate mode"),
+    wideArm(),
     stubArm("judge", "external relevance reranker"),
   ];
 }
