@@ -14,11 +14,16 @@ import {
   runArmOnCase,
   buildUnits,
   computeMetrics,
+  applyThreshold,
+  sweepThresholds,
+  recommendThreshold,
   buildArmReport,
   selectArms,
   parseArmsFlag,
   renderScorecard,
   type CaseResult,
+  type Metrics,
+  type SweepRow,
   type VariantOutcome,
   type RetrievalArm,
   type RetrievalCase,
@@ -472,5 +477,80 @@ describe("strict and wide arms on the fixture vault (integration)", () => {
     expect(report.skipped.map((s) => s.name)).toEqual(["judge"]);
     // env restored to the useMinkFixture temp dirs, not left on the eval's vault
     expect(process.env.MINK_WIKI_PATH ?? "").not.toContain("mink-retrieval-eval-");
+  });
+});
+
+describe("threshold sweep", () => {
+  const kases: RetrievalCase[] = [
+    { id: "pos", category: "c", question: "q", expected_paths: ["want.md"] },
+    { id: "neg", category: "c", question: "q", expected_paths: [] },
+    { id: "adv", category: "c", question: "q", expected_paths: ["want.md"], adversarial_paths: ["bad.md"] },
+  ];
+  const variant = (ranked: string[], relevances: number[] | undefined, k: RetrievalCase): VariantOutcome =>
+    scoreVariant(k, "question", "q", {
+      results: ranked.map((path, i) => ({ path, relevance: relevances?.[i] })),
+    }, 1);
+  const cases = (): CaseResult[] => [
+    // positive: wanted note at 0.6 under a 0.8 distractor
+    { id: "pos", category: "c", isNegative: false, variants: [variant(["other.md", "want.md"], [0.8, 0.6], kases[0])] },
+    // negative: only weak noise
+    { id: "neg", category: "c", isNegative: true, variants: [variant(["noise.md", "noise2.md"], [0.35, 0.15], kases[1])] },
+    // adversarial: bad note on top at 0.7, wanted at 0.4
+    { id: "adv", category: "c", isNegative: false, variants: [variant(["bad.md", "want.md"], [0.7, 0.4], kases[2])] },
+  ];
+
+  test("scoreVariant carries relevances only when every result has one", () => {
+    expect(variant(["a.md"], [0.5], kases[0]).relevances).toEqual([0.5]);
+    expect(variant(["a.md"], undefined, kases[0]).relevances).toBeUndefined();
+  });
+
+  test("applyThreshold filters, re-ranks and leaves relevance-less variants alone", () => {
+    const t = applyThreshold(cases(), kases, 0.5);
+    expect(t[0].variants[0].ranked).toEqual(["other.md", "want.md"]);
+    expect(t[1].variants[0].ranked).toEqual([]);
+    expect(t[2].variants[0].ranked).toEqual(["bad.md"]);
+    expect(t[2].variants[0].rank).toBeNull();
+    const t2 = applyThreshold(cases(), kases, 0.7);
+    expect(t2[0].variants[0].rank).toBeNull();
+    expect(t2[0].variants[0].ranked).toEqual(["other.md"]);
+    const noRel: CaseResult[] = [{ id: "pos", category: "c", isNegative: false, variants: [variant(["x.md"], undefined, kases[0])] }];
+    expect(applyThreshold(noRel, kases, 0.9)[0].variants[0].ranked).toEqual(["x.md"]);
+  });
+
+  test("sweepThresholds recomputes metrics per threshold", () => {
+    const rows = sweepThresholds(cases(), kases, new Set(["adv"]), [0.1, 0.5, 0.9]);
+    expect(rows.map((r) => r.threshold)).toEqual([0.1, 0.5, 0.9]);
+    const q = (i: number) => rows[i].scopes.question;
+    expect(q(0).abstention).toBe(0); // noise survives at 0.1
+    expect(q(1).abstention).toBe(1); // dropped by 0.5
+    expect(q(0).hit3).toBe(1);
+    expect(q(1).hit3).toBe(0.5); // adv positive lost its wanted note (0.4)
+    expect(q(1).hit1).toBe(0);
+    expect(q(2).hit3).toBe(0);
+    expect(q(0).adversarialPass).toBe(0); // bad.md at rank 1
+    expect(q(1).adversarialPass).toBe(0); // bad.md (0.7) still rank 1 at 0.5
+    expect(q(2).adversarialPass).toBe(1); // dropped at 0.9
+  });
+
+  test("recommendThreshold picks the highest threshold maximising abstention without losing hit@3", () => {
+    const mk = (threshold: number, hit3: number, abstention: number): SweepRow => {
+      const m = { hit3, abstention } as Metrics;
+      return { threshold, scopes: { question: m, "queries-avg": m, "queries-best": m } };
+    };
+    const rows = [mk(0.1, 1, 0.2), mk(0.2, 1, 0.6), mk(0.3, 1, 0.6), mk(0.4, 0.9, 1), mk(0.5, 1, 0.8)];
+    // 0.4 maximises abstention but loses hit@3; 0.5 (0.8) beats 0.3 (0.6)
+    expect(recommendThreshold(rows).threshold).toBe(0.5);
+    // ties resolve to the highest threshold
+    expect(recommendThreshold([mk(0.1, 1, 0.5), mk(0.2, 1, 0.5)]).threshold).toBe(0.2);
+    expect(recommendThreshold([]).threshold).toBeNull();
+    // unsorted input is handled
+    expect(recommendThreshold([mk(0.3, 1, 0.6), mk(0.1, 1, 0.2)]).threshold).toBe(0.3);
+  });
+
+  test("parseCli: --sweep needs the judge arm and defaults arms; rejects --min-relevance", () => {
+    expect(parseCli(["--sweep"]).arms).toEqual(["strict", "wide", "judge"]);
+    expect(parseCli(["--sweep", "--arms", "judge"]).sweep).toBe(true);
+    expect(() => parseCli(["--sweep", "--arms", "strict"])).toThrow();
+    expect(() => parseCli(["--sweep", "--min-relevance", "0.3"])).toThrow();
   });
 });

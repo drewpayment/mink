@@ -48,6 +48,9 @@ scheduler.log
 channel.pid
 channel.log
 
+# Per-machine recall rerank usage accounting (spec 25) — never sync
+recall-usage.jsonl
+
 # Device identity and local config — machine-specific
 device-id
 config.local
