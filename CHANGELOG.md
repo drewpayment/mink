@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.16.0](https://github.com/drewpayment/mink/compare/v0.15.0...v0.16.0) (2026-10-01)
+
+
+### Features
+
+* agent retrieval overhaul — wiki doctor, FTS5 recall, agent playbook ([00345d5](https://github.com/drewpayment/mink/commit/00345d580b966783ca96cb476735c946d03e6666))
+* **agent:** teach mink-agent and mink-note the three recall modes (spec 25 phase 4) ([bd9cb77](https://github.com/drewpayment/mink/commit/bd9cb770e153d423c0d2062c90167307bd00913e))
+* **agent:** teach mink-agent and mink-note the three recall modes (spec 25 phase 4) ([f7e6922](https://github.com/drewpayment/mink/commit/f7e6922c2c648659e1a4890afcb40ad230eca2ea))
+* **evals:** retrieval-level eval for mink recall (spec 25 phase 0) ([9e179c3](https://github.com/drewpayment/mink/commit/9e179c304bf2257821347683e6458bb34af93460))
+* **evals:** retrieval-level eval for mink recall (spec 25 phase 0) ([70aabf6](https://github.com/drewpayment/mink/commit/70aabf66781b050dcf04d55cfe96fc7b036b4a91))
+* **recall:** judgment cache, usage accounting, calibrated threshold (spec 25 phase 3) ([3873245](https://github.com/drewpayment/mink/commit/3873245cb366b8f12a31d028c4e0e7d2f34090d8))
+* **recall:** judgment cache, usage accounting, calibrated threshold (spec 25 phase 3) ([da258dd](https://github.com/drewpayment/mink/commit/da258ddc6520c26ac7b8c4df93b83a30720a9c5a))
+* **recall:** opt-in relevance reranking with TypeSafe Jev (spec 25 phase 2) ([d5c37e0](https://github.com/drewpayment/mink/commit/d5c37e0be08df2d5eb823e4e71107a844683d115))
+* **recall:** opt-in relevance reranking with TypeSafe Jev (spec 25 phase 2) ([745d162](https://github.com/drewpayment/mink/commit/745d1625ae7c3de9c4d589ef42fcf83e45c79dde))
+* **recall:** wide candidate generation with `mink recall --wide` (spec 25 phase 1) ([2c07387](https://github.com/drewpayment/mink/commit/2c07387e72cc7081a176c2ce916251eddc909a8c))
+* **recall:** wide candidate generation with mink recall --wide (spec 25 phase 1) ([13fa969](https://github.com/drewpayment/mink/commit/13fa96981cdd61df93d59ddfa36155a833337ec2))
+
+
+### Bug Fixes
+
+* **config:** accept `mink config set <key> <value>` and `config get <key>` ([950708a](https://github.com/drewpayment/mink/commit/950708a61d7a9286ff7143ee4d1f764d61c1fb5b))
+
 ## [0.15.0](https://github.com/drewpayment/mink/compare/v0.14.0...v0.15.0) (2026-07-13)
 
 
