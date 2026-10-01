@@ -8,7 +8,7 @@ implements.
 
 ## What's here
 
-- `fixtures/vault/` — a ~26-note fixture wiki, in the real PARA layout
+- `fixtures/vault/` — a ~37-note fixture wiki, in the real PARA layout
   (`inbox/`, `projects/<slug>/`, `areas/`, `areas/daily/`, `resources/`,
   `archives/`, `patterns/`). It includes:
   - Several facts that exist **only in note bodies** (e.g. the rate-limiter
@@ -33,8 +33,13 @@ implements.
     `resources/oncall-escalation-matrix.md`).
   - One intentionally orphaned inbox note (`inbox/quick-thought-graphql-gateway.md`)
     — realistic vault noise, not referenced by any case.
-- `cases.json` — 16 question/answer cases: 4 `title-hit`, 6 `body-hit`, 4
-  `graph-hop`, 2 `negative`. Grading is **not** simple any-of-substring-or-path:
+- `cases.json` — 28 question/answer cases: 4 `title-hit`, 6 `body-hit`, 4
+  `graph-hop`, 6 `negative`, 4 `vocab-mismatch`, 3 `topical-false-positive`, 1
+  `adversarial`. Every case also carries `queries` (1-2 keyword queries), used
+  only by the retrieval-level eval below; `vocab-mismatch` and
+  `topical-false-positive` cases grade like any other non-negative case in the
+  agent runner (path citation required), and `adversarial` does too (its
+  `adversarial_paths` field is retrieval-eval only). Grading is **not** simple any-of-substring-or-path:
   - **Non-negative cases require a path match to pass.** `expected_paths` is
     any-of (a case can accept multiple valid targets, e.g. the monolith
     successors case accepts either the archive note or either replacement
@@ -149,13 +154,87 @@ commands exist in a plain `mink` install, so:
 
 Once the Phase 1 branch merges and a build with `mink recall` etc. is on
 `PATH`, re-run `npm run eval:agent` — the scorecard should show close to
-16/16 passing. Track that as the acceptance signal for "Phase 2 is done".
+all cases passing. Track that as the acceptance signal for "Phase 2 is done".
 
 ## Adding cases
 
 Add an entry to `cases.json` with a unique `id`, a `category` (`title-hit`,
-`body-hit`, `graph-hop`, or `negative`), the `question`, and `expected_paths`
+`body-hit`, `graph-hop`, `negative`, `vocab-mismatch`, `topical-false-positive`, or `adversarial`), the `question`, optional `queries`, and `expected_paths`
 / `expected_substrings` (either can be empty, but at least one non-empty
 list is required for anything but a negative case). If the fact you're
 testing doesn't exist in the fixture vault yet, add a note for it under
 `fixtures/vault/` in the matching PARA folder first.
+
+## Retrieval-level eval
+
+`evals/retrieval.ts` scores the retrieval layer alone — `mink recall` ranking —
+with no agent, network, Claude, or API key. It answers "did the right note
+come back, and at what rank?" so retrieval changes (wide candidate mode,
+external reranking) can be measured before an agent ever sees them.
+
+```bash
+bun run eval:retrieval                          # markdown scorecard
+bun run eval:retrieval -- --json                # machine-readable
+bun run eval:retrieval -- --verbose             # + top-5 paths per query
+bun run eval:retrieval -- --arms strict,wide    # pick arms (default: all registered)
+bun run eval:retrieval -- --limit 10            # results requested per query
+```
+
+It copies `fixtures/vault/` into a temp dir, points `MINK_ROOT_OVERRIDE` /
+`MINK_WIKI_PATH` at it (the real `~/.mink` is never touched), runs
+`reindexVault()`, and removes the temp dir on exit, including on error. It is a
+scoreboard, not a gate: exit 0 even when cases miss, non-zero only for harness
+errors. Pure metric logic lives in `retrieval-lib.ts` (unit-tested in
+`tests/unit/eval-retrieval-lib.test.ts`).
+
+### Arms
+
+An arm is `{ name, available(), run(query, limit) }`. Registered today:
+
+- `strict` — `recall(query, { limit })`, i.e. AND-joined BM25 with substring fallback.
+- `wide`, `judge` — stubs that report "not yet implemented" and are skipped
+  (reported, not failed). Future phases fill them in.
+
+### What is run
+
+Each case is run once per query variant: the natural-language `question`, plus
+each keyword string in `queries`.
+
+### Metrics
+
+- **hit@1/3/10** — share of non-negative cases whose first expected path
+  (any-of `expected_paths`) is in the top k.
+- **MRR** — mean reciprocal rank of the first expected path; 0 if absent within the limit.
+- **abstain** — over `negative` cases: share where the arm returned nothing
+  (for strict, an empty result list is an abstention).
+- **adv-pass** — over `adversarial` cases: the `adversarial_paths` note is not rank 1
+  (its rank is in the per-case table).
+- **p50/p95 ms** — nearest-rank latency percentiles per query.
+- **judge tok** — `judgeInputTokens`, summed; `-`/null until the judge arm exists.
+
+Three scopes are reported (summary and per category):
+
+- `question` — the natural-language question variant.
+- `queries-avg` — per-variant average: every keyword query counts once.
+- `queries-best` — best-of-queries per case: an agent that retries with a
+  better query gets credit for the best rank. For negatives, abstained means
+  every variant abstained (an agent running all of them sees the union of
+  their results); for adversarial, the case passes only if every
+  variant keeps the bad note off rank 1 (worst case, since it is a safety check).
+
+`vocab-mismatch` and `topical-false-positive` cases are expected to fail under
+strict BM25; they are deliberately not rigged.
+
+### Strict baseline (28 cases, limit 10)
+
+| scope | n | hit@1 | hit@3 | hit@10 | MRR | abstain | adv-pass |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| question | 22 | 0% | 0% | 0% | 0.000 | 100% (n=6) | 100% (n=1) |
+| queries-avg | 42 | 45% | 48% | 48% | 0.464 | 92% (n=12) | 50% (n=2) |
+| queries-best | 22 | 64% | 64% | 64% | 0.636 | 83% (n=6) | 0% (n=1) |
+
+Natural-language questions score 0% because strict AND-joins every token,
+stopwords included, and finds no note containing all of them; keyword queries
+do far better. `vocab-mismatch` and `topical-false-positive` are 0% in every
+scope. The adversarial note ranks first for one query variant, so `queries-best`
+adv-pass is 0%. Latency is sub-millisecond at p50.

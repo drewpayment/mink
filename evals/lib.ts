@@ -113,14 +113,27 @@ export function applyBackupMarker(
 // Grading
 // ---------------------------------------------------------------------------
 
-export type CaseCategory = "title-hit" | "body-hit" | "graph-hop" | "negative";
+export type CaseCategory =
+  | "title-hit"
+  | "body-hit"
+  | "graph-hop"
+  | "negative"
+  | "vocab-mismatch"
+  | "topical-false-positive"
+  | "adversarial";
 
 export interface EvalCase {
   id: string;
   category: CaseCategory;
   question: string;
+  /** Keyword queries an agent might type into `mink recall`. Used only by the
+   * retrieval-level eval (evals/retrieval.ts); the agent runner ignores it. */
+  queries?: string[];
   expected_paths: string[];
   expected_substrings: string[];
+  /** Adversarial cases: notes that must NOT rank first (retrieval eval only). */
+  adversarial_paths?: string[];
+  notes?: string;
 }
 
 /**

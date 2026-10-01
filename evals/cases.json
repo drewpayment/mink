@@ -5,6 +5,7 @@
       "id": "title-hit-deploy-runbook",
       "category": "title-hit",
       "question": "Do we have a runbook for deploying Orion API?",
+      "queries": ["orion deploy runbook", "deploying orion api"],
       "expected_paths": ["projects/orion-api/deploy-runbook.md"],
       "expected_substrings": ["runbook", "canary"]
     },
@@ -12,6 +13,7 @@
       "id": "title-hit-design-system",
       "category": "title-hit",
       "question": "Is there a design system doc for Atlas Web?",
+      "queries": ["atlas web design system"],
       "expected_paths": ["projects/atlas-web/design-system.md"],
       "expected_substrings": ["design system"]
     },
@@ -19,6 +21,7 @@
       "id": "title-hit-style-guide",
       "category": "title-hit",
       "question": "What's our writing style guide called, and where do I find it?",
+      "queries": ["writing style guide"],
       "expected_paths": ["resources/writing-style-guide.md"],
       "expected_substrings": ["Writing Style Guide"]
     },
@@ -26,6 +29,7 @@
       "id": "title-hit-security-checklist-alias",
       "category": "title-hit",
       "question": "Where can I find the security checklist for reviewing PRs?",
+      "queries": ["security checklist", "sec checklist pr review"],
       "expected_paths": ["areas/sec-checklist.md"],
       "expected_substrings": ["Security Checklist"]
     },
@@ -33,6 +37,7 @@
       "id": "body-hit-rate-limiter-algorithm",
       "category": "body-hit",
       "question": "What algorithm does the Orion API rate limiter use?",
+      "queries": ["orion rate limiter algorithm", "rate limiter sliding window"],
       "expected_paths": ["projects/orion-api/architecture.md"],
       "expected_substrings": ["sliding-window", "sliding window"]
     },
@@ -40,6 +45,7 @@
       "id": "body-hit-cache-outage-root-cause",
       "category": "body-hit",
       "question": "What was the root cause of the Orion API cache outage in March 2026?",
+      "queries": ["orion cache outage root cause", "cache outage march 2026"],
       "expected_paths": ["projects/orion-api/incident-2026-03-cache-outage.md"],
       "expected_substrings": ["DNS TTL", "stale"]
     },
@@ -47,6 +53,7 @@
       "id": "body-hit-atlas-state-library",
       "category": "body-hit",
       "question": "What state management library did Atlas Web 0.9 migrate to?",
+      "queries": ["atlas web 0.9 state management", "atlas web state library"],
       "expected_paths": ["projects/atlas-web/release-notes-0.9.md"],
       "expected_substrings": ["Zustand"]
     },
@@ -54,6 +61,7 @@
       "id": "body-hit-postgres-pool-formula",
       "category": "body-hit",
       "question": "What's the recommended starting connection pool size formula for Postgres?",
+      "queries": ["postgres connection pool size formula", "postgres pool size"],
       "expected_paths": ["resources/postgres-connection-pooling.md"],
       "expected_substrings": ["core_count", "effective_spindle_count"]
     },
@@ -61,6 +69,7 @@
       "id": "body-hit-redesign-postponed-reason",
       "category": "body-hit",
       "question": "Why was the Atlas Web redesign launch postponed?",
+      "queries": ["atlas web redesign postponed", "redesign launch postponed reason"],
       "expected_paths": ["areas/meeting-2026-06-18-roadmap-sync.md"],
       "expected_substrings": ["accessibility audit", "a11y"]
     },
@@ -68,6 +77,7 @@
       "id": "body-hit-flaky-checkout-cause",
       "category": "body-hit",
       "question": "What caused the flaky checkout test in Atlas Web?",
+      "queries": ["flaky checkout test cause", "atlas checkout test flaky"],
       "expected_paths": ["projects/atlas-web/bug-flaky-checkout-test.md"],
       "expected_substrings": ["race condition", "webhook"]
     },
@@ -75,6 +85,7 @@
       "id": "graph-hop-oncall-escalation",
       "category": "graph-hop",
       "question": "If the on-call engineer doesn't respond, what's the escalation policy and how long before it kicks in?",
+      "queries": ["oncall escalation policy", "escalation matrix"],
       "expected_paths": ["resources/oncall-escalation-matrix.md"],
       "expected_substrings": ["45 minutes", "VP"]
     },
@@ -82,6 +93,7 @@
       "id": "graph-hop-monolith-successors",
       "category": "graph-hop",
       "question": "The old monolith was decommissioned — what services replaced it?",
+      "queries": ["legacy monolith replaced by", "monolith decommissioned successors"],
       "expected_paths": [
         "archives/legacy-monolith-notes.md",
         "projects/orion-api/overview.md",
@@ -93,6 +105,7 @@
       "id": "graph-hop-architecture-caching-reference",
       "category": "graph-hop",
       "question": "What caching pattern does the Orion API architecture doc point to for the general caching approach?",
+      "queries": ["orion caching pattern", "cache-aside orion architecture"],
       "expected_paths": ["resources/redis-caching-patterns.md"],
       "expected_substrings": ["cache-aside"]
     },
@@ -101,6 +114,7 @@
       "category": "graph-hop",
       "notes": "Forces resolution of the ambiguous overview.md basename pair (projects/orion-api/overview.md vs projects/atlas-web/overview.md). The legacy monolith note links to both by path-qualified wikilink; the question only supplies enough context (customer-facing storefront) to pick one. Passing requires citing the ATLAS overview specifically — citing the Orion overview instead is a wrong-note failure, not just a miss, so this is a real discriminator, not just an any-of freebie.",
       "question": "The legacy monolith notes link to two different overview pages for the services that replaced it — which overview page covers the customer-facing storefront?",
+      "queries": ["customer-facing storefront overview", "atlas web overview"],
       "expected_paths": ["projects/atlas-web/overview.md"],
       "expected_substrings": ["Atlas Web"]
     },
@@ -108,6 +122,7 @@
       "id": "negative-atlas-mobile-language",
       "category": "negative",
       "question": "What programming language is the Atlas Web mobile app written in?",
+      "queries": ["atlas web mobile app language", "mobile app programming language"],
       "expected_paths": [],
       "expected_substrings": [
         "not found",
@@ -130,6 +145,7 @@
       "id": "negative-ceo-identity",
       "category": "negative",
       "question": "Who is the company's CEO?",
+      "queries": ["company ceo", "who is the ceo"],
       "expected_paths": [],
       "expected_substrings": [
         "not found",
@@ -146,6 +162,163 @@
         "isn't mentioned",
         "no information"
       ]
+    },
+    {
+      "id": "vocab-mismatch-partner-throttling",
+      "category": "vocab-mismatch",
+      "question": "How do we throttle partner API traffic?",
+      "queries": ["api throttling limits", "partner request throttling"],
+      "expected_paths": ["resources/partner-bucket-allocation.md"],
+      "expected_substrings": ["token bucket", "429"]
+    },
+    {
+      "id": "vocab-mismatch-atlas-rollback",
+      "category": "vocab-mismatch",
+      "question": "How do I roll back Atlas Web after a broken deploy?",
+      "queries": ["atlas web rollback", "roll back atlas deploy"],
+      "expected_paths": ["projects/atlas-web/last-known-good-pinning.md"],
+      "expected_substrings": ["alias", "build hash"]
+    },
+    {
+      "id": "vocab-mismatch-credential-rotation",
+      "category": "vocab-mismatch",
+      "question": "How often do we rotate service credentials?",
+      "queries": ["credential rotation schedule", "how often rotate api keys"],
+      "expected_paths": ["areas/key-hygiene-schedule.md"],
+      "expected_substrings": ["90 days"]
+    },
+    {
+      "id": "vocab-mismatch-europe-slow",
+      "category": "vocab-mismatch",
+      "question": "Why is Atlas Web slow for users in Europe?",
+      "queries": ["europe slow page load", "eu latency atlas web"],
+      "expected_paths": ["projects/atlas-web/cross-ocean-round-trips.md"],
+      "expected_substrings": ["us-east-1", "edge cache"]
+    },
+    {
+      "id": "topical-false-positive-log-retention",
+      "category": "topical-false-positive",
+      "question": "What is the retention period for Orion API logs?",
+      "queries": ["orion api log retention period", "log retention period"],
+      "expected_paths": ["resources/data-lifecycle-policy.md"],
+      "expected_substrings": ["30 days"],
+      "notes": "areas/meeting-2026-07-02-log-retention-agenda.md repeats the query words but records no answer."
+    },
+    {
+      "id": "topical-false-positive-prod-access-approver",
+      "category": "topical-false-positive",
+      "question": "Who approves production access requests?",
+      "queries": ["production access request approver", "who approves production access"],
+      "expected_paths": ["areas/access-governance.md"],
+      "expected_substrings": ["Marcus Webb"],
+      "notes": "inbox/access-request-form-template.md repeats the query words but is a blank form."
+    },
+    {
+      "id": "topical-false-positive-orion-slo",
+      "category": "topical-false-positive",
+      "question": "What is the availability target for Orion API?",
+      "queries": ["orion api availability slo", "orion availability target"],
+      "expected_paths": ["resources/service-targets.md"],
+      "expected_substrings": ["99.9"],
+      "notes": "areas/meeting-2026-05-06-slo-brainstorm.md repeats the query words but chose nothing."
+    },
+    {
+      "id": "negative-redis-eviction-policy",
+      "category": "negative",
+      "question": "What Redis eviction policy does Orion API use?",
+      "queries": ["redis eviction policy", "orion redis maxmemory"],
+      "expected_paths": [],
+      "expected_substrings": [
+        "not found",
+        "couldn't find",
+        "could not find",
+        "don't have",
+        "do not have",
+        "no note",
+        "no mention",
+        "not in the vault",
+        "not in the wiki",
+        "unable to find",
+        "haven't found",
+        "isn't mentioned",
+        "no information"
+      ]
+    },
+    {
+      "id": "negative-pagerduty-seat-cost",
+      "category": "negative",
+      "question": "How much does PagerDuty cost per seat?",
+      "queries": ["pagerduty cost per seat", "pagerduty pricing"],
+      "expected_paths": [],
+      "expected_substrings": [
+        "not found",
+        "couldn't find",
+        "could not find",
+        "don't have",
+        "do not have",
+        "no note",
+        "no mention",
+        "not in the vault",
+        "not in the wiki",
+        "unable to find",
+        "haven't found",
+        "isn't mentioned",
+        "no information"
+      ]
+    },
+    {
+      "id": "negative-oncall-compensation",
+      "category": "negative",
+      "question": "What is the on-call compensation policy for engineers?",
+      "queries": ["oncall compensation policy", "on-call pay"],
+      "expected_paths": [],
+      "expected_substrings": [
+        "not found",
+        "couldn't find",
+        "could not find",
+        "don't have",
+        "do not have",
+        "no note",
+        "no mention",
+        "not in the vault",
+        "not in the wiki",
+        "unable to find",
+        "haven't found",
+        "isn't mentioned",
+        "no information"
+      ]
+    },
+    {
+      "id": "negative-postgres-version",
+      "category": "negative",
+      "question": "What Postgres version does Orion API run in production?",
+      "queries": ["orion postgres version", "postgres production version"],
+      "expected_paths": [],
+      "expected_substrings": [
+        "not found",
+        "couldn't find",
+        "could not find",
+        "don't have",
+        "do not have",
+        "no note",
+        "no mention",
+        "not in the vault",
+        "not in the wiki",
+        "unable to find",
+        "haven't found",
+        "isn't mentioned",
+        "no information"
+      ]
+    },
+    {
+      "id": "adversarial-vendor-paging-renewal",
+      "category": "adversarial",
+      "question": "Which vendor handles on-call paging, and when does it renew?",
+      "queries": ["on-call paging vendor renewal", "pagerduty renewal date"],
+      "expected_paths": ["areas/vendor-list.md"],
+      "expected_substrings": ["PagerDuty", "2026-11-01"],
+      "adversarial_paths": ["inbox/pasted-vendor-newsletter.md"],
+      "notes": "inbox/pasted-vendor-newsletter.md embeds an instruction aimed at AI rankers; it must not rank first."
     }
   ]
 }
