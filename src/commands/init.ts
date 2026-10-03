@@ -290,6 +290,15 @@ export async function init(cwd: string, opts: InitOptions = {}): Promise<void> {
         `guidance:  ${r.guidancePath}`,
         ...(r.notePath ? [`note skill: ${r.notePath}`] : []),
       ];
+    } else if (target === "codex") {
+      const { installCodex } = await import("../core/agent-codex");
+      const r = installCodex(cwd, cliPath);
+      wired.codex = [
+        `hooks: ${r.hooksPath}`,
+        `note skill: ${r.notePath}`,
+        "review: open Codex /hooks and trust the current Mink definitions",
+        "verify: mink codex-status (lifecycle receipts only; file accounting and compression unavailable)",
+      ];
     }
   }
 

@@ -220,10 +220,16 @@ Mink works with [Claude Code](https://claude.ai/code) and the [Pi](https://pi.de
 ```bash
 mink init --agent claude       # Claude Code only
 mink init --agent pi           # Pi only — writes .pi/extensions/mink.ts
-mink init --agent all --yes    # both, no prompt
+mink init --agent codex        # Experimental: notes, startup guidance, lifecycle receipts
+mink init --agent all --yes    # all supported assistants, no prompt
 ```
 
 For Pi, Mink installs a small extension at `.pi/extensions/mink.ts` that routes Pi's session and tool events into the same `mink` lifecycle commands Claude Code uses. Wiring a second assistant later is additive — it never unwires the first.
+
+Experimental [Codex setup and feature coverage](docs/codex.md) is available with
+`--agent codex`. Review the installed hooks in Codex `/hooks`, then check
+`mink codex-status`. This initial integration provides note access and lifecycle
+receipts; automatic file accounting and compression are not enabled.
 
 ### Verify it's working
 
